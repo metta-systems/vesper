@@ -2,10 +2,12 @@
 // runs on Vesper.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
 
-//! The gpio component: the one owner of the BCM2835 GPIO block, behind
-//! `gpio_v1` (see `interfaces/gpio_v1.if`).
+//! The gpio component: the one owner of the BCM2835 or BCM2711 GPIO block,
+//! behind `gpio_v1` (see `interfaces/gpio_v1.if`).
 //!
-//! Kickstart loads it for the `brcm,bcm2835-gpio` node. A driver whose device
+//! Kickstart loads it for the `brcm,bcm2835-gpio` or `brcm,bcm2711-gpio`
+//! node; the matched string tells the pin count and how pulls are set
+//! ([`gpio_bcm2835::Chip`]). A driver whose device
 //! needs its pins routed imports `gpio_v1` and switches them when it starts.
 //! Calls from different clients take turns, since switching one pin rewrites
 //! the register it shares with nine others, and a pull change takes the
@@ -23,13 +25,14 @@ impl GpioV1 for Gpio {
     }
 
     fn set_function(pin: u32, function: PinFunction) -> Result<(), Exception> {
-        let (register, slot) = gpio_bcm2835::place(pin).ok_or(Exception::InvalidPin { pin })?;
+        let (register, slot) =
+            gpio_bcm2835::place(chip(), pin).ok_or(Exception::InvalidPin { pin })?;
         set_function(register, slot, function);
         Ok(())
     }
 
     fn set_pull(pin: u32, pull: PinPull) -> Result<(), Exception> {
-        gpio_bcm2835::place(pin).ok_or(Exception::InvalidPin { pin })?;
+        gpio_bcm2835::place(chip(), pin).ok_or(Exception::InvalidPin { pin })?;
         set_pull(pin, pull);
         Ok(())
     }
@@ -38,7 +41,12 @@ impl GpioV1 for Gpio {
 gpio::gpio_v1_export!(Gpio);
 
 #[cfg(target_os = "vesper")]
-use component::{set_function, set_pull};
+use component::{chip, set_function, set_pull};
+
+#[cfg(not(target_os = "vesper"))]
+const fn chip() -> gpio_bcm2835::Chip {
+    gpio_bcm2835::Chip::Bcm2835
+}
 
 #[cfg(not(target_os = "vesper"))]
 fn set_function(_register: usize, _slot: usize, _function: PinFunction) {}
@@ -51,7 +59,7 @@ mod component {
     use {
         super::{PinFunction, PinPull},
         core::sync::atomic::{AtomicU64, Ordering},
-        gpio_bcm2835::{MmioRegisterBlock, RegisterBlock, apply_pull, select},
+        gpio_bcm2835::{Chip, MmioRegisterBlock, RegisterBlock, apply_pull, select},
         libdevice_driver::{
             INIT_VA, Turnstile, device_address, driver_compatible, driver_init, map_device_pages,
         },
@@ -63,7 +71,13 @@ mod component {
 
     libuser::entry!(main);
 
-    driver_compatible!("brcm,bcm2835-gpio");
+    driver_compatible!("brcm,bcm2835-gpio", "brcm,bcm2711-gpio");
+
+    /// The block the node is, from the compatible string it matched.
+    pub fn chip() -> Chip {
+        Chip::from_compatible_index(init().compatible_index)
+            .expect("gpio: one of the driver's compatible strings")
+    }
 
     /// Where the block's registers are mapped (zero until set up).
     static REGISTERS_VA: AtomicU64 = AtomicU64::new(0);
@@ -106,7 +120,7 @@ mod component {
         let _turn = TURNSTILE.enter(init());
         // SAFETY: this caller holds the turn.
         let mut registers = unsafe { registers() };
-        apply_pull(&mut registers, pin, pull, |_| {
+        apply_pull(&mut registers, chip(), pin, pull, |_| {
             let until = libuser::clock::now_ns() + PULL_STEP_NS;
             while libuser::clock::now_ns() < until {
                 core::hint::spin_loop();

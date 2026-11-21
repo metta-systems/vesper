@@ -156,7 +156,7 @@ pub fn retained_init_memory() -> RetainedInitMemory {
     };
     for (start, end) in [image, stack] {
         assert!(start < end);
-        assert_eq!((start | end) & 4095, 0);
+        assert_eq!((start | end) & 4095, 0); // PAGE_MASK
     }
     assert!(
         stack.1 <= image.0,

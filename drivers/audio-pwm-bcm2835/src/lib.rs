@@ -28,6 +28,40 @@ pub const PWM_CLOCK_HZ: u32 = 100_000_000;
 /// 2268 is 44 092 Hz, about 11 bits per sample (decision D4).
 pub const RANGE: u32 = 2268;
 
+/// A PWM clock and the range that gives the stream's sample rate from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timing {
+    pub clock_hz: u32,
+    pub range: u32,
+}
+
+impl Timing {
+    /// The sample rate this timing gives, in millihertz.
+    #[must_use]
+    pub fn sample_rate_millihertz(self) -> u64 {
+        sample_rate_millihertz(self.clock_hz, self.range)
+    }
+}
+
+/// The timings the driver asks the clock manager for, in order; it keeps the
+/// first whose clock rate the manager can set:
+///
+/// - the Raspberry Pi 3's: [`PWM_CLOCK_HZ`] and [`RANGE`] (decision D4);
+/// - the Raspberry Pi 4's: its 54 MHz oscillator undivided, the BCM2711's
+///   only clock source of documented rate, over 1225, 44 081.6 Hz, about
+///   10.3 bits per sample (audio decision, 2026-11-21); 230 ppm below the
+///   Raspberry Pi 3's rate.
+pub const TIMINGS: [Timing; 2] = [
+    Timing {
+        clock_hz: PWM_CLOCK_HZ,
+        range: RANGE,
+    },
+    Timing {
+        clock_hz: 54_000_000,
+        range: 1225,
+    },
+];
+
 /// Words the FIFO holds (§9.1).
 pub const FIFO_WORDS: usize = 8;
 
@@ -290,6 +324,27 @@ pub fn sample_rate_millihertz(clock_hz: u32, range: u32) -> u64 {
 /// The PWM block's DMA request line: "PWM DMA is mapped to DMA channel 5"
 /// (§9.5), DREQ 5 of the DMA controller (§4.2.1.3).
 pub const PWM_DREQ: u32 = 5;
+
+/// The BCM2711's second PWM block's DMA request line, DREQ 1: "PWM1 DMA is
+/// mapped to DMA channel 1" (BCM2711 ARM Peripherals, §8), shared with DSI0
+/// but selected for PWM1 at reset (§4.2.1.3).
+pub const PWM1_DREQ: u32 = 1;
+
+/// The BCM2711's PWM1 block is at `0x7E20_C800`, half a page above PWM0 at
+/// `0x7E20_C000` (BCM2711 ARM Peripherals, §8.6).
+const PWM1_PAGE_OFFSET: u64 = 0x800;
+
+/// The DMA request line of the PWM block whose registers start at
+/// `register_start`: PWM1 by its place in the page, else PWM0 (the BCM2835's
+/// one block).
+#[must_use]
+pub const fn pwm_dreq(register_start: u64) -> u32 {
+    if register_start & 0xfff == PWM1_PAGE_OFFSET {
+        PWM1_DREQ
+    } else {
+        PWM_DREQ
+    }
+}
 
 /// DREQ 0: an unpaced memory-to-memory transfer (§4.2.1.3).
 pub const MEMORY_DREQ: u32 = 0;

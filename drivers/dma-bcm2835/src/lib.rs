@@ -65,6 +65,17 @@ pub const DREQ_PWM: u32 = 5;
 /// (§9.6).
 pub const PWM_FIFO_BUS: u32 = 0x7e20_c018;
 
+/// DREQ 1 on the BCM2711: PWM1, the Raspberry Pi 4's jack (BCM2711 ARM
+/// Peripherals, §8: "PWM1 DMA is mapped to DMA channel 1"). The line is shared
+/// with DSI0 through `DMA_CNTRL_MUX_2` (bit 23 of `PACTL_CS` at `0x7E20_4E00`),
+/// which selects PWM1 at reset (§4.2.1.3, manual release 4), so the component
+/// leaves it alone. On the BCM2835 DREQ 1 is DSI, which nothing claims.
+pub const DREQ_PWM1: u32 = 1;
+
+/// PWM1's FIFO bus address on the BCM2711: the block at `0x7E20_C800` (the
+/// Raspberry Pi 4 tree's `pwm@7e20c800`), `FIF1` at `0x18` (§8.6).
+pub const PWM1_FIFO_BUS: u32 = 0x7e20_c818;
+
 /// The bus address a channel paced by `dreq` writes to: `None` for memory
 /// (DREQ 0) and for the peripherals the component does not feed yet. The
 /// client never names a peripheral's address itself.
@@ -72,6 +83,7 @@ pub const PWM_FIFO_BUS: u32 = 0x7e20_c018;
 pub const fn peripheral_address(dreq: u32) -> Option<u32> {
     match dreq {
         DREQ_PWM => Some(PWM_FIFO_BUS),
+        DREQ_PWM1 => Some(PWM1_FIFO_BUS),
         _ => None,
     }
 }

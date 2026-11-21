@@ -15,6 +15,13 @@
 //!
 //! Only integer division (`MASH` 0) is programmed: it has no jitter, and the
 //! audio rate (D4) needs none.
+//!
+//! The BCM2711's clock manager (`brcm,bcm2711-cprman`, BCM2711 ARM
+//! Peripherals, section 5.4) has the same generator registers and sources
+//! (table 98 lists `SRC` 1 as the oscillator, 6 as PLLD per). Its oscillator
+//! runs at 54 MHz (the Raspberry Pi 4 tree's `clk-osc` fixed clock); the
+//! manual gives no PLL rates, so on the BCM2711 only the oscillator is a
+//! source of known rate ([`Chip`]).
 
 use {
     arbitrary_int::u12,
@@ -32,14 +39,51 @@ pub const PASSWORD: u8 = 0x5a;
 /// trees, `pwm@7e20c000`).
 pub const PWM_CLOCK: u32 = 30;
 
-/// The crystal oscillator's rate: the device tree's `osc` fixed clock, the
-/// clock manager's first parent.
-pub const OSCILLATOR_HZ: u32 = 19_200_000;
+/// Which clock manager the node is: the sources' rates differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Chip {
+    /// The BCM2835 to BCM2837 (Raspberry Pi 1 to 3)
+    Bcm2835,
+    /// The BCM2711 (Raspberry Pi 4)
+    Bcm2711,
+}
 
-/// PLLD's peripheral output on the Raspberry Pi 3 as the firmware sets it up.
-/// The datasheet gives no PLL rates; this one is from the Linux and NetBSD
-/// clock drivers and Circle, and stage A2 measures it.
-pub const PLLD_PER_HZ: u32 = 500_000_000;
+impl Chip {
+    /// The manager a driver's matched compatible string names, by its position
+    /// in `driver_compatible!("brcm,bcm2835-cprman", "brcm,bcm2711-cprman")`.
+    #[must_use]
+    pub const fn from_compatible_index(index: u64) -> Option<Self> {
+        match index {
+            0 => Some(Self::Bcm2835),
+            1 => Some(Self::Bcm2711),
+            _ => None,
+        }
+    }
+
+    /// The crystal oscillator's rate: the device tree's `osc` fixed clock, the
+    /// clock manager's first parent (19.2 MHz in the Raspberry Pi 3 trees,
+    /// 54 MHz in the Raspberry Pi 4 trees).
+    #[must_use]
+    pub const fn oscillator_hz(self) -> u32 {
+        match self {
+            Self::Bcm2835 => 19_200_000,
+            Self::Bcm2711 => 54_000_000,
+        }
+    }
+
+    /// PLLD's peripheral output as the firmware sets it up, where known. The
+    /// datasheets give no PLL rates: the Raspberry Pi 3's 500 MHz is from the
+    /// Linux and NetBSD clock drivers and Circle, and stage A2 measures it; the
+    /// BCM2711's is not used (audio decision, 2026-11-21: the Raspberry Pi 4's
+    /// PWM clock runs from the oscillator).
+    #[must_use]
+    pub const fn plld_per_hz(self) -> Option<u32> {
+        match self {
+            Self::Bcm2835 => Some(500_000_000),
+            Self::Bcm2711 => None,
+        }
+    }
+}
 
 /// Largest integer divisor (`DIVI` is 12 bits, table 6-35).
 const MAX_DIVISOR: u32 = 4095;
@@ -64,12 +108,12 @@ pub enum ClockSource {
 }
 
 impl ClockSource {
-    /// The source's rate, for the sources whose rate is known.
+    /// The source's rate on `chip`, for the sources whose rate is known.
     #[must_use]
-    pub const fn hz(self) -> Option<u32> {
+    pub const fn hz(self, chip: Chip) -> Option<u32> {
         match self {
-            Self::Oscillator => Some(OSCILLATOR_HZ),
-            Self::PlldPer => Some(PLLD_PER_HZ),
+            Self::Oscillator => Some(chip.oscillator_hz()),
+            Self::PlldPer => chip.plld_per_hz(),
             _ => None,
         }
     }
@@ -152,11 +196,11 @@ pub struct Setting {
 }
 
 impl Setting {
-    /// The rate the setting gives.
+    /// The rate the setting gives on `chip`.
     #[must_use]
-    pub fn hz(&self) -> u32 {
+    pub fn hz(&self, chip: Chip) -> u32 {
         self.source
-            .hz()
+            .hz(chip)
             .map_or(0, |source_hz| source_hz / self.divisor)
     }
 }
@@ -165,33 +209,34 @@ impl Setting {
 /// changes nothing but the divisor range, and it wins ties.
 const SOURCES: [ClockSource; 2] = [ClockSource::PlldPer, ClockSource::Oscillator];
 
-/// The source and integer divisor closest to `hz`, if one is within 0.1 %.
+/// The source and integer divisor of `chip` closest to `hz`, if one is
+/// within 0.1 %.
 #[must_use]
-pub fn choose(hz: u32) -> Option<Setting> {
+pub fn choose(chip: Chip, hz: u32) -> Option<Setting> {
     if hz == 0 {
         return None;
     }
     SOURCES
         .iter()
         .filter_map(|&source| {
-            let source_hz = source.hz()?;
+            let source_hz = source.hz(chip)?;
             // Round to the nearest divisor; integer division needs at least 1
             // (table 6-32, MASH 0).
             let divisor = (source_hz + hz / 2) / hz;
             let divisor = divisor.clamp(1, MAX_DIVISOR);
             Some(Setting { source, divisor })
         })
-        .min_by_key(|setting| setting.hz().abs_diff(hz))
+        .min_by_key(|setting| setting.hz(chip).abs_diff(hz))
         .filter(|setting| {
-            u64::from(setting.hz().abs_diff(hz)) * 1000 <= u64::from(hz) * TOLERANCE_PER_MILLE
+            u64::from(setting.hz(chip).abs_diff(hz)) * 1000 <= u64::from(hz) * TOLERANCE_PER_MILLE
         })
 }
 
-/// The rate a generator with `control` and `divisor` gives: zero while it is
-/// stopped or its source's rate is unknown.
+/// The rate a generator of `chip` with `control` and `divisor` gives: zero
+/// while it is stopped or its source's rate is unknown.
 #[must_use]
-pub fn rate(control: ClockControl, divisor: ClockDivisor) -> u32 {
-    let Some(source_hz) = control.source().ok().and_then(ClockSource::hz) else {
+pub fn rate(chip: Chip, control: ClockControl, divisor: ClockDivisor) -> u32 {
+    let Some(source_hz) = control.source().ok().and_then(|source| source.hz(chip)) else {
         return 0;
     };
     if !control.enable() {
@@ -265,10 +310,10 @@ pub trait Generator {
     fn divisor(&mut self) -> ClockDivisor;
     fn set_divisor(&mut self, value: ClockDivisor);
 
-    /// The rate the generator runs at, read back from its registers.
-    fn rate(&mut self) -> u32 {
+    /// The rate the generator of `chip` runs at, read back from its registers.
+    fn rate(&mut self, chip: Chip) -> u32 {
         let control = self.control();
-        rate(control, self.divisor())
+        rate(chip, control, self.divisor())
     }
 }
 

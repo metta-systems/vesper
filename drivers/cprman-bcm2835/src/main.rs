@@ -3,10 +3,12 @@
 // `semi::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
-//! The cprman component: the one owner of the BCM2835 clock manager, behind
-//! `clock_v1` (see `interfaces/clock_v1.if`).
+//! The cprman component: the one owner of the BCM2835 or BCM2711 clock
+//! manager, behind `clock_v1` (see `interfaces/clock_v1.if`).
 //!
-//! Kickstart loads it for the `brcm,bcm2835-cprman` node. A driver whose
+//! Kickstart loads it for the `brcm,bcm2835-cprman` or `brcm,bcm2711-cprman`
+//! node; the matched string tells which sources' rates are known
+//! ([`cprman_bcm2835::Chip`]). A driver whose
 //! device runs from one of the manager's clocks imports `clock_v1` through its
 //! node's `clocks` property and sets the clock's rate when it starts. Only the
 //! PWM clock is served so far; the others (UART, SD card, the GP clocks) run
@@ -32,8 +34,8 @@ mod component {
         clock::clock_v1::{ClockV1, Exception},
         core::sync::atomic::{AtomicU64, Ordering},
         cprman_bcm2835::{
-            Clock, Generator, MmioRegisterBlock, PwmGenerator, RegisterBlock, Setting, choose,
-            program, starting, stop,
+            Chip, Clock, Generator, MmioRegisterBlock, PwmGenerator, RegisterBlock, Setting,
+            choose, program, starting, stop,
         },
         libdevice_driver::{
             INIT_VA, Turnstile, device_address, driver_compatible, driver_init, map_device_pages,
@@ -47,7 +49,13 @@ mod component {
 
     libuser::entry!(main);
 
-    driver_compatible!("brcm,bcm2835-cprman");
+    driver_compatible!("brcm,bcm2835-cprman", "brcm,bcm2711-cprman");
+
+    /// The manager the node is, from the compatible string it matched.
+    fn chip() -> Chip {
+        Chip::from_compatible_index(init().compatible_index)
+            .expect("cprman: one of the driver's compatible strings")
+    }
 
     /// The clock manager.
     struct Cprman;
@@ -59,9 +67,9 @@ mod component {
 
         fn set_rate(clock: u32, hz: u32) -> Result<u32, Exception> {
             let generator = Clock::from_binding(clock).ok_or(Exception::UnknownClock { clock })?;
-            let setting = choose(hz).ok_or(Exception::UnreachableRate { hz })?;
+            let setting = choose(chip(), hz).ok_or(Exception::UnreachableRate { hz })?;
             set_rate(generator, setting)?;
-            Ok(setting.hz())
+            Ok(setting.hz(chip()))
         }
 
         fn enable(clock: u32) -> Result<(), Exception> {
@@ -84,8 +92,8 @@ mod component {
     clock::clock_v1_export!(Cprman);
 
     /// How long a generator may take to finish its last cycle once asked to
-    /// stop. A cycle of the slowest output (19.2 MHz / 4095) is about 0.2 ms;
-    /// the margin is our own choice.
+    /// stop. A cycle of the slowest output (the 19.2 MHz oscillator / 4095) is
+    /// about 0.2 ms; the margin is our own choice.
     const STOP_TIMEOUT_NS: u64 = 10_000_000;
 
     /// Where the manager's first page is mapped (zero until set up).
@@ -153,7 +161,7 @@ mod component {
                 "cprman: {clock:?}: {:?} / {} = {} Hz{}, control {:?}",
                 setting.source,
                 setting.divisor,
-                setting.hz(),
+                setting.hz(chip()),
                 if running { ", running" } else { "" },
                 generator.control()
             );
@@ -183,7 +191,7 @@ mod component {
 
     /// `clock_v1.rate`.
     fn rate(clock: Clock) -> u32 {
-        with_generator(clock, |generator| generator.rate())
+        with_generator(clock, |generator| generator.rate(chip()))
     }
 
     /// Map the manager's registers, set up the turnstile, then park:
