@@ -18,12 +18,14 @@ maintenance = { status = "experimental" }
 
 [features]
 default = []
-# Opt in to debug-only kernel capabilities; never enable in production kernels.
-debug_kernel = []
+# Opt in to debug-only kernel capabilities; never enable in production kernels. It turns
+# on the FP entry guard, the run-time check of `_audit-fp-simd`.
+debug_kernel = ["fp_entry_trap"]
 # Test-only: absorb FP/SIMD access traps for `fp-trap-test` (see `absorb_fp_simd_trap`), and run its
 # kernel probe on request (`run_kernel_fp_probe`); never enable in production kernels.
 fp_trap_test = ["dep:fp-trap-protocol"]
-# Trap FP/SIMD while the kernel runs, also when entered from an FP frame (`FpEntryGuard`); being measured.
+# Trap FP/SIMD while the kernel runs, also when entered from an FP frame (`FpEntryGuard`);
+# on in debug kernels, off in release kernels.
 fp_entry_trap = []
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.

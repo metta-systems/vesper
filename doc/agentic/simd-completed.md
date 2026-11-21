@@ -76,6 +76,13 @@ The details live in the contract and the design, and the history in version cont
   `fp_entry_trap`.
 - [x] S4 F11 measurement: `fp-bench` on the Pi 4 without and with `fp_entry_trap`,
   recorded in `doc/simd-performance.md`.
+- [x] S4 F11(c) guard: `debug_kernel` turns on `fp_entry_trap` (and the guard checks of
+  fp-test, fp-bench and fp-trap-test); `just _test-fp` and `just _test-fp-bench` run as
+  debug kernels, so with the guard.
+- [x] S4 F11(c) audit: `_audit-fp-simd` finds every soft-float image of the board set by
+  itself (402, the release kernels included) and `fp-scan` refuses an audit that sees
+  nothing (`fp_scan::audit`, host-tested); shown to fail on a blind decoder and on an
+  unread symbol table.
 
 ## Completed decisions
 
@@ -101,3 +108,5 @@ Each is recorded in [simd-design.md](simd-design.md), with the contract text in
   trap; FP statistics are counted per Thread from S1 on.
 - [x] F10(b), 2026-11-19: the FP statistics are published in the scheduler-shared
   records.
+- [x] F11(c), 2026-11-21: the entry guard is on in debug kernels and off in release
+  kernels; the audit must fail when it scans nothing.

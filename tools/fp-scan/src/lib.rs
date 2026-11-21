@@ -161,6 +161,120 @@ impl std::error::Error for ScanError {}
 ///
 /// If `bytes` is not an `AArch64` ELF64 image, or a segment is truncated.
 pub fn scan(bytes: &[u8]) -> Result<Vec<Hit>, ScanError> {
+    scan_image(bytes).map(|image| image.hits)
+}
+
+/// What a scan saw of an image, so a check can tell that it scanned something.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scan {
+    /// Words decoded in the executable segments (data words included).
+    pub code_words: usize,
+    /// The (mangled) names of the functions the symbol table defines.
+    pub functions: Vec<String>,
+    /// The FP/SIMD instructions found.
+    pub hits: Vec<Hit>,
+}
+
+/// What an audit of one image requires.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Policy<'a> {
+    /// A hit inside a function whose (mangled) name contains one of these is
+    /// allowed; such a function must hold at least one hit.
+    pub allow: &'a [String],
+    /// The image must have hits (an image that executes FP on purpose).
+    pub expect_hits: bool,
+    /// The image must define a function that `allow` names.
+    pub expect_allowed: bool,
+}
+
+/// Audit `scan` against `policy`: a line describing the passed image, or the
+/// problems found.
+///
+/// Besides refusing hits outside the allowed functions, it refuses an audit
+/// that saw nothing to check: an image with no code, an allowed function in
+/// which no FP/SIMD instruction is found (the nucleus's own routines must be
+/// seen, or the scan sees nothing), and, as `policy` asks, an image without
+/// hits or without an allowed function.
+///
+/// # Errors
+///
+/// The problems found, one line each.
+pub fn audit(scan: &Scan, policy: &Policy<'_>) -> Result<String, Vec<String>> {
+    let mut problems = Vec::new();
+    if scan.code_words == 0 {
+        problems.push(String::from("no executable code to scan"));
+    }
+    let is_allowed = |symbol: &str| {
+        policy
+            .allow
+            .iter()
+            .any(|allow| symbol.contains(allow.as_str()))
+    };
+    let passed = if policy.expect_hits {
+        if scan.hits.is_empty() {
+            problems.push(String::from(
+                "no FP/SIMD instructions found, but some were expected",
+            ));
+        }
+        format!(
+            "{} FP/SIMD instructions found, as expected",
+            scan.hits.len()
+        )
+    } else {
+        let (permitted, refused): (Vec<_>, Vec<_>) = scan
+            .hits
+            .iter()
+            .partition(|hit| hit.symbol.as_deref().is_some_and(is_allowed));
+        problems.extend(
+            refused
+                .iter()
+                .map(|hit| format!("FP/SIMD instruction {hit}")),
+        );
+        let allowed_functions: Vec<_> = scan
+            .functions
+            .iter()
+            .filter(|function| is_allowed(function))
+            .collect();
+        for function in &allowed_functions {
+            if !permitted
+                .iter()
+                .any(|hit| hit.symbol.as_deref() == Some(function.as_str()))
+            {
+                problems.push(format!(
+                    "allowed function {function} holds no FP/SIMD instruction: the scan does not see it"
+                ));
+            }
+        }
+        if policy.expect_allowed && allowed_functions.is_empty() {
+            problems.push(String::from(
+                "defines no function the allow-list names, but it must",
+            ));
+        }
+        if permitted.is_empty() {
+            format!("integer-only ({} words scanned)", scan.code_words)
+        } else {
+            format!(
+                "integer-only outside the allowed functions ({} instructions in {} of them, {} words scanned)",
+                permitted.len(),
+                allowed_functions.len(),
+                scan.code_words
+            )
+        }
+    };
+    if problems.is_empty() {
+        Ok(passed)
+    } else {
+        Err(problems)
+    }
+}
+
+/// Scan the ELF image `bytes`: its FP/SIMD instructions, with how much code
+/// was decoded and which functions it defines.
+///
+/// # Errors
+///
+/// If `bytes` is not an `AArch64` ELF64 image, or a segment is truncated.
+pub fn scan_image(bytes: &[u8]) -> Result<Scan, ScanError> {
     let elf = Elf::parse(bytes).map_err(ScanError::Parse)?;
     if !elf.is_64 || elf.header.e_machine != EM_AARCH64 {
         return Err(ScanError::NotAarch64);
@@ -180,6 +294,7 @@ pub fn scan(bytes: &[u8]) -> Result<Vec<Hit>, ScanError> {
         }
     }
     let mut hits = Vec::new();
+    let mut code_words = 0;
     for header in &elf.program_headers {
         if header.p_type != PT_LOAD || header.p_flags & PF_X == 0 {
             continue;
@@ -189,6 +304,7 @@ pub fn scan(bytes: &[u8]) -> Result<Vec<Hit>, ScanError> {
         let segment = bytes
             .get(start..start.checked_add(length).ok_or(ScanError::Truncated)?)
             .ok_or(ScanError::Truncated)?;
+        code_words += segment.len() / 4;
         for (address, word, class) in scan_code(header.p_vaddr, segment, &mappings) {
             let symbol = functions
                 .iter()
@@ -202,7 +318,14 @@ pub fn scan(bytes: &[u8]) -> Result<Vec<Hit>, ScanError> {
             });
         }
     }
-    Ok(hits)
+    Ok(Scan {
+        code_words,
+        functions: functions
+            .iter()
+            .map(|&(_, _, name)| name.to_string())
+            .collect(),
+        hits,
+    })
 }
 
 #[cfg(test)]
@@ -302,5 +425,147 @@ mod tests {
     fn a_non_elf_image_is_an_error() {
         let error = scan(b"not an elf").unwrap_err();
         assert!(matches!(error, ScanError::Parse(_)), "{error}");
+    }
+
+    /// A hit in `symbol`.
+    fn hit(symbol: &str) -> Hit {
+        Hit {
+            address: 0x1000,
+            word: 0x1E62_2800,
+            class: FpClass::DataProcessing,
+            symbol: Some(symbol.to_string()),
+        }
+    }
+
+    /// A nucleus-like image: an integer function and two FP routines, with
+    /// `hits`.
+    fn kernel(hits: Vec<Hit>) -> Scan {
+        Scan {
+            code_words: 1000,
+            functions: ["kernel_main", "fp_unit_save", "fp_unit_load"]
+                .map(String::from)
+                .to_vec(),
+            hits,
+        }
+    }
+
+    fn allow_fp_unit() -> Vec<String> {
+        vec![String::from("fp_unit_")]
+    }
+
+    #[test]
+    fn hits_in_every_allowed_function_pass() {
+        let allow = allow_fp_unit();
+        let policy = Policy {
+            allow: &allow,
+            expect_allowed: true,
+            ..Policy::default()
+        };
+        let scan = kernel(vec![hit("fp_unit_save"), hit("fp_unit_load")]);
+        audit(&scan, &policy).expect("both routines hold hits");
+    }
+
+    #[test]
+    fn a_hit_outside_the_allowed_functions_fails() {
+        let allow = allow_fp_unit();
+        let policy = Policy {
+            allow: &allow,
+            ..Policy::default()
+        };
+        let scan = kernel(vec![
+            hit("fp_unit_save"),
+            hit("fp_unit_load"),
+            hit("kernel_main"),
+        ]);
+        let problems = audit(&scan, &policy).unwrap_err();
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("kernel_main"), "{problems:?}");
+    }
+
+    #[test]
+    fn a_hit_without_a_symbol_fails() {
+        let allow = allow_fp_unit();
+        let policy = Policy {
+            allow: &allow,
+            ..Policy::default()
+        };
+        let mut stripped = hit("fp_unit_save");
+        stripped.symbol = None;
+        let scan = Scan {
+            code_words: 1000,
+            functions: Vec::new(),
+            hits: vec![stripped],
+        };
+        audit(&scan, &policy).expect_err("an unattributed hit is refused");
+    }
+
+    #[test]
+    fn an_allowed_function_without_hits_fails() {
+        // The scan saw the routine but not its FP instructions: it is blind.
+        let allow = allow_fp_unit();
+        let policy = Policy {
+            allow: &allow,
+            ..Policy::default()
+        };
+        let problems = audit(&kernel(vec![hit("fp_unit_save")]), &policy).unwrap_err();
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("fp_unit_load"), "{problems:?}");
+        // No hits at all fails too, once per routine.
+        assert_eq!(audit(&kernel(Vec::new()), &policy).unwrap_err().len(), 2);
+    }
+
+    #[test]
+    fn an_image_without_code_fails() {
+        let scan = Scan {
+            code_words: 0,
+            functions: Vec::new(),
+            hits: Vec::new(),
+        };
+        audit(&scan, &Policy::default()).expect_err("nothing was scanned");
+        // With code and nothing allowed, an integer-only image passes.
+        let scan = Scan {
+            code_words: 10,
+            ..scan
+        };
+        audit(&scan, &Policy::default()).expect("integer-only");
+    }
+
+    #[test]
+    fn a_missing_allowed_function_fails_when_expected() {
+        let allow = allow_fp_unit();
+        let scan = Scan {
+            code_words: 10,
+            functions: vec![String::from("kernel_main")],
+            hits: Vec::new(),
+        };
+        let lenient = Policy {
+            allow: &allow,
+            ..Policy::default()
+        };
+        audit(&scan, &lenient).expect("no allowed function is required");
+        let strict = Policy {
+            expect_allowed: true,
+            ..lenient
+        };
+        audit(&scan, &strict).expect_err("an allowed function is required");
+    }
+
+    #[test]
+    fn expected_hits_must_be_found() {
+        let policy = Policy {
+            expect_hits: true,
+            ..Policy::default()
+        };
+        let integer_only = Scan {
+            code_words: 10,
+            functions: Vec::new(),
+            hits: Vec::new(),
+        };
+        audit(&integer_only, &policy).expect_err("hits are expected");
+        let probe = Scan {
+            hits: vec![hit("probe")],
+            ..integer_only
+        };
+        audit(&probe, &policy).expect("the probe has hits");
     }
 }

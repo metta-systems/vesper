@@ -8,7 +8,7 @@ starts. Mark an item `- [x]` only after its verification has passed. A finished 
 leaves this file as a one-line marker in [simd-completed.md](simd-completed.md).
 
 Done: S0 (the contract), S1 (object layer), S2 (routines and switch hooks), S3 (build
-side) and S4 except the F11 decision; see
+side) and S4 (end to end, with F11(c)); see
 [simd-completed.md](simd-completed.md).
 
 When an S1 to S4 step implements part of the design, it also rewrites the matching
@@ -42,11 +42,8 @@ Done; see [simd-completed.md](simd-completed.md).
 
 ## S4: end-to-end
 
-Done: `fp-test` in QEMU and on the Pi 4, and the F11 measurement; see
+Done: `fp-test` in QEMU and on the Pi 4, the F11 measurement and F11(c); see
 [simd-completed.md](simd-completed.md).
-
-- [ ] The maintainer decides F11 from the `fp-bench` numbers in
-  [doc/simd-performance.md](../simd-performance.md).
 
 ## S5: measure, then the less eager variant
 

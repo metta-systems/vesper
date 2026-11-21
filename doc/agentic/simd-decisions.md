@@ -6,47 +6,6 @@ maintainer gives it explicitly. An answered decision is recorded in [simd-design
 [simd-completed.md](simd-completed.md), section Completed decisions. Tasks stay in
 [simd-implementation-plan.md](simd-implementation-plan.md).
 
-## F11. FP off on kernel entry (needed by S2; decided after measuring)
-
-AArch64 has no `FPEN` value that allows EL0 while trapping EL1. While an FP frame runs,
-a kernel entry therefore starts with FP enabled. If the kernel then executed an FP
-instruction, it would silently corrupt the frame's live registers.
-
-- **(a)** Turn FP off at every entry. In `vectors.S`, after the general registers are
-  saved, read `CPACR_EL1`. If FP is enabled, set `FPEN` to trap and execute `isb`.
-  Before each `eret` into an FP frame, set `FPEN` to `0b11` and execute `isb`.
-  - The kernel then always runs with FP trapped, except inside its own save, load and
-    zero routines, which open `FPEN` themselves. A stray kernel FP instruction traps at
-    EL1 instead of corrupting state.
-  - Cost: one `CPACR_EL1` write and one `isb` per entry from an FP frame and per return
-    into one. It is probably a few tens of cycles on an A72, but this has not been
-    measured.
-- **(b)** Leave FP enabled during kernel entries from FP frames. The soft-float build
-  and `_audit-fp-simd` remain the only guard.
-
-In both options `_audit-fp-simd` stays mandatory in `just lint`, nucleus included.
-
-The maintainer's direction on 2026-11-19 is to measure first:
-
-- The guard is built behind a nucleus feature, `fp_entry_trap`.
-- The same FP workload runs with the feature on and with it off.
-- Then the maintainer decides whether to keep it or remove it.
-
-Status: the guard is built (S2) and measured on the Pi 4 with `fp-bench`; the numbers are
-in [doc/simd-performance.md](../simd-performance.md). It adds 4.3 ns (0.3 %) to a
-Signal, 79.6 ns (1.3 %) to a Call into an integer-only component and 149.0 ns (2.4 %) to
-a Call into an FP component. The maintainer's decision is pending. The guard is an
-`FpEntryGuard` held by every exception handler whose entry can return to a Thread
-(`lower_aarch64_*` and `current_el0_*` in `kernel/nucleus/src/main.rs`), not code in
-`vectors.S`. The effect is the same, since the handler prologue before it is soft-float,
-and the `CPACR_EL1` access stays typed. `_test-fp-entry-trap` shows a kernel FP
-instruction trapping at EL1 while serving an FP frame, and `_test-fp-trap` shows it
-executing without the guard. The toggles are counted in the root Scheduler record's
-`fp_entry_toggles`.
-
-The audit is expected to catch any stray kernel FP instruction, since the kernel is
-small.
-
 ## F12. The fault frame conflicts with the stack-pool rule (for review before S1)
 
 A side review found this, and it is recorded for the maintainer's review. The stack-pool
