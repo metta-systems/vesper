@@ -33,24 +33,17 @@ mod components {
 use {
     core::sync::atomic::Ordering,
     kickstart::{
-        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory},
-        drivers::{BootKeys, LoadedDriver, instance_count, load_drivers},
+        drivers::instance_count,
+        image::{BUILDER_ARCHIVE_GUARD, BootObjects},
         kickstart_init_el2,
         serial::SerialChannelParts,
     },
     libaddress::PhysAddr,
-    libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
-        component::ttbr,
-        keys::{SlotCursor, boot_key},
-        paging::image_table_count,
-    },
+    libcomponent_loader::builder::Builder,
     libio_channel::{Event, IoRec, NoEvent, Packet, Producer, WaitError},
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
-    libobject::{
-        CapError, EventCountKey, KeySlot, KeyTableKey, UntypedKey, address_space::AddressSpaceKey,
-    },
+    libobject::{CapError, EventCountKey},
     libqemu::semihosting as semi,
     libserial_channel::{DATA_AREA, DATA_AREA_VA, DATA_PAGES, LOOPBACK, SLOTS, SerialChannel},
 };
@@ -60,12 +53,6 @@ libboot::entry!(boot_main);
 fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, run as *const u8 as u64)
 }
-
-/// First boot `KeyTable` slot the builder carves fixtures into.
-const FIRST_FIXTURE_SLOT: u32 = 64;
-
-/// Guard of the `KeyTable` archiving the builder's image Frames.
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 
 /// Bytes streamed through the loopback.
 const MESSAGE_BYTES: usize = 3000;
@@ -225,49 +212,13 @@ pub fn run() -> ! {
     let instances = instance_count(&drivers);
     assert_eq!(instances, 1, "the board device tree has one enabled PL011");
 
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let keys = BootKeys::of(&boot);
-    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(keys.untyped);
-    let self_table = KeyTableKey::from_key(keys.self_table);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let devices = device_untypeds();
-    let mut slots =
-        SlotCursor::starting_at(FIRST_FIXTURE_SLOT).avoiding(devices.first_slot, devices.count);
-
-    // ── The builder's own AddressSpace ────────────────────────────────────
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    verify_retained_image(&retained, &[ttbr(nucleus, boot_as_id)]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
+    let mut boot = BootObjects::bootstrap();
+    let mut image = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
 
     // ── The client's side of the channel ──────────────────────────────────
     // The same parts Kickstart gives the shell; this client is the boot
     // Thread, which reaches them through the kernel's direct map.
-    let parts = SerialChannelParts::create(&builder, &mut slots);
+    let parts = SerialChannelParts::create(&image.builder, &mut image.slots);
     let control_paddr = Builder::frame_paddr(parts.control);
     // SAFETY: a fresh, zeroed Frame the boot Thread holds; the direct map
     // covers it for the whole test, and the driver maps the same page.
@@ -293,21 +244,13 @@ pub fn run() -> ! {
     );
 
     // ── Load the driver and attach before it starts ───────────────────────
-    let started = load_drivers(
-        nucleus,
-        &builder,
-        keys,
-        &[drivers[0], &components::DISPATCHER_DRIVER],
-        &mut slots,
-        |loaded: &LoadedDriver<'_>| {
-            let init = loaded.init;
-            assert_eq!(init.interrupts().len(), 1, "{}: one interrupt", loaded.node);
-            // Attach before the driver's Threads start, as Kickstart does for
-            // a program with `serial = true`.
-            parts.attach_driver(&builder, loaded.component);
-        },
-    );
-    assert_eq!(started, 2, "the PL011 driver and the root dispatcher");
+    image.start_drivers(components::DRIVERS, |loaded, builder| {
+        let init = loaded.init;
+        assert_eq!(init.interrupts().len(), 1, "{}: one interrupt", loaded.node);
+        // Attach before the driver's Threads start, as Kickstart does for
+        // a program with `serial = true`.
+        parts.attach_driver(builder, loaded.component);
+    });
 
     // ── Stream through the loopback ───────────────────────────────────────
     let (mut submit, mut sent) = channel.transmit.client(

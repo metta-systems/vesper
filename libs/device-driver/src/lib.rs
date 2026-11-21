@@ -174,7 +174,7 @@ macro_rules! driver_threads {
 pub const DATA_WINDOW_VA: u64 = 0x3a00_0000;
 
 /// Most data areas an exporting driver serves: one per client instance.
-pub const MAX_AREAS: usize = 8;
+pub const MAX_AREAS: usize = 16;
 
 /// Most resources a component maps.
 pub const MAX_RESOURCES: usize = 4;

@@ -1,33 +1,16 @@
-# What wood-test bundles (see vesper-image-build): everything compositor-test
-# does (the DWC2 host controller component, the USB core, the USB HID component,
-# the mailbox and fb components, the PL011 driver, the compositor, the shell's
-# lava-lamp window and the root dispatcher), plus Wood, the Room Doom engine, in
-# a window of its own, with the shareware IWAD as its resource, and the drivers
-# of audio-test (the gpio component, the clock manager, the DMA controller and
-# the PWM audio driver) for Wood's sound effects, the MIDI synthesiser
+# What wood-test bundles (see vesper-image-build): the platform
+# (kernel/kickstart/platform.toml: the PL011, mailbox, power and fb drivers, the
+# SD controller, the gpio component, the clock manager, the DMA controller,
+# the DWC2 or PCIe and xHCI host controller, the USB core, the USB HID
+# component and the root dispatcher, each loaded where the board's device tree
+# has its node), plus the compositor with the shell's lava-lamp window, Wood,
+# the Room Doom engine, in a window of its own, with the shareware IWAD as its
+# resource, the PWM audio driver for Wood's sound effects, the MIDI synthesiser
 # component with its SoundFont for Wood's music, and the log server, which
 # holds the PL011's serial channel and writes the lines of the compositor,
-# Wood, the synthesiser, the audio driver and the three USB components to the
-# UART.
-
-# The gpio component, through which the audio driver routes the jack's pins.
-[[driver]]
-name = "gpio"
-binary = "gpio-bcm2835"
-interfaces = "../../../drivers/gpio-bcm2835/interfaces"
-
-# The clock manager, which sets the PWM clock for the audio driver.
-[[driver]]
-name = "cprman"
-binary = "cprman-bcm2835"
-interfaces = "../../../drivers/cprman-bcm2835/interfaces"
-
-# The DMA controller component: the audio driver claims a channel for its ring
-# (on the board) or its capture copies (under QEMU) through dma_v1.
-[[driver]]
-name = "dma"
-binary = "dma-bcm2835"
-interfaces = "../../../drivers/dma-bcm2835/interfaces"
+# Wood, the synthesiser, the audio driver, the SD controller, the PCIe root
+# complex and the USB components to the UART.
+include = ["../../kickstart/platform.toml"]
 
 # The PWM audio driver, loaded for the `brcm,bcm2835-pwm` node, which only the
 # test tree (`just _test-wood`) or the board's `pwm-2chan` overlay enable. Wood's
@@ -36,40 +19,6 @@ interfaces = "../../../drivers/dma-bcm2835/interfaces"
 name = "audio"
 binary = "audio-pwm-bcm2835"
 interfaces = "../../../drivers/audio-pwm-bcm2835/interfaces"
-
-[[driver]]
-name = "mailbox"
-binary = "mailbox"
-interfaces = "../../../drivers/mailbox/interfaces"
-
-[[driver]]
-name = "fb"
-binary = "fb"
-interfaces = "../../../drivers/fb/interfaces"
-video_memory = true
-
-[[driver]]
-name = "usb"
-binary = "usb-hcd-dwc2"
-interfaces = "../../../drivers/usb-hcd-dwc2/interfaces"
-
-[[driver]]
-name = "uart"
-binary = "uart-pl011"
-
-[[component]]
-name = "usb_core"
-binary = "usb-core"
-interfaces = "../../../drivers/usb/interfaces"
-active = true
-program = true
-
-[[component]]
-name = "usb_hid"
-binary = "usb-hid"
-interfaces = "../../../drivers/usb-hid/interfaces"
-active = true
-program = true
 
 [[component]]
 name = "compositor"
@@ -81,8 +30,9 @@ memory = 33554432
 
 # The log server: the one holder of the PL011's serial channel. The
 # compositor, Wood, the MIDI synthesiser, the audio driver, the USB controller,
-# the USB core and the USB HID component import its log_v1 (7 of the 8 clients
-# an exporter can serve) and put their lines on its io-channel, never waiting;
+# the USB core, the USB HID component and, on the Raspberry Pi 4 and 5, the SD
+# controller and the PCIe root complex import its log_v1 (up to 9 of the 16
+# clients an exporter can serve) and put their lines on its io-channel, never waiting;
 # it writes them to the UART with a timestamp and level, dropping and counting
 # what the UART cannot keep up with.
 [[component]]
@@ -151,12 +101,3 @@ resources = ["soundfont"]
 [[resource]]
 name = "soundfont"
 file = "../../../target/wood/sc55-doom1.sf2"
-
-# The root dispatcher: Kickstart binds it once every other program and driver
-# is loaded, and registers the boot Thread with it.
-[[component]]
-name = "dispatcher"
-binary = "root-dispatcher"
-active = true
-program = true
-dispatcher = true

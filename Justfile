@@ -54,8 +54,9 @@ export VESPER_FP_COMPONENTS := fp_binaries
 synth_fp_opt := '--config profile.release.package.vesper-synth.opt-level=3 --config profile.release.package.midi-synth.opt-level=3'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
-# EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'compositor fb-impl mailbox-impl power-impl root-dispatcher sdhci shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid'
+# EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml
+# and the platform.toml it includes)
+driver_components := 'compositor cprman-bcm2835 dma-bcm2835 fb-impl gpio-bcm2835 mailbox-impl pcie-brcmstb power-impl root-dispatcher sdhci shell uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -396,13 +397,14 @@ boot-fp-bench features='': (_build-fp-bench boards features) chainofcommand
 boot-fp-test features='': (_build-fp-test boards features) chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --rate-reset false --kernel "{{ images_dir / 'fp-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
 
-# Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects and music through the PWM audio driver on the headphone jack; the log server writes the lines of the compositor (the routed input), Wood (with a music summary every 256 periods), the MIDI synthesiser, the audio driver and the USB components (controller bring-up, port resets, enumeration, the keyboard served) on the UART
+# Build wood-test for the Raspberry Pi 3, 4 and 5 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB (DWC2, or PCIe and xHCI), its sound effects and music through the PWM audio driver on the headphone jack (the Raspberry Pi 3); the log server writes the lines of the compositor (the routed input), Wood (with a music summary every 256 periods), the MIDI synthesiser, the audio driver and the USB, SD and PCIe components on the UART
 _build-wood-test-hw board=boards: (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')
 
 # Plug in a keyboard (and a mouse to move focus between windows), and headphones in the jack:
 # with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt the audio driver loads
-# and Wood plays Doom's sound effects (without it Wood runs silent).
-# Build wood-test for the Raspberry Pi 3 and boot it via chainofcommand
+# and Wood plays Doom's sound effects on the Raspberry Pi 3 (without it, and on the Raspberry Pi 4
+# and 5 until their gpio and clock manager are supported, Wood runs silent).
+# Build wood-test for the board set and boot it via chainofcommand
 [group("hw")]
 boot-wood-test: _build-wood-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'wood-test-' + boards_hw + '.bin' }}"
@@ -1118,7 +1120,7 @@ _test-wood board=boards seconds='90' features=test_kernel_features config=(board
     # The log server wrote every client's lines to the UART, each with its prefix.
     prefix='^\[ *[0-9]*\.[0-9]\{6\}\] I '
     grep -a "${prefix}wood: music: summary" "$serial" | tail -2
-    for expected in "log-server: 7 clients, serial output attached" "compositor: display [0-9]*x[0-9]* pitch" "compositor: device 1 added" "wood: the engine started" "wood: music: summary of [0-9]* periods" "midi-synth: ready at 44091710 mHz" "audio: open for client 0" "usb-hcd-dwc2: core 0x[0-9a-f]* reset, host mode" "usb-hcd-dwc2: port reset: enabled" "usb-core: hub [0-9]* port [0-9]*: [a-z]* speed device at address [0-9]*" "usb-hid: serving a Keyboard as device"; do
+    for expected in "log-server: 8 clients, serial output attached" "sdhci: 0x[0-9a-f]* up" "compositor: display [0-9]*x[0-9]* pitch" "compositor: device 1 added" "wood: the engine started" "wood: music: summary of [0-9]* periods" "midi-synth: ready at 44091710 mHz" "audio: open for client 0" "usb-hcd-dwc2: core 0x[0-9a-f]* reset, host mode" "usb-hcd-dwc2: port reset: enabled" "usb-core: hub [0-9]* port [0-9]*: [a-z]* speed device at address [0-9]*" "usb-hid: serving a Keyboard as device"; do
       grep -a -q "${prefix}\(([0-9]* dropped) \)\?${expected}" "$serial" || { echo "wood-test: the UART got no line \"$expected\" from the log server"; exit 1; }
     done
     dropped=0

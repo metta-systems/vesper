@@ -40,24 +40,16 @@ use {
     driver_echo::echo_v1::TYPE_CODE as ECHO_V1,
     driver_protocol::{AUX, AUX_UART, PL011, REPORT_SLOT},
     kickstart::{
-        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory},
-        drivers::{BootKeys, LoadedDriver, load_drivers},
+        device_tree::enabled_nodes,
+        image::{BUILDER_ARCHIVE_GUARD, BootObjects},
         kickstart_init_el2,
     },
-    libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
-        component::ttbr,
-        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
-        paging::image_table_count,
-    },
+    libcomponent_loader::keys::BOOT_TABLE_SIZE_BITS,
     libdevice_driver::{PAGE_FRAME, PAGE_UNTYPED},
-    libdevicetree::{interrupts::interrupts, is_compatible, is_enabled},
+    libdevicetree::interrupts::interrupts,
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
-    libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
-        address_space::AddressSpaceKey, thread::ThreadReturnKey,
-    },
+    libobject::{KeySlot, NotificationKey, Rights, thread::ThreadReturnKey},
     libqemu::semihosting as semi,
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
 };
@@ -67,12 +59,6 @@ libboot::entry!(boot_main);
 fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, run as *const u8 as u64)
 }
-
-/// First boot `KeyTable` slot the builder carves fixtures into.
-const FIRST_FIXTURE_SLOT: u32 = 64;
-
-/// Guard of the `KeyTable` archiving the builder's image Frames.
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 
 /// Instances the board device trees produce: `uart0`, `aux` and `uart1`.
 const INSTANCES: usize = 3;
@@ -87,71 +73,20 @@ struct Seen {
 
 pub fn run() -> ! {
     semi::println!("driver-test: enabled MMU and dropped to EL1");
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let keys = BootKeys::of(&boot);
-    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(keys.untyped);
-    let self_table = KeyTableKey::from_key(keys.self_table);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let devices = device_untypeds();
-    let mut slots =
-        SlotCursor::starting_at(FIRST_FIXTURE_SLOT).avoiding(devices.first_slot, devices.count);
-
-    // ── The builder's own AddressSpace ────────────────────────────────────
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    verify_retained_image(&retained, &[ttbr(nucleus, boot_as_id)]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
+    let mut boot = BootObjects::bootstrap();
+    let mut image = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
 
     // The instances the device tree asks for.
+    assert_eq!(
+        enabled_nodes(components::PROBE_DRIVER.compatible),
+        INSTANCES,
+        "the board device tree changed"
+    );
     let tree = kickstart::device_tree::at_el1().index();
-    let expected = tree
-        .nodes()
-        .filter(|node| is_enabled(node))
-        .filter(|node| {
-            components::PROBE_DRIVER
-                .compatible
-                .iter()
-                .any(|compatible| is_compatible(node, compatible))
-        })
-        .count();
-    assert_eq!(expected, INSTANCES, "the board device tree changed");
 
-    let report = untyped
-        .retype(
-            ObjectType::NOTIFICATION,
-            0,
-            0,
-            1,
-            &self_table,
-            slots.take(1),
-            Rights::all(),
-        )
-        .unwrap_or_else(|error| panic!("report Notification Retype failed: {:?}", error.code()));
-    let report_id = builder
+    let report = image.notification();
+    let report_id = image
+        .builder
         .entry(report)
         .carved_id()
         .unwrap_or_else(|error| panic!("report identity: {:?}", error.code()));
@@ -159,90 +94,77 @@ pub fn run() -> ! {
     // ── Driver matching ───────────────────────────────────────────────────
     let mut seen = [Seen::default(); INSTANCES];
     let mut count = 0;
-    let started = load_drivers(
-        nucleus,
-        &builder,
-        keys,
-        &[&components::PROBE_DRIVER, &components::DISPATCHER_DRIVER],
-        &mut slots,
-        |loaded: &LoadedDriver<'_>| {
-            let init = loaded.init;
-            // The record matches the device tree node.
-            let node = tree
-                .nodes()
-                .find(|node| node.name().ok() == Some(loaded.node))
-                .expect("the loaded node is in the tree");
+    image.start_drivers(components::DRIVERS, |loaded, _builder| {
+        let init = loaded.init;
+        // The record matches the device tree node.
+        let node = tree
+            .nodes()
+            .find(|node| node.name().ok() == Some(loaded.node))
+            .expect("the loaded node is in the tree");
+        assert_eq!(
+            init.interrupts().len(),
+            interrupts(tree, &node).count(),
+            "{}: every interrupt is handed over",
+            loaded.node
+        );
+        assert!(!init.pages().is_empty() && !init.regions().is_empty());
+        assert_eq!(init.memory_size, 64 * 1024);
+        // Its exports answer with the key at its table's Return slot.
+        assert_eq!(
+            init.return_key,
+            ThreadReturnKey::provisioned(loaded.component.guard, BOOT_TABLE_SIZE_BITS)
+                .raw()
+                .to_wire()
+        );
+        // `uart1` imports three `echo_v1` functions of the `aux` instance,
+        // on one target stack; the other nodes link to no probe.
+        let imports = init.imports();
+        if init.compatible_index == AUX_UART {
             assert_eq!(
-                init.interrupts().len(),
-                interrupts(tree, &node).count(),
-                "{}: every interrupt is handed over",
-                loaded.node
+                imports.len(),
+                3,
+                "uart1 imports identify, twice and frame_base"
             );
-            assert!(!init.pages().is_empty() && !init.regions().is_empty());
-            assert_eq!(init.memory_size, 64 * 1024);
-            // Its exports answer with the key at its table's Return slot.
+            assert!(imports.iter().all(|record| record.type_code == ECHO_V1));
             assert_eq!(
-                init.return_key,
-                ThreadReturnKey::provisioned(loaded.component.guard, BOOT_TABLE_SIZE_BITS)
-                    .raw()
-                    .to_wire()
+                [
+                    imports[0].function,
+                    imports[1].function,
+                    imports[2].function
+                ],
+                [0, 1, 2]
             );
-            // `uart1` imports three `echo_v1` functions of the `aux` instance,
-            // on one target stack; the other nodes link to no probe.
-            let imports = init.imports();
-            if init.compatible_index == AUX_UART {
-                assert_eq!(
-                    imports.len(),
-                    3,
-                    "uart1 imports identify, twice and frame_base"
-                );
-                assert!(imports.iter().all(|record| record.type_code == ECHO_V1));
-                assert_eq!(
-                    [
-                        imports[0].function,
-                        imports[1].function,
-                        imports[2].function
-                    ],
-                    [0, 1, 2]
-                );
-                assert_ne!(imports[0].invocation, imports[1].invocation);
-                assert_ne!(imports[1].invocation, imports[2].invocation);
-            } else {
-                assert!(imports.is_empty(), "{}: links to no probe", loaded.node);
-            }
-            semi::println!(
-                "driver-test: {} on {}: compatible {}, {} pages from {:#x}, {} interrupts",
-                loaded.driver.component.name,
-                loaded.node,
-                init.compatible_index,
-                init.pages().len(),
-                init.pages()[0].paddr,
-                init.interrupts().len()
-            );
-            seen[count] = Seen {
-                compatible_index: init.compatible_index,
-                page_kind: init.pages()[0].kind,
-                interrupts: init.interrupts().len() as u64,
-            };
-            // The report key, badged with this instance's bit.
-            // SAFETY: the driver's retained table; no invocation overlaps.
-            unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
-                .insert(
-                    KeySlot(REPORT_SLOT),
-                    KeyEntry::new_carved(report_id, Rights(Rights::SEND), 1 << count),
-                    loaded.component.guard,
-                )
-                .unwrap_or_else(|failure| {
-                    panic!("report grant failed: {:?}", failure.error.code())
-                });
-            count += 1;
-        },
-    );
-    assert_eq!(
-        started,
-        INSTANCES + 1,
-        "the instances and the root dispatcher"
-    );
+            assert_ne!(imports[0].invocation, imports[1].invocation);
+            assert_ne!(imports[1].invocation, imports[2].invocation);
+        } else {
+            assert!(imports.is_empty(), "{}: links to no probe", loaded.node);
+        }
+        semi::println!(
+            "driver-test: {} on {}: compatible {}, {} pages from {:#x}, {} interrupts",
+            loaded.driver.component.name,
+            loaded.node,
+            init.compatible_index,
+            init.pages().len(),
+            init.pages()[0].paddr,
+            init.interrupts().len()
+        );
+        seen[count] = Seen {
+            compatible_index: init.compatible_index,
+            page_kind: init.pages()[0].kind,
+            interrupts: init.interrupts().len() as u64,
+        };
+        // The report key, badged with this instance's bit.
+        // SAFETY: the driver's retained table; no invocation overlaps.
+        unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
+            .insert(
+                KeySlot(REPORT_SLOT),
+                KeyEntry::new_carved(report_id, Rights(Rights::SEND), 1 << count),
+                loaded.component.guard,
+            )
+            .unwrap_or_else(|failure| panic!("report grant failed: {:?}", failure.error.code()));
+        count += 1;
+    });
+    assert_eq!(count, INSTANCES, "every instance started");
 
     // The PL011 has its page to itself; `aux` and `uart1` share one.
     for instance in &seen[..count] {

@@ -36,21 +36,20 @@ use {
         ROLE_TERMINATE, ROLE_WHILE_BUSY, ROLE_WITNESS, SEQUENCE_BIT, STACK_REGION, WITNESS_BIT,
     },
     kickstart::{
-        bootstrap::{bootstrap_nucleus, retained_init_memory},
+        image::{BUILDER_ARCHIVE_GUARD, BootImage, BootObjects},
         kickstart_init_el2,
     },
     libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        builder::Builder,
         component::{Component, ttbr},
-        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
+        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor},
         loader::{StackRegion, verify_component, write_init},
-        paging::image_table_count,
     },
     libexception::arch::aarch64::ExceptionOrigin,
     libimage::ComponentImage,
     libkicktest::threads,
     libobject::{
-        CapError, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
+        CapError, KeySlot, NotificationKey, ObjectType, RawKey, Rights,
         address_space::AddressSpaceKey,
     },
     libqemu::semihosting as semi,
@@ -64,13 +63,10 @@ use {
     },
 };
 
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 const FAULTER_GUARD: u32 = 0x0F_A701;
 const BARE_GUARD: u32 = 0x0B_A401;
 /// Pages per stack (each also gets a guard page on both sides).
 const STACK_PAGES: u32 = 4;
-/// Fixture boot-table slots start clear of the well-known bootstrap slots.
-const FIRST_FIXTURE_SLOT: u32 = 64;
 
 libboot::entry!(boot_main);
 
@@ -150,45 +146,21 @@ fn fault_state(nucleus: &Nucleus<ArchObjectsImpl>, address_space: AddressSpaceId
 
 pub fn run() -> ! {
     semi::println!("fault-test: enabled MMU and dropped to EL1");
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let (nucleus, keytable_addr, builder_as) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(boot.boot_untyped_key);
-    let self_table = KeyTableKey::from_key(boot.self_table_key);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let mut slots = SlotCursor::starting_at(FIRST_FIXTURE_SLOT);
-
     // ── The builder's own AddressSpace ────────────────────────────────────
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    let builder_ttbr = ttbr(nucleus, builder_as);
-    verify_retained_image(&retained, &[builder_ttbr]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
-    assert_eq!(TTBR0_EL1.get(), builder_ttbr);
+    let mut boot = BootObjects::bootstrap();
+    let BootImage {
+        nucleus,
+        boot_as_id: builder_as,
+        keys,
+        untyped,
+        self_table,
+        builder,
+        mut slots,
+        ..
+    } = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
+    assert_eq!(TTBR0_EL1.get(), ttbr(nucleus, builder_as));
     // The fixture Threads run on the root Scheduler's dispatcher.
-    libkicktest::dispatcher::init(nucleus, &builder, builder_as, boot.root_scheduler_key);
+    libkicktest::dispatcher::init(nucleus, &builder, builder_as, keys.root_scheduler);
 
     // ── Components ────────────────────────────────────────────────────────
     let faulter = builder.component(&components::FAULTER, FAULTER_GUARD, &mut slots);
@@ -212,7 +184,7 @@ pub fn run() -> ! {
                 0,
                 0,
                 1,
-                &self_table,
+                self_table,
                 slots.take(1),
                 Rights::all(),
             )

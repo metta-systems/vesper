@@ -50,6 +50,22 @@ mod tests {
     }
 
     #[test]
+    fn a_full_table_serves_sixteen_clients() {
+        // The log server of wood-test on the Raspberry Pi 4 has 9 clients;
+        // the table holds 16, each selected by its own badge.
+        assert_eq!(MAX_AREAS, 16);
+        let init = init_with_areas(MAX_AREAS as u64);
+        assert_eq!(init.areas().len(), MAX_AREAS);
+        for index in 0..MAX_AREAS as u64 {
+            let expected = area(index);
+            assert_eq!(
+                init.area_for_badge(expected.base),
+                Some((usize::try_from(index).unwrap(), expected))
+            );
+        }
+    }
+
+    #[test]
     fn the_area_count_is_clamped_to_the_table() {
         let mut init = init_with_areas(MAX_AREAS as u64);
         init.area_count = u64::MAX;

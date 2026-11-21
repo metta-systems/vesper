@@ -37,25 +37,22 @@ use {
         sync::atomic::{AtomicPtr, AtomicU64, Ordering},
     },
     kickstart::{
-        bootstrap::{bootstrap_nucleus, retained_init_memory},
+        image::{BUILDER_ARCHIVE_GUARD, BootImage, BootObjects},
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
     libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        builder::Builder,
         component::ttbr,
         keys::BOOT_TABLE_GUARD,
-        keys::{SlotCursor, boot_key, boot_slot},
+        keys::{boot_key, boot_slot},
         loader::verify_component,
-        paging::image_table_count,
     },
     libexception::arch::aarch64::ExceptionOrigin,
     // `libkicktest` supplies the panic handler.
     libkicktest::{devices, threads},
     libobject::{
-        EventCountKey, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, TimeKey,
-        UntypedKey,
-        address_space::AddressSpaceKey,
+        EventCountKey, KeySlot, NotificationKey, ObjectType, RawKey, Rights, TimeKey,
         scheduler::{SchedulerKey, ThreadStart},
         scheduler_record::{
             FLAG_AWAITING_BUDGET, SchedulerRecord, StopReason, ThreadRecord, ThreadSnapshot,
@@ -81,12 +78,6 @@ const REQUIRED_TICKS: u64 = 8;
 
 /// Boot `KeyTable` slot of the boot Thread's wake-up Notification.
 const WAKE_SLOT: u32 = 16;
-
-/// First boot `KeyTable` slot the builder carves fixtures into.
-const FIRST_FIXTURE_SLOT: u32 = 64;
-
-/// Guard of the `KeyTable` archiving the builder's image Frames.
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 
 /// Guard of the EL0 spinner component's `KeyTable`.
 const SPINNER_GUARD: u32 = 0x05_7101;
@@ -429,43 +420,21 @@ fn exhaustion_scenario() {
 
 pub fn run() -> ! {
     semi::println!("preempt-test: enabled MMU and dropped to EL1");
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(boot.boot_untyped_key);
-    let self_table = KeyTableKey::from_key(boot.self_table_key);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let mut slots = SlotCursor::starting_at(FIRST_FIXTURE_SLOT);
-
     // The builder's own AddressSpace maps the boot image (code, statics and
     // fixture stacks): every Thread here runs in it, so the scheduler can
     // select them with a real root and ASID.
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    verify_retained_image(&retained, &[ttbr(nucleus, boot_as_id)]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
+    let mut boot = BootObjects::bootstrap();
+    let BootImage {
+        nucleus,
+        keytable_addr,
+        boot_as_id,
+        keys,
+        untyped,
+        self_table,
+        builder,
+        mut slots,
+        ..
+    } = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
 
     let wake_key = untyped
         .retype(
@@ -473,7 +442,7 @@ pub fn run() -> ! {
             0,
             0,
             1,
-            &self_table,
+            self_table,
             KeySlot(WAKE_SLOT).0,
             Rights::all(),
         )
@@ -488,7 +457,7 @@ pub fn run() -> ! {
             0,
             0,
             1,
-            &self_table,
+            self_table,
             slots.take(1),
             Rights::all(),
         )
@@ -589,7 +558,7 @@ pub fn run() -> ! {
     let time_before = nucleus.current_time_ns();
 
     // The fixture Threads run on the root Scheduler's dispatcher.
-    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, boot.root_scheduler_key);
+    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, keys.root_scheduler);
     let entries = [
         spinner_a as *const () as u64,
         spinner_b as *const () as u64,
@@ -602,7 +571,7 @@ pub fn run() -> ! {
     // and a Time, fund the Time from the boot Time, then the root Scheduler
     // configures the Thread on it and starts it. The first spinner's Time is
     // infinite; the second's holds a few ticks of CPU time.
-    let boot_time = TimeKey::from_key(boot.boot_time_key);
+    let boot_time = TimeKey::from_key(keys.boot_time);
     let mut retype_time = |budget_ns: u64| {
         let key = untyped
             .retype(
@@ -610,7 +579,7 @@ pub fn run() -> ! {
                 0,
                 0,
                 1,
-                &self_table,
+                self_table,
                 slots.take(1),
                 Rights::all(),
             )
@@ -633,12 +602,12 @@ pub fn run() -> ! {
             0,
             0,
             1,
-            &self_table,
+            self_table,
             spinner_thread_slot,
             Rights::all(),
         )
         .unwrap_or_else(|error| panic!("Thread Retype failed: {:?}", error.code()));
-    let root_scheduler = SchedulerKey::from_key(boot.root_scheduler_key);
+    let root_scheduler = SchedulerKey::from_key(keys.root_scheduler);
     // The scheduler's record table is the Frame mapped for the EL0 reader
     // above: share it with the nucleus, and bind the EventCount the nucleus
     // advances whenever it publishes a change to a record.
@@ -651,7 +620,7 @@ pub fn run() -> ! {
             0,
             0,
             1,
-            &self_table,
+            self_table,
             slots.take(1),
             Rights::all(),
         )
@@ -684,7 +653,7 @@ pub fn run() -> ! {
             0,
             0,
             1,
-            &self_table,
+            self_table,
             slots.take(1),
             Rights::all(),
         )
@@ -712,7 +681,7 @@ pub fn run() -> ! {
             0,
             0,
             1,
-            &self_table,
+            self_table,
             slots.take(1),
             Rights::all(),
         )

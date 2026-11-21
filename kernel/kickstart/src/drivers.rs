@@ -145,8 +145,9 @@ const PCI_INTERFACE: &str = "pci_v1";
 /// is attached to.
 const SERIAL_COMPATIBLE: &str = "arm,pl011";
 
-/// Most driver instances one boot loads.
-pub const MAX_DRIVER_INSTANCES: usize = 16;
+/// Most driver instances one boot loads: the platform's drivers and programs
+/// (kernel/kickstart/platform.toml) and an image's own, with room to grow.
+pub const MAX_DRIVER_INSTANCES: usize = 32;
 
 /// Pages of each driver Thread's stack: 32 KiB (approved by the maintainer).
 /// `usb-core`'s Thread runs the hub loop, an enumeration (its descriptor
@@ -528,13 +529,11 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
             );
             continue;
         }
-        if count == MAX_DRIVER_INSTANCES {
-            crate::early_println!(
-                "🥾 Driver {}: too many instances, {name} skipped",
-                driver.component.name
-            );
-            continue;
-        }
+        assert!(
+            count < MAX_DRIVER_INSTANCES,
+            "🥾 Driver {}: {name} is past {MAX_DRIVER_INSTANCES} driver instances",
+            driver.component.name
+        );
         instances[count] = Some(instance);
         count += 1;
     }
@@ -543,13 +542,11 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
         .iter()
         .filter(|driver| driver.compatible.is_empty() && driver.nodes.is_empty())
     {
-        if count == MAX_DRIVER_INSTANCES {
-            crate::early_println!(
-                "🥾 Program {}: too many instances, skipped",
-                driver.component.name
-            );
-            continue;
-        }
+        assert!(
+            count < MAX_DRIVER_INSTANCES,
+            "🥾 Program {}: more than {MAX_DRIVER_INSTANCES} driver instances",
+            driver.component.name
+        );
         instances[count] = Some(Instance::program(driver));
         count += 1;
     }
@@ -949,10 +946,10 @@ const RECORD_STRIDE: u32 = 128;
 /// Records a Frame holds.
 const RECORDS_PER_FRAME: u32 = 4096 / RECORD_STRIDE;
 
-/// Most Threads the root dispatcher manages: every driver instance's Threads.
-const MAX_MANAGED_THREADS: usize = MAX_DRIVER_INSTANCES * (1 + MAX_FURTHER_THREADS);
-
-const _: () = assert!(MAX_MANAGED_THREADS <= MAX_DISPATCHED_THREADS);
+/// Most Threads the root dispatcher manages: the driver instances' Threads
+/// (their first and up to `MAX_FURTHER_THREADS` further ones each) and the
+/// boot Thread, checked as they start.
+const MAX_MANAGED_THREADS: usize = MAX_DISPATCHED_THREADS;
 
 /// A Thread the root dispatcher dispatches, and its priority.
 #[derive(Clone, Copy)]
@@ -1109,6 +1106,10 @@ pub fn load_drivers(
     };
     // Whether the `VideoCore` memory went to a driver already.
     let mut video_given = false;
+    #[expect(
+        clippy::large_stack_arrays,
+        reason = "24 KiB, once at boot, on the 512 KiB EL1 boot stack"
+    )]
     let mut shared: [Option<(u64, RawKey)>; MAX_DRIVER_INSTANCES * MAX_DEVICE_PAGES] =
         [None; MAX_DRIVER_INSTANCES * MAX_DEVICE_PAGES];
 
@@ -1594,6 +1595,10 @@ pub fn load_drivers(
     // The data area of each pair whose interface has one, as `(base, len)`,
     // the next free address of the window they share, and which instances
     // already have its page table installed.
+    #[expect(
+        clippy::large_stack_arrays,
+        reason = "40 KiB, once at boot, on the 512 KiB EL1 boot stack"
+    )]
     let mut call_areas = [[None::<PairArea>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
     // A slot of Kickstart's own table to make an import key in before it is
     // badged into the client's table.
@@ -2065,6 +2070,10 @@ pub fn load_drivers(
             // The address the nucleus names the Thread by on the board.
             let address = builder.entry(thread).thread_id().map_or(0, |id| id.address);
             crate::early_println!("🥾   thread {address:#x}");
+            assert!(
+                managed_count < MAX_MANAGED_THREADS,
+                "🥾 more than {MAX_MANAGED_THREADS} driver Threads for the root dispatcher"
+            );
             managed[managed_count] = Some(ManagedThread { thread, priority });
             managed_count += 1;
         }

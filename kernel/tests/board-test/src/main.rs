@@ -31,23 +31,10 @@ mod components {
 }
 
 use {
-    kickstart::{
-        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory},
-        drivers::{BootKeys, LoadedDriver, load_drivers},
-        kickstart_init_el2,
-    },
-    libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
-        component::ttbr,
-        keys::{SlotCursor, boot_key},
-        paging::image_table_count,
-    },
+    kickstart::{image::BootObjects, kickstart_init_el2},
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
-    libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
-        address_space::AddressSpaceKey,
-    },
+    libobject::NotificationKey,
     libqemu::semihosting as semi,
 };
 
@@ -56,9 +43,6 @@ libboot::entry!(boot_main);
 fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, run as *const u8 as u64)
 }
-
-/// First boot `KeyTable` slot the builder carves fixtures into.
-const FIRST_FIXTURE_SLOT: u32 = 64;
 
 /// Guard of the `KeyTable` archiving the builder's image Frames.
 const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C03;
@@ -72,49 +56,11 @@ const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C03;
 )]
 pub fn run() -> ! {
     semi::println!("board-test: enabled MMU and dropped to EL1");
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let keys = BootKeys::of(&boot);
-    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(keys.untyped);
-    let self_table = KeyTableKey::from_key(keys.self_table);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let devices = device_untypeds();
-    let mut slots =
-        SlotCursor::starting_at(FIRST_FIXTURE_SLOT).avoiding(devices.first_slot, devices.count);
-
+    let mut boot = BootObjects::bootstrap();
     // The builder's own address space, as in the other driver test kernels.
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    verify_retained_image(&retained, &[ttbr(nucleus, boot_as_id)]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
+    let mut image = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
 
-    let started = load_drivers(
-        nucleus,
-        &builder,
-        keys,
+    let started = image.start_drivers(
         &[
             &components::UART_DRIVER,
             &components::LOG_SERVER_DRIVER,
@@ -132,8 +78,7 @@ pub fn run() -> ! {
             &components::LOG_PROBE_DRIVER,
             &components::DISPATCHER_DRIVER,
         ],
-        &mut slots,
-        |loaded: &LoadedDriver<'_>| {
+        |loaded, _builder| {
             semi::println!(
                 "board-test: {} on {}: {} pages, {} interrupts, {} imports",
                 loaded.driver.component.name,
@@ -147,17 +92,7 @@ pub fn run() -> ! {
     semi::println!("board-test: {started} components started");
 
     // The drivers log on their own; wait for good.
-    let park = untyped
-        .retype(
-            ObjectType::NOTIFICATION,
-            0,
-            0,
-            1,
-            &self_table,
-            slots.take(1),
-            Rights::all(),
-        )
-        .unwrap_or_else(|error| panic!("park Notification Retype failed: {:?}", error.code()));
+    let park = image.notification();
     loop {
         let _woken = NotificationKey::from_key(park).await_bits(NotificationKey::WAIT_INFINITE);
     }

@@ -1,7 +1,7 @@
 [package]
 name = "wood-test"
 
-description = "Vesper end-to-end test kernel: compositor-test's components (the USB stack, the PL011 driver, the mailbox and fb components, the compositor and the shell's lava-lamp window) plus Wood, the Room Doom engine playing its demos in a window of its own."
+description = "Vesper end-to-end image: the platform (kernel/kickstart/platform.toml), the compositor and the shell's lava-lamp window, plus Wood, the Room Doom engine playing its demos in a window of its own, with its music and sound effects."
 
 authors = { workspace = true }
 categories = { workspace = true }
