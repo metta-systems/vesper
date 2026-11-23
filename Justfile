@@ -647,7 +647,7 @@ _firmware:
     makesd="{{ justfile_directory() / 'tools/makesd' }}"
     # pull-firmware fetches this overlay last and stops at the first failure,
     # so it is there only when every firmware file is.
-    if [ ! -f "$makesd/boot/overlays/pwm1.dtbo" ]; then
+    if [ ! -f "$makesd/boot/overlays/mipi-dbi-spi.dtbo" ]; then
         "{{ just_executable() }}" -f "$makesd/Justfile" pull-firmware
     fi
 

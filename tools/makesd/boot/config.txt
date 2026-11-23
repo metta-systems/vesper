@@ -18,5 +18,15 @@ gpu_mem=128
 # BCM2711 ARM Peripherals, section 5.3): the firmware's `pwm1` overlay enables
 # `pwm@7e20c800` with those pins, unpulled like the tree's own audio_pins.
 dtoverlay=pwm1,pins_40_41,pull_off
+# The MSP2202 2.2" ILI9341 SPI panel (240x320 RGB565, no touch) on SPI0 CE0
+# (GPIO 8, MOSI 10, SCLK 11; MISO not wired): the firmware's `mipi-dbi-spi`
+# overlay enables `spi@7e204000` with a `panel@0` child, which names the
+# controller first, its size (active area 33.84x45.12 mm, here rounded to whole
+# millimetres) and its reset and D/C pins, and a `backlight_gpio` node for the
+# LED pin.
+dtoverlay=mipi-dbi-spi,spi0-0,speed=32000000,write-only
+dtparam=compatible=ilitek,ili9341\0panel-mipi-dbi-spi
+dtparam=width=240,height=320,width-mm=34,height-mm=45
+dtparam=reset-gpio=25,dc-gpio=24,backlight-gpio=23
 
 [all]
