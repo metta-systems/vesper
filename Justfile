@@ -18,6 +18,9 @@ rpi5_dtb          := justfile_directory() / 'targets/bcm2712-rpi-5-b.dtb'
 # the tests need no dtc (`just audio-test-dtb` remakes it from targets/overlays/audio-test-pwm.dts,
 # as the board's `pwm-2chan` overlay does)
 audio_test_dtb    := justfile_directory() / 'targets/audio-test.dtb'
+# The rpi4 tree with the MSP2202 SPI panel on SPI0 CE0, as the board's `mipi-dbi-spi` overlay
+# makes it (`just spi-panel-dtb` remakes it from targets/overlays/spi-panel.dts)
+spi_panel_dtb     := justfile_directory() / 'targets/spi-panel-test.dtb'
 
 nucleus_link    := 'linker/nucleus.ld'
 init_link       := 'linker/kickstart.ld'
@@ -310,6 +313,13 @@ audio-test-dtb:
     @mkdir -p "{{ target_root }}"
     dtc -q -@ -I dts -O dtb -o "{{ target_root / 'audio-test-pwm.dtbo' }}" "{{ justfile_directory() / 'targets/overlays/audio-test-pwm.dts' }}"
     fdtoverlay -i "{{ rpi3_dtb }}" -o "{{ audio_test_dtb }}" "{{ target_root / 'audio-test-pwm.dtbo' }}"
+
+# Remake targets/spi-panel-test.dtb after changing the overlay or the rpi4 tree: the rpi4 tree with targets/overlays/spi-panel.dts applied, which puts the MSP2202 ILI9341 panel on SPI0 CE0 as the board's `mipi-dbi-spi` overlay does (needs dtc and fdtoverlay)
+[group("tools")]
+spi-panel-dtb:
+    @mkdir -p "{{ target_root }}"
+    dtc -q -@ -I dts -O dtb -o "{{ target_root / 'spi-panel.dtbo' }}" "{{ justfile_directory() / 'targets/overlays/spi-panel.dts' }}"
+    fdtoverlay -i "{{ rpi4_dtb }}" -o "{{ spi_panel_dtb }}" "{{ target_root / 'spi-panel.dtbo' }}"
 
 # Build midi-test's programs: the player, the MIDI synthesiser and the log server, with the trimmed SoundFont and the song they bundle, for the image configuration `board` + `image_features`; only midi-test bundles the player, so it is not in `user_components`
 _build-midi-player board=boards features='qemu' image_features=features: (_cross-build 'midi-player midi-synth log-server' board user_link features '' image_features)
@@ -1182,7 +1192,7 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'vesper-pci' 'pci') (_host-test 'pcie-brcmstb' 'pcie') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'vesper-device-driver' 'carving') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics') (_host-test 'vesper-stacktrace' 'stacktrace') (_host-test 'vesper-cpu' 'cache')
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'vesper-pci' 'pci') (_host-test 'pcie-brcmstb' 'pcie') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'vesper-device-driver' 'carving') (_host-test 'vesper-device-driver' 'pins') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics') (_host-test 'vesper-stacktrace' 'stacktrace') (_host-test 'vesper-cpu' 'cache')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
@@ -1266,7 +1276,7 @@ _host-clippy package test features='host-tests': _firmware
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'vesper-device-driver' 'carving') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics') (_host-clippy 'vesper-stacktrace' 'stacktrace') (_host-clippy 'vesper-cpu' 'cache')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'vesper-device-driver' 'carving') (_host-clippy 'vesper-device-driver' 'pins') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics') (_host-clippy 'vesper-stacktrace' 'stacktrace') (_host-clippy 'vesper-cpu' 'cache')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')

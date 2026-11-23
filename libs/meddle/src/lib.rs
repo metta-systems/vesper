@@ -17,7 +17,7 @@
 //! data      = "data" number ";" ;
 //! channel   = "channel" number ";" ;
 //! placement = "placement" number ";" ;
-//! badged    = "badged" ";" ;
+//! badged    = "badged" [ "by" "pins" ] ";" ;
 //! alias     = "type" type name ";" ;
 //! enum      = "enum" name "{" name { "," name } [ "," ] "}" ;
 //! record    = "record" name "{" { field ";" } "}" ;
@@ -355,6 +355,9 @@ pub struct InterfaceSummary {
     /// Data pages of the io-channel each client shares with the exporter
     /// besides its control page (zero: none)
     pub channel_pages: u64,
+    /// Whether each client's key is badged with the GPIO pins its device
+    /// tree node names (`badged by pins;`)
+    pub pin_badged: bool,
     /// The interface's functions, in declaration order: a function's
     /// position is its index in import records
     pub functions: Vec<String>,
@@ -414,6 +417,7 @@ pub fn summarize_interface(
         data_bytes: checked.data_bytes(),
         placement_slots: checked.placement_slots(),
         channel_pages: checked.channel_pages(),
+        pin_badged: checked.interface().pin_badged,
         functions: checked
             .interface()
             .methods

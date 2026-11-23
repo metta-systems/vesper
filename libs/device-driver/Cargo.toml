@@ -38,5 +38,9 @@ required-features = ["host-tests"]
 name = "carving"
 required-features = ["host-tests"]
 
+[[test]]
+name = "pins"
+required-features = ["host-tests"]
+
 [lints]
 workspace = true

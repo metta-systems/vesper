@@ -980,7 +980,9 @@ fn write_fingerprint(
     if let Some(declaration) = &interface.channel {
         write!(text, "channel {};", declaration.pages)?;
     }
-    if interface.badged {
+    if interface.pin_badged {
+        write!(text, "badged by pins;")?;
+    } else if interface.badged {
         write!(text, "badged;")?;
     }
     for definition in &interface.types {

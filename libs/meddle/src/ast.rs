@@ -59,6 +59,10 @@ pub struct Interface {
     /// Whether every function receives the badge of the key it was called
     /// through (`badged;`)
     pub badged: bool,
+    /// Whether the badge is the client's GPIO pin set (`badged by pins;`):
+    /// Kickstart badges each client's key with the pins its device tree node
+    /// names, so the exporter serves a client the pins it owns only
+    pub pin_badged: bool,
     pub methods: Vec<Method>,
 }
 

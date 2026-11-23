@@ -76,6 +76,22 @@ mod tests {
         check::check(&interface, &others).map_or(0, |checked| checked.type_code())
     }
 
+    /// `badged by pins;` is `badged;` whose badge is the client's pin set:
+    /// the functions receive the badge, and the type code tells it apart.
+    #[test]
+    fn pin_badges_are_badges_of_their_own_type() {
+        let pins = interface("local interface gpio_v1 { badged by pins; f(card32 pin); }");
+        assert!(pins.badged && pins.pin_badged);
+        let plain = interface("local interface gpio_v1 { badged; f(card32 pin); }");
+        assert!(plain.badged && !plain.pin_badged);
+        assert_ne!(
+            type_code("local interface gpio_v1 { badged by pins; f(card32 pin); }"),
+            type_code("local interface gpio_v1 { badged; f(card32 pin); }")
+        );
+        let (_file, diagnostics) = parse("local interface gpio_v1 { badged by; f(); }");
+        assert!(!diagnostics.is_empty(), "`badged by` needs `pins`");
+    }
+
     #[test]
     fn mailbox_interface_parses_with_its_documentation() {
         let mailbox = interface(MAILBOX);

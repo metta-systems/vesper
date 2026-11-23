@@ -500,6 +500,64 @@ fn brcm_binding_pins<'a, 'i: 'a, 'dt: 'i>(
     })
 }
 
+/// The GPIO pins of the controller `controller` (by its phandle) that `node`
+/// uses, as a mask (bit `n` is pin `n`; pins above 62 are left out):
+///
+/// - the pins of its default pin state (`pinctrl-0`, see [`brcm_pins`]);
+/// - the pin of every specifier of its `gpios` and `<name>-gpios` properties
+///   that names `controller` (`reset-gpios = <&gpio 25 0>`), each specifier
+///   one phandle and the controller's `#gpio-cells` (2 when absent) cells, the
+///   first the pin;
+/// - the same of the node its `backlight` property links to
+///   (`gpio-backlight`, whose `gpios` name the LED pin).
+pub fn gpio_pins(tree: &DevTreeIndex<'_, '_>, node: &Node<'_, '_, '_>, controller: u32) -> u64 {
+    let mut mask = brcm_pins(tree, node).fold(0, |mask, pin| with_pin(mask, pin.pin));
+    mask |= gpio_specifier_pins(tree, node, controller);
+    if let Some(backlight) =
+        linked_phandle(node, "backlight").and_then(|linked| node_by_phandle(tree, linked))
+    {
+        mask |= gpio_specifier_pins(tree, &backlight, controller);
+    }
+    mask
+}
+
+/// `mask` with `pin` added, if it fits.
+const fn with_pin(mask: u64, pin: u32) -> u64 {
+    if pin < 63 { mask | (1 << pin) } else { mask }
+}
+
+/// The pins of `controller` that `node`'s `gpios` and `<name>-gpios`
+/// specifiers name.
+fn gpio_specifier_pins(
+    tree: &DevTreeIndex<'_, '_>,
+    node: &Node<'_, '_, '_>,
+    controller: u32,
+) -> u64 {
+    let mut mask = 0;
+    for prop in node.props() {
+        let Ok(name) = prop.name() else { continue };
+        if name != "gpios" && !name.ends_with("-gpios") {
+            continue;
+        }
+        let words = prop.length() / size_of::<u32>();
+        let mut at = 0;
+        while at < words {
+            let Ok(target) = prop.u32(at) else { break };
+            let cells = node_by_phandle(tree, target)
+                .and_then(|provider| property(&provider, "#gpio-cells"))
+                .and_then(|cells| cells.u32(0).ok())
+                .map_or(2, |cells| cells as usize);
+            if target == controller
+                && let Ok(pin) = prop.u32(at + 1)
+            {
+                mask = with_pin(mask, pin);
+            }
+            at += 1 + cells;
+        }
+    }
+    mask
+}
+
 /// The node in `tree` whose `phandle` property equals `phandle`.
 pub fn node_by_phandle<'a, 'i: 'a, 'dt: 'i>(
     tree: &'a DevTreeIndex<'i, 'dt>,
