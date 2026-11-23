@@ -293,17 +293,27 @@ mod tests {
             "local interface a_v1 { data 4096; f(octet& a, octet& b, octet& c, card32 d); }",
             "takes 7 argument words",
         );
-        assert_reports(
-            "interface a_v1 { record pair { card32 a; card32 b; } f() returns (pair p); }",
-            "returns 2 words",
+        // Five words fit beside the outcome, as results or exception fields.
+        assert!(
+            check_messages(
+                "interface a_v1 { record pair { card32 a; card32 b; } \
+                 exception wide { card32 a; card32 b; card32 c; card32 d; card32 e; } \
+                 f() returns (pair p, card32 c, card64 d, boolean e) raises (wide); }"
+            )
+            .is_empty()
         );
         assert_reports(
-            "interface a_v1 { f() returns (card32 a, card32 b); }",
-            "returns 2 words",
+            "interface a_v1 { record pair { card32 a; card32 b; } \
+             f() returns (pair p, pair q, card32 c, card32 d); }",
+            "returns 6 words",
         );
         assert_reports(
-            "interface a_v1 { exception wide { card32 a; card32 b; } }",
-            "carries 2 words",
+            "interface a_v1 { f() returns (card32 a, card32 b, card32 c, card32 d, card32 e, card32 f); }",
+            "returns 6 words",
+        );
+        assert_reports(
+            "interface a_v1 { exception wide { card32 a; card32 b; card32 c; card32 d; card32 e; card32 f; } }",
+            "carries 6 words",
         );
     }
 
@@ -644,6 +654,47 @@ mod tests {
         assert!(client_module.contains("exception @ (Exception::FirmwareError { .. }"));
         // Each function's export entry is named after the interface.
         assert!(interface_module.contains("export_function!(mailbox_v1_get_clock_rate"));
+    }
+
+    #[test]
+    fn several_results_travel_as_ordered_words_and_a_tuple() {
+        let text = "interface a_v1 {
+            exception wide { card32 a; card64 b; }
+            rate() returns (card32 numerator, card32 denominator) raises (wide);
+        }";
+        let interface_module =
+            with_checked(text, |checked| emit::interface_module(checked, "a_v1.if"));
+        let client_module =
+            with_checked(text, |checked| emit::client_module(checked, "a_v1.if", "a"));
+        syn::parse_file(&interface_module).expect("generated code parses");
+        syn::parse_file(&client_module).expect("generated code parses");
+        let interface_module = squash(&interface_module);
+        let client_module = squash(&client_module);
+        // The trait returns a tuple; the dispatcher stores it from word 0 on.
+        assert!(
+            interface_module.contains("fnrate()->Result<(u32,u32),Exception>;"),
+            "{interface_module}"
+        );
+        assert!(interface_module.contains("Ok((result_numerator,result_denominator))=>{"));
+        assert!(interface_module.contains("Words::store(&result_numerator,&mutwords);"));
+        assert!(interface_module.contains("Words::store(&result_denominator,&mutwords[1..]);"));
+        assert!(interface_module.contains("__runtime::ok(words)"));
+        // Exception fields fill the answer words, and decoding checks the rest.
+        assert!(interface_module.contains("__runtime::exception(0,words)"));
+        assert!(interface_module.contains("1if__runtime::unused_words_are_zero(&words,2)"));
+        // The client checks the unused words and loads each result.
+        assert!(
+            client_module.contains("OUTCOME_OKif__runtime::unused_words_are_zero(&words,2)"),
+            "{client_module}"
+        );
+        assert!(
+            client_module.contains(
+                "letSome(result_denominator)=<u32as__runtime::Words>::load(&words[1..],)"
+            ),
+            "{client_module}"
+        );
+        assert!(client_module.contains("Ok((result_numerator,result_denominator))"));
+        assert!(client_module.contains("->Result<(u32,u32),Error>"));
     }
 
     /// The generated source with all whitespace removed, so assertions do not

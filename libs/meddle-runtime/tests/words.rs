@@ -5,7 +5,7 @@
 mod tests {
     use metta_meddle_runtime::{
         ARGUMENT_WORDS, ChannelArea, DataArea, ImportRecord, IoRec, OUTCOME_MALFORMED, OUTCOME_OK,
-        Words, exception, malformed, ok, unused_words_are_zero,
+        RESULT_WORDS, Words, exception, malformed, ok, unused_words_are_zero,
     };
 
     fn round_trip<T: Words + PartialEq + core::fmt::Debug>(value: &T) {
@@ -60,9 +60,22 @@ mod tests {
 
     #[test]
     fn outcomes_are_ok_exception_index_plus_one_or_malformed() {
-        assert_eq!(ok(7).words, [OUTCOME_OK, 7, 0, 0, 0, 0]);
-        assert_eq!(exception(2, 9).words, [3, 9, 0, 0, 0, 0]);
+        assert_eq!(ok([7, 0, 0, 0, 0]).words, [OUTCOME_OK, 7, 0, 0, 0, 0]);
+        assert_eq!(exception(2, [9, 0, 0, 0, 0]).words, [3, 9, 0, 0, 0, 0]);
         assert_eq!(malformed().words, [OUTCOME_MALFORMED, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn answers_carry_five_ordered_words_after_the_outcome() {
+        assert_eq!(RESULT_WORDS, 5);
+        assert_eq!(ok([1, 2, 3, 4, 5]).words, [OUTCOME_OK, 1, 2, 3, 4, 5]);
+        assert_eq!(
+            exception(0, [u64::MAX, 0, 0, 0, 0x55]).words,
+            [1, u64::MAX, 0, 0, 0, 0x55]
+        );
+        // Answer words past the results must be zero, like argument words.
+        assert!(unused_words_are_zero(&[1, 2, 0, 0, 0], 2));
+        assert!(!unused_words_are_zero(&[1, 2, 0, 0, 9], 2));
     }
 
     #[test]
