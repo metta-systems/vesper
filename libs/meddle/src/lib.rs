@@ -32,7 +32,7 @@
 //! uses      = "uses" name "via" provider { "or" provider }
 //!             "{" name { "," name } [ "," ] "}" ;
 //! provider  = "device" link { "," link } | "component" name ;
-//! link      = name | string | "compatible" string ;
+//! link      = name | string | "compatible" string | "parent" ;
 //! ```
 //!
 //! `#` starts a comment, `##` a documentation comment for the item that
@@ -385,6 +385,8 @@ pub enum LinkSummary {
     Property(String),
     /// The one enabled node with this `compatible` string
     Compatible(String),
+    /// The parent node (of the client or of the previous step's node)
+    Parent,
 }
 
 /// How an import finds its exporting instance.
@@ -480,6 +482,7 @@ pub fn summarize_imports(
                                     ast::Link::Compatible(name) => {
                                         LinkSummary::Compatible(name.text.clone())
                                     }
+                                    ast::Link::Parent(_) => LinkSummary::Parent,
                                 })
                                 .collect(),
                         ),

@@ -620,6 +620,34 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert!(file.is_some());
     }
+
+    /// `parent` is the bus the client's node sits on (a panel's SPI
+    /// controller); a property named `parent` is written quoted.
+    #[test]
+    fn a_device_chain_can_step_to_the_parent_node() {
+        let links = |text: &str| {
+            let (file, diagnostics) = parse(text);
+            assert!(diagnostics.is_empty(), "{text}: {diagnostics:?}");
+            let mut file = file.expect("a parsed file");
+            match file.uses.remove(0).providers.remove(0) {
+                Provider::Device(links) => links,
+                Provider::Component(_) => panic!("a device chain"),
+            }
+        };
+        assert!(matches!(
+            links("uses spi_v1 via device parent { transfer }").as_slice(),
+            [Link::Parent(_)]
+        ));
+        assert!(matches!(
+            links("uses clock_v1 via device parent, clocks { set_rate }").as_slice(),
+            [Link::Parent(_), Link::Property(name)] if name.text == "clocks"
+        ));
+        assert!(matches!(
+            links("uses spi_v1 via device \"parent\" { transfer }").as_slice(),
+            [Link::Property(name)] if name.text == "parent"
+        ));
+    }
+
     #[test]
     fn type_code_ignores_documentation_and_tracks_signatures() {
         let base = type_code("interface a_v1 { f(card32 x); }");

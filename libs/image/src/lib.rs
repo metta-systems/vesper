@@ -134,6 +134,9 @@ pub enum Link {
     /// The one enabled node with this `compatible` string; only a chain's
     /// first step
     Compatible(&'static str),
+    /// The current node's parent: the bus a device on a non-memory-mapped
+    /// bus (SPI, I2C) sits on
+    Parent,
 }
 
 /// How an import finds the instance it calls.

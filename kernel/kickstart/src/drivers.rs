@@ -481,21 +481,25 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
     let mut instances = [const { None }; MAX_DRIVER_INSTANCES];
     let mut count = 0;
     for node in tree.nodes() {
-        if !is_enabled(&node) {
+        // A node is driven only when it and every bus above it are enabled: a
+        // disabled bus disables what sits on it (QEMU disables a PCI bridge
+        // and leaves its children's status alone; the stock Raspberry Pi 4
+        // tree disables SPI0 and keeps its `spidev@0` child enabled).
+        if !is_enabled(&node) || !ancestors_enabled(&node) {
             continue;
         }
-        // A node the manifest names by path takes compatible index 0. Such a
-        // node (behind a PCI bridge) is matched only when its bus is enabled
-        // too: QEMU disables the bridge and leaves its children's status alone.
+        // A node the manifest names by path takes compatible index 0.
         let Some((driver, compatible_index)) = drivers.iter().find_map(|driver| {
             driver
                 .compatible
                 .iter()
                 .position(|entry| is_compatible(&node, entry))
                 .or_else(|| {
-                    (driver.nodes.iter().any(|path| has_path(&node, path))
-                        && ancestors_enabled(&node))
-                    .then_some(0)
+                    driver
+                        .nodes
+                        .iter()
+                        .any(|path| has_path(&node, path))
+                        .then_some(0)
                 })
                 .map(|index| (*driver, index))
         }) else {
@@ -730,9 +734,10 @@ fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
 /// The node `links` lead to from `node` (none for a program, which has no
 /// node, so its chain starts with `compatible`): a property step reads the
 /// first cell of the current node's property as the phandle of the next node,
-/// and a `compatible` first step starts from the first enabled node with that
-/// string (a disabled node has no instance; the Raspberry Pi trees describe
-/// the Arasan controller twice, once disabled, at one address).
+/// a `parent` step goes up to the bus the current node sits on (a panel's SPI
+/// controller), and a `compatible` first step starts from the first enabled
+/// node with that string (a disabled node has no instance; the Raspberry Pi
+/// trees describe the Arasan controller twice, once disabled, at one address).
 fn follow_links<'a, 'i, 'dt>(
     tree: &'a DevTreeIndex<'i, 'dt>,
     node: Option<&Node<'a, 'i, 'dt>>,
@@ -748,6 +753,7 @@ fn follow_links<'a, 'i, 'dt>(
                 .nodes()
                 .find(|candidate| is_enabled(candidate) && is_compatible(candidate, compatible))?,
             Link::Compatible(_) => return None,
+            Link::Parent => current.as_ref()?.parent()?,
         });
     }
     current
@@ -781,6 +787,7 @@ impl core::fmt::Display for Provided {
                             Link::Compatible(compatible) => {
                                 write!(formatter, "compatible \"{compatible}\"")?;
                             }
+                            Link::Parent => formatter.write_str("parent")?,
                         }
                     }
                 }

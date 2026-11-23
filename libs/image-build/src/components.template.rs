@@ -46,7 +46,7 @@ pub static {{component.stem}}: ComponentImage = ComponentImage {
     ],
     imports: &[
 {% for import in component.imports %}
-        Import { interface: "{{import.interface}}", type_code: {{import.type_code | code}}, function: {{import.function}}, providers: &[{% for provider in import.providers %}{% if provider.component %}Provider::Component("{{provider.component}}"){% else %}Provider::Device(&[{% for link in provider.links %}{% if link.property %}Link::Property("{{link.name}}"){% else %}Link::Compatible("{{link.name}}"){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}]){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}], data_bytes: {{import.data_bytes}}, placement_slots: {{import.placement_slots}}, channel_pages: {{import.channel_pages}}, pin_badged: {{import.pin_badged | bool}}, lends: {{import.lends | bool}}, export: "{{import.export}}" },
+        Import { interface: "{{import.interface}}", type_code: {{import.type_code | code}}, function: {{import.function}}, providers: &[{% for provider in import.providers %}{% if provider.component %}Provider::Component("{{provider.component}}"){% else %}Provider::Device(&[{% for link in provider.links %}{% if link.parent %}Link::Parent{% elif link.property %}Link::Property("{{link.name}}"){% else %}Link::Compatible("{{link.name}}"){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}]){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}], data_bytes: {{import.data_bytes}}, placement_slots: {{import.placement_slots}}, channel_pages: {{import.channel_pages}}, pin_badged: {{import.pin_badged | bool}}, lends: {{import.lends | bool}}, export: "{{import.export}}" },
 {% endfor %}
     ],
     resources: &[
