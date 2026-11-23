@@ -1,6 +1,7 @@
 [build]
 # https://internals.rust-lang.org/t/evaluating-pipelined-rustc-compilation/10199/12
 pipelining = true
+rustflags = ["-Zunstable-options", "--jobs-frontend=8"]
 
 [target.aarch64-metta-none-eabi]
 runner = "just _test-runner"
