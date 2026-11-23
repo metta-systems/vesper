@@ -157,13 +157,18 @@ pub enum Link {
     /// The one enabled node with this `compatible` string; only a chain's
     /// first step, for providers no property of the client leads to
     Compatible(Name),
+    /// `parent`: the client's (or the previous step's) parent node, the bus
+    /// a device on a non-memory-mapped bus (SPI, I2C) sits on; the name is
+    /// the keyword as written
+    Parent(Name),
 }
 
 impl Link {
-    /// The property name or `compatible` string the step is written with.
+    /// The property name or `compatible` string the step is written with (the
+    /// keyword for `parent`).
     pub const fn name(&self) -> &Name {
         match self {
-            Self::Property(name) | Self::Compatible(name) => name,
+            Self::Property(name) | Self::Compatible(name) | Self::Parent(name) => name,
         }
     }
 }

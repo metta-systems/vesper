@@ -1294,6 +1294,9 @@ fn interface_contexts(
                                 libmeddle::LinkSummary::Compatible(name) => {
                                     context! { property => false, name }
                                 }
+                                libmeddle::LinkSummary::Parent => {
+                                    context! { parent => true }
+                                }
                             })
                             .collect::<Vec<_>>(),
                     },

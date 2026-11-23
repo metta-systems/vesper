@@ -311,9 +311,18 @@ where
             span: span.into_range(),
         }
     });
+    // `parent` is contextual: a property of that name is written quoted.
+    let parent = select! { Token::Identifier("parent") => () }.map_with(|(), extra| {
+        let span: SimpleSpan = extra.span();
+        Link::Parent(Name {
+            text: "parent".to_owned(),
+            span: span.into_range(),
+        })
+    });
     let link = just(Token::Compatible)
         .ignore_then(text_name)
         .map(Link::Compatible)
+        .or(parent)
         .or(name.or(text_name).map(Link::Property))
         .labelled("a device tree property");
 
