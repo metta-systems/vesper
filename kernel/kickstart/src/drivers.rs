@@ -94,12 +94,12 @@ use {
         MAX_INTERRUPTS, MAX_PCI_CHILDREN, MAX_PINS, MAX_REGIONS, MAX_RESETS, MAX_RESOURCES,
         MAX_VIDEO_BLOCKS, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN, MapWindow, NO_BUS_ADDRESS,
         NO_PULL, NONE_INDEX, PAGE_FRAME, PAGE_UNTYPED, PCI_SPACE_IO, PCI_SPACE_MEMORY32,
-        PCI_SPACE_MEMORY64, PciChild, PciHost, PciWindow, PinSetting, Priority, RESET_NAME_BYTES,
-        Region, Reset, ResourceRecord, STACK_REGION, StackSpan,
+        PCI_SPACE_MEMORY64, PciChild, PciHost, PciWindow, PinSet, PinSetting, Priority,
+        RESET_NAME_BYTES, Region, Reset, ResourceRecord, STACK_REGION, StackSpan,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
-        fixed_clock_rate, has_path,
+        fixed_clock_rate, gpio_pins, has_path,
         interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts, interrupt_named},
         is_compatible, is_enabled, linked_phandle, node_by_phandle,
         pci::{
@@ -1845,26 +1845,41 @@ pub fn load_drivers(
                         exporting.instance.driver.component.name, import.export
                     )
                 });
-            let calling = prepared[client].as_mut().expect("a loaded client");
-            let slot = calling.next_slot;
-            calling.next_slot += 1;
             // The key the client holds carries the identity of its pair as its
             // badge (the base of the pair's shared memory, which is nonzero), so
             // the exporter knows its caller from the key and not from where the
-            // call runs. A pair without shared memory gets an unbadged key. The
+            // call runs. An interface that says `badged by pins;` (gpio_v1)
+            // badges the key with the pins the client's node names on the
+            // exporter's controller instead, so the exporter serves a client
+            // its own pins only (`PinSet`); a client without a node owns none.
+            // A pair without shared memory and pins gets an unbadged key. The
             // badge is set by deriving from a key Kickstart makes first in its
             // own table; the client gets `CALL` only, and a badged key cannot be
             // badged again whatever its rights.
+            let badge = if import.pin_badged {
+                let controller = exporting.instance.node.as_ref().and_then(phandle);
+                let pins = client_instance
+                    .node
+                    .as_ref()
+                    .zip(controller)
+                    .map_or(0, |(node, controller)| gpio_pins(tree, node, controller));
+                PinSet::from_mask(pins).badge()
+            } else {
+                area_base
+            };
+            let calling = prepared[client].as_mut().expect("a loaded client");
+            let slot = calling.next_slot;
+            calling.next_slot += 1;
             let client_table = calling.component.table();
             let created = exporter_space
                 .create_invocation_with_window(
                     entry,
-                    if area_base == 0 {
+                    if badge == 0 {
                         &client_table
                     } else {
                         &self_table
                     },
-                    KeySlot(if area_base == 0 { slot } else { scratch_slot }),
+                    KeySlot(if badge == 0 { slot } else { scratch_slot }),
                     export_pool,
                     window.unwrap_or(PlacementWindow::NONE),
                 )
@@ -1875,7 +1890,7 @@ pub fn load_drivers(
                         error.code()
                     )
                 });
-            let invocation = if area_base == 0 {
+            let invocation = if badge == 0 {
                 created
             } else {
                 let badged = self_table
@@ -1884,7 +1899,7 @@ pub fn load_drivers(
                         &calling.component.table(),
                         slot,
                         Rights(Rights::CALL),
-                        area_base,
+                        badge,
                     )
                     .unwrap_or_else(|error| {
                         panic!(

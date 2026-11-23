@@ -28,7 +28,8 @@ enum Member {
     Data(DataDeclaration),
     Placement(PlacementDeclaration),
     Channel(ChannelDeclaration),
-    Badged,
+    /// `badged;`, or `badged by pins;` (true)
+    Badged(bool),
     /// A member that did not parse; its error is already reported.
     Invalid,
 }
@@ -40,7 +41,7 @@ enum MemberBody {
     Data(DataDeclaration),
     Placement(PlacementDeclaration),
     Channel(ChannelDeclaration),
-    Badged,
+    Badged(bool),
     Method {
         name: Name,
         parameters: Vec<Field>,
@@ -195,7 +196,14 @@ where
         )
         .then_ignore(just(Token::Semicolon));
 
-    let badged = just(Token::Badged).ignore_then(just(Token::Semicolon));
+    // `by pins` is contextual: the badge is the client's GPIO pin set.
+    let by_pins = select! { Token::Identifier("by") => () }
+        .ignore_then(select! { Token::Identifier("pins") => () })
+        .labelled("`by pins`");
+    let badged = just(Token::Badged)
+        .ignore_then(by_pins.or_not())
+        .then_ignore(just(Token::Semicolon))
+        .map(|by_pins| by_pins.is_some());
 
     let member = docs
         .then(choice((
@@ -204,7 +212,7 @@ where
             data.map(MemberBody::Data),
             placement.map(MemberBody::Placement),
             channel.map(MemberBody::Channel),
-            badged.map(|_semicolon| MemberBody::Badged),
+            badged.map(MemberBody::Badged),
             method.map(
                 |(((((name, parameters), lends), installs), results), raises)| MemberBody::Method {
                     name,
@@ -221,7 +229,7 @@ where
             MemberBody::Data(declaration) => Member::Data(declaration),
             MemberBody::Placement(declaration) => Member::Placement(declaration),
             MemberBody::Channel(declaration) => Member::Channel(declaration),
-            MemberBody::Badged => Member::Badged,
+            MemberBody::Badged(by_pins) => Member::Badged(by_pins),
             MemberBody::Exception(name, fields) => {
                 Member::Exception(Exception { doc, name, fields })
             }
@@ -275,6 +283,7 @@ where
                 placement: None,
                 channel: None,
                 badged: false,
+                pin_badged: false,
                 methods: Vec::new(),
             };
             for member in members {
@@ -285,7 +294,10 @@ where
                     Member::Data(declaration) => interface.data = Some(declaration),
                     Member::Placement(declaration) => interface.placement = Some(declaration),
                     Member::Channel(declaration) => interface.channel = Some(declaration),
-                    Member::Badged => interface.badged = true,
+                    Member::Badged(by_pins) => {
+                        interface.badged = true;
+                        interface.pin_badged |= by_pins;
+                    }
                     Member::Invalid => {}
                 }
             }

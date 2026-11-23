@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: BlueOak-1.0.0
+//
+// The MSP2202 2.2" ILI9341 SPI panel on the Raspberry Pi 4's SPI0 CE0, for
+// tests: the effect of the firmware's
+//
+//     dtoverlay=mipi-dbi-spi,spi0-0,speed=32000000,write-only
+//     dtparam=compatible=ilitek,ili9341\0panel-mipi-dbi-spi
+//     dtparam=width=240,height=320,width-mm=34,height-mm=45
+//     dtparam=reset-gpio=25,dc-gpio=24,backlight-gpio=23
+//
+// in `config.txt` on the board (tools/makesd/boot/config.txt), with the
+// overlay's parameters already applied (raspberrypi/firmware
+// `boot/overlays/mipi-dbi-spi.dtbo`, decompiled): SPI0 enabled and its
+// `spidev@0` disabled, a `panel@0` child on chip select 0 with its size,
+// timing, reset and D/C pins and a link to a `gpio-backlight` node on GPIO 23.
+//
+// `just spi-panel-dtb` applies it to `targets/bcm2711-rpi-4-b.dtb` with
+// `fdtoverlay`, the same way the firmware applies the board's overlay.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target-path = "/soc/spi@7e204000/spidev@0";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@1 {
+		target = <&spi0>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			panel: panel@0 {
+				compatible = "ilitek,ili9341", "panel-mipi-dbi-spi";
+				reg = <0>;
+				spi-max-frequency = <32000000>;
+				write-only;
+				width-mm = <34>;
+				height-mm = <45>;
+				reset-gpios = <&gpio 25 0>;
+				dc-gpios = <&gpio 24 0>;
+				backlight = <&backlight_gpio>;
+
+				panel-timing {
+					hactive = <240>;
+					vactive = <320>;
+					hback-porch = <0>;
+					vback-porch = <0>;
+					clock-frequency = <0>;
+					hfront-porch = <0>;
+					hsync-len = <0>;
+					vfront-porch = <0>;
+					vsync-len = <0>;
+				};
+			};
+		};
+	};
+
+	fragment@2 {
+		target-path = "/";
+		__overlay__ {
+			backlight_gpio: backlight_gpio {
+				compatible = "gpio-backlight";
+				gpios = <&gpio 23 0>;
+			};
+		};
+	};
+};

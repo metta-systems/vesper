@@ -4,11 +4,50 @@
 mod tests {
     use {
         gpio::gpio_v1::{PinFunction, PinPull},
-        gpio_bcm2835::{Chip, FunctionSelect, RegisterBlock, apply_pull, place, select},
+        gpio_bcm2835::{
+            Chip, FunctionSelect, RegisterBlock, apply_pull, level, place, select, set_level,
+        },
     };
 
     /// Words of the block's registers: 0xf4 bytes.
     const BLOCK_WORDS: usize = 61;
+
+    /// Word indices of `GPSET0`, `GPCLR0` and `GPLEV0` (offsets 0x1c, 0x28 and
+    /// 0x34, BCM2711 ARM Peripherals, section 5.2).
+    const SET_WORD: usize = 0x1c / 4;
+    const CLEAR_WORD: usize = 0x28 / 4;
+    const LEVEL_WORD: usize = 0x34 / 4;
+
+    #[test]
+    fn a_level_is_one_write_to_the_set_or_clear_bank() {
+        let mut block = Block([0; BLOCK_WORDS]);
+        // GPIO 23 and 24 read high, 25 low.
+        block.0[LEVEL_WORD] = (1 << 23) | (1 << 24);
+        {
+            // SAFETY: `block` outlives the handle and nothing else touches it.
+            let mut registers =
+                unsafe { RegisterBlock::new_mmio(block.0.as_mut_ptr().cast::<RegisterBlock>()) };
+            // The panel's backlight on (GPIO 23), D/C low (GPIO 24), and a pin
+            // of the second bank (GPIO 41) high.
+            assert_eq!(set_level(&mut registers, Chip::Bcm2711, 23, true), Some(()));
+            assert_eq!(
+                set_level(&mut registers, Chip::Bcm2711, 24, false),
+                Some(())
+            );
+            assert_eq!(set_level(&mut registers, Chip::Bcm2711, 41, true), Some(()));
+            assert_eq!(set_level(&mut registers, Chip::Bcm2711, 58, true), None);
+            assert_eq!(set_level(&mut registers, Chip::Bcm2835, 54, true), None);
+            assert_eq!(level(&mut registers, Chip::Bcm2711, 23), Some(true));
+            assert_eq!(level(&mut registers, Chip::Bcm2711, 25), Some(false));
+            assert_eq!(level(&mut registers, Chip::Bcm2711, 58), None);
+        }
+        // Each write names one pin; the last write to a bank is what the
+        // memory holds.
+        assert_eq!(block.0[SET_WORD], 1 << 23);
+        assert_eq!(block.0[SET_WORD + 1], 1 << (41 - 32));
+        assert_eq!(block.0[CLEAR_WORD], 1 << 24);
+        assert_eq!(block.0[CLEAR_WORD + 1], 0);
+    }
 
     /// Memory standing in for the block's registers.
     #[repr(C, align(4))]

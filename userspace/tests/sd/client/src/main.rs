@@ -9,7 +9,8 @@
 //! the request queue on the io-channel: it reads marked blocks of the card
 //! image the test attaches, writes blocks and reads them back, one and several
 //! per request, and checks the requests the driver must refuse. Where the
-//! image wires `gpio_v1` (sd-test), it also checks a pull change. It then
+//! image wires `gpio_v1` (sd-test), it also checks the gpio component refuses
+//! a pin this program does not own. It then
 //! reports on the key the test installed (`driver_protocol::REPORT_SLOT`).
 
 use {
@@ -40,7 +41,7 @@ const SCRATCH_BLOCK: u64 = 100;
 /// Blocks of the run written and read back in one request each.
 const MULTIPLE_BLOCKS: u64 = 3;
 
-/// A GPIO pin no device of the board uses, for the pull check.
+/// A GPIO pin no device of the board uses, for the ownership check.
 const UNUSED_PIN: u32 = 26;
 
 /// The program's second Thread: it reports in on the component's own
@@ -332,18 +333,25 @@ fn main(init_va: u64) -> ! {
     );
     semi::println!("sd-test: the driver refused the malformed requests");
 
-    // A pull change through the gpio component, on a pin nothing else uses,
-    // where the image wires `gpio_v1` (the SDHOST image does).
+    // Pin ownership through the gpio component, where the image wires
+    // `gpio_v1` (the SDHOST image does): this program has no device tree
+    // node, so its key owns no pin, and the component refuses a pull on any
+    // pin of the block; a pin the block does not have is refused as such.
     if init
         .imports()
         .iter()
         .any(|record| record.type_code == gpio_v1::TYPE_CODE)
     {
         let gpio = gpio_v1::Client::new(gpio_v1::Bindings::from_imports(init.imports()));
-        gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Up)
-            .expect("a pull on a pin of the block");
-        gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Off)
-            .expect("a pull on a pin of the block");
+        assert!(
+            matches!(
+                gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Up),
+                Err(gpio_v1::Error::Exception(gpio_v1::Exception::NotOwned {
+                    pin: UNUSED_PIN
+                }))
+            ),
+            "a program without a node owns no pin"
+        );
         assert!(
             matches!(
                 gpio.set_pull(54, gpio_v1::PinPull::Up),
@@ -353,7 +361,9 @@ fn main(init_va: u64) -> ! {
             ),
             "the block has 54 pins"
         );
-        semi::println!("sd-test: pulled GPIO {UNUSED_PIN} up and back off");
+        semi::println!(
+            "sd-test: the gpio component refused GPIO {UNUSED_PIN}, a pin this program does not own"
+        );
     }
 
     NotificationKey::from_key(report_key(init.table))

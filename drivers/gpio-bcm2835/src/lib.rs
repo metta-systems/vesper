@@ -107,15 +107,29 @@ pub struct PullResistorControl {
     pull: [Option<PullResistor>; 16],
 }
 
-/// The block's function select and pull registers: the BCM2835's
-/// `GPPUD`/`GPPUDCLKn` and the BCM2711's `GPIO_PUP_PDN_CNTRL_REGn`; each chip
-/// uses its own.
+/// The block's function select, output and level registers, and its pull
+/// registers: the BCM2835's `GPPUD`/`GPPUDCLKn` and the BCM2711's
+/// `GPIO_PUP_PDN_CNTRL_REGn`; each chip uses its own. The output and level
+/// registers are the same on both (BCM2711 ARM Peripherals, section 5.2).
 #[derive(Mmio)]
 #[mmio(no_owned)]
 #[repr(C)]
 pub struct RegisterBlock {
     function_select: [FunctionSelect; 6],
-    _reserved: [u32; 31],
+    _reserved_to_set: [u32; 1],
+    /// `GPSET0` and `GPSET1`: writing 1 sets a pin's output, 0 has no effect
+    #[mmio(Write)]
+    set_output: [u32; 2],
+    _reserved_to_clear: [u32; 1],
+    /// `GPCLR0` and `GPCLR1`: writing 1 clears a pin's output, 0 has no
+    /// effect
+    #[mmio(Write)]
+    clear_output: [u32; 2],
+    _reserved_to_level: [u32; 1],
+    /// `GPLEV0` and `GPLEV1`: the pins' actual levels
+    #[mmio(PureRead)]
+    level: [u32; 2],
+    _reserved_to_pulls: [u32; 22],
     pull_control: PullControl,
     /// `GPPUDCLK0` and `GPPUDCLK1`: one bit per pin, 32 pins each
     pull_clock: [u32; 2],
@@ -125,6 +139,9 @@ pub struct RegisterBlock {
 
 assert_register_offsets!(RegisterBlock, 0xf4, {
     function_select: 0x00,
+    set_output: 0x1c,
+    clear_output: 0x28,
+    level: 0x34,
     pull_control: 0x94,
     pull_clock: 0x98,
     pull_resistor_control: 0xe4,
@@ -185,6 +202,39 @@ pub fn apply_pull(
     wait(registers);
     registers.write_pull_control(PullControl::ZERO);
     registers.write_pull_clock(bank, 0).ok()
+}
+
+/// Drive `pin` high or low through `GPSETn` or `GPCLRn`, or `None` for a pin
+/// `chip`'s block does not have. One write, no read-modify-write: the other
+/// pins' bits are 0, which has no effect (BCM2711 ARM Peripherals, section
+/// 5.2, tables 70 to 73).
+pub fn set_level(
+    registers: &mut MmioRegisterBlock<'_>,
+    chip: Chip,
+    pin: u32,
+    high: bool,
+) -> Option<()> {
+    if pin >= chip.pins() {
+        return None;
+    }
+    let bank = (pin / PINS_PER_CLOCK) as usize;
+    let bit = 1 << (pin % PINS_PER_CLOCK);
+    if high {
+        registers.write_set_output(bank, bit).ok()
+    } else {
+        registers.write_clear_output(bank, bit).ok()
+    }
+}
+
+/// `pin`'s actual level (`GPLEVn`), or `None` for a pin `chip`'s block does
+/// not have.
+pub fn level(registers: &mut MmioRegisterBlock<'_>, chip: Chip, pin: u32) -> Option<bool> {
+    if pin >= chip.pins() {
+        return None;
+    }
+    let bank = (pin / PINS_PER_CLOCK) as usize;
+    let levels = registers.read_level(bank).ok()?;
+    Some(levels & (1 << (pin % PINS_PER_CLOCK)) != 0)
 }
 
 /// `current` with the pin at `slot` switched to `function`.

@@ -1312,6 +1312,7 @@ fn interface_contexts(
                     data_bytes => summary.interface.data_bytes,
                     placement_slots => summary.interface.placement_slots,
                     channel_pages => summary.interface.channel_pages,
+                    pin_badged => summary.interface.pin_badged,
                     lends => summary.interface.lends.get(index).copied().unwrap_or(false),
                     export => summary.interface.export_name(index).unwrap_or_default(),
                 });

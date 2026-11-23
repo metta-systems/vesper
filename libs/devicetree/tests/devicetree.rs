@@ -4,7 +4,7 @@
 mod tests {
     use vesper_devicetree::{
         BrcmPin, Cells, DevTreeIndex, DeviceTree, PropReader, Region, brcm_dma_channel_mask,
-        brcm_pins, bus_cells, dma_address, dump, find_compatible, generic_function_code,
+        brcm_pins, bus_cells, dma_address, dump, find_compatible, generic_function_code, gpio_pins,
         interrupt_cells, interrupt_parent, interrupt_specifier, is_compatible, is_enabled,
         is_interrupt_controller, linked_phandle, node_by_phandle, phandle, property, reg,
         reg_cells, regions, translate,
@@ -62,6 +62,8 @@ mod tests {
     /// The Pi 4 tree the SD image carries for the firmware.
     const RPI4_FIRMWARE: &[u8] = include_bytes!("../../../tools/makesd/boot/bcm2711-rpi-4-b.dtb");
     const RPI5: &[u8] = include_bytes!("../../../targets/bcm2712-rpi-5-b.dtb");
+    /// The Pi 4 tree with the MSP2202 SPI panel on SPI0 CE0 (`just spi-panel-dtb`).
+    const SPI_PANEL: &[u8] = include_bytes!("../../../targets/spi-panel-test.dtb");
 
     mod pci {
         use {
@@ -427,6 +429,37 @@ mod tests {
                     },
                 ]
             );
+        });
+    }
+
+    /// The pins of `pins`, as a `gpio_pins` mask.
+    fn mask_of(pins: &[u32]) -> u64 {
+        pins.iter().fold(0, |mask, pin| mask | (1 << pin))
+    }
+
+    #[test]
+    fn a_node_owns_the_pins_it_names_on_its_controller() {
+        with_index(SPI_PANEL, |index| {
+            let (gpio, _) = find_compatible(index, &["brcm,bcm2711-gpio"]).expect("gpio");
+            let controller = phandle(&gpio).expect("the gpio node's phandle");
+            let named = |name: &str| {
+                let node = index
+                    .nodes()
+                    .find(|node| node.name() == Ok(name))
+                    .unwrap_or_else(|| panic!("{name}"));
+                gpio_pins(index, &node, controller)
+            };
+            // The panel: `reset-gpios` 25, `dc-gpios` 24, and GPIO 23 of the
+            // `gpio-backlight` node its `backlight` links to.
+            assert_eq!(named("panel@0"), mask_of(&[23, 24, 25]));
+            // SPI0: its pin groups (MISO, MOSI, SCLK on ALT0; CE0 and CE1 as
+            // outputs) and its `cs-gpios` 8 and 7.
+            assert_eq!(named("spi@7e204000"), mask_of(&[7, 8, 9, 10, 11]));
+            // PWM1: its two generic pin groups.
+            assert_eq!(named("pwm@7e20c800"), mask_of(&[40, 41]));
+            // Bluetooth's `shutdown-gpios` names the firmware's expander, not
+            // this controller.
+            assert_eq!(named("bluetooth"), 0);
         });
     }
 

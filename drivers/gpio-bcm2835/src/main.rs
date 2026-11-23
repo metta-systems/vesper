@@ -9,14 +9,26 @@
 //! node; the matched string tells the pin count and how pulls are set
 //! ([`gpio_bcm2835::Chip`]). A driver whose device
 //! needs its pins routed imports `gpio_v1` and switches them when it starts.
-//! Calls from different clients take turns, since switching one pin rewrites
-//! the register it shares with nine others, and a pull change takes the
-//! block's one pull control register through several steps.
+//! A client drives the pins it owns only: its key's badge is the pin set its
+//! node names (`libdevice_driver::PinSet`), and every function refuses a pin
+//! outside it. Calls from different clients take turns, since switching one
+//! pin rewrites the register it shares with nine others, and a pull change
+//! takes the block's one pull control register through several steps.
 
 use gpio::gpio_v1::{Exception, GpioV1, PinFunction, PinPull};
 
 /// The block.
 struct Gpio;
+
+/// `pin` if `chip()`'s block has it and the key with `badge` owns it.
+fn owned(badge: u64, pin: u32) -> Result<u32, Exception> {
+    gpio_bcm2835::place(chip(), pin).ok_or(Exception::InvalidPin { pin })?;
+    if owns(badge, pin) {
+        Ok(pin)
+    } else {
+        Err(Exception::NotOwned { pin })
+    }
+}
 
 impl GpioV1 for Gpio {
     #[cfg(target_os = "vesper")]
@@ -24,16 +36,21 @@ impl GpioV1 for Gpio {
         component::record_return_key();
     }
 
-    fn set_function(pin: u32, function: PinFunction) -> Result<(), Exception> {
+    fn set_function(badge: u64, pin: u32, function: PinFunction) -> Result<(), Exception> {
+        let pin = owned(badge, pin)?;
         let (register, slot) =
             gpio_bcm2835::place(chip(), pin).ok_or(Exception::InvalidPin { pin })?;
         set_function(register, slot, function);
         Ok(())
     }
 
-    fn set_pull(pin: u32, pull: PinPull) -> Result<(), Exception> {
-        gpio_bcm2835::place(chip(), pin).ok_or(Exception::InvalidPin { pin })?;
-        set_pull(pin, pull);
+    fn set_pull(badge: u64, pin: u32, pull: PinPull) -> Result<(), Exception> {
+        set_pull(owned(badge, pin)?, pull);
+        Ok(())
+    }
+
+    fn set_level(badge: u64, pin: u32, high: bool) -> Result<(), Exception> {
+        set_level(owned(badge, pin)?, high);
         Ok(())
     }
 }
@@ -41,11 +58,16 @@ impl GpioV1 for Gpio {
 gpio::gpio_v1_export!(Gpio);
 
 #[cfg(target_os = "vesper")]
-use component::{chip, set_function, set_pull};
+use component::{chip, owns, set_function, set_level, set_pull};
 
 #[cfg(not(target_os = "vesper"))]
 const fn chip() -> gpio_bcm2835::Chip {
     gpio_bcm2835::Chip::Bcm2835
+}
+
+#[cfg(not(target_os = "vesper"))]
+const fn owns(_badge: u64, _pin: u32) -> bool {
+    true
 }
 
 #[cfg(not(target_os = "vesper"))]
@@ -54,6 +76,9 @@ fn set_function(_register: usize, _slot: usize, _function: PinFunction) {}
 #[cfg(not(target_os = "vesper"))]
 fn set_pull(_pin: u32, _pull: PinPull) {}
 
+#[cfg(not(target_os = "vesper"))]
+fn set_level(_pin: u32, _high: bool) {}
+
 #[cfg(target_os = "vesper")]
 mod component {
     use {
@@ -61,7 +86,8 @@ mod component {
         core::sync::atomic::{AtomicU64, Ordering},
         gpio_bcm2835::{Chip, MmioRegisterBlock, RegisterBlock, apply_pull, select},
         libdevice_driver::{
-            INIT_VA, Turnstile, device_address, driver_compatible, driver_init, map_device_pages,
+            INIT_VA, PinSet, Turnstile, device_address, driver_compatible, driver_init,
+            map_device_pages,
         },
         libobject::{
             EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
@@ -77,6 +103,12 @@ mod component {
     pub fn chip() -> Chip {
         Chip::from_compatible_index(init().compatible_index)
             .expect("gpio: one of the driver's compatible strings")
+    }
+
+    /// Whether the key with `badge` owns `pin`: Kickstart badged it with the
+    /// pins the client's node names. A key without a pin set owns nothing.
+    pub fn owns(badge: u64, pin: u32) -> bool {
+        PinSet::from_badge(badge).is_some_and(|pins| pins.contains(pin))
     }
 
     /// Where the block's registers are mapped (zero until set up).
@@ -127,6 +159,17 @@ mod component {
             }
         })
         .expect("gpio: a pin of the block");
+    }
+
+    /// Drive `pin` (a pin of the block) high or low. One write to `GPSETn` or
+    /// `GPCLRn`, which touches no other pin; the turn keeps it apart from a
+    /// pull change all the same.
+    pub fn set_level(pin: u32, high: bool) {
+        let _turn = TURNSTILE.enter(init());
+        // SAFETY: this caller holds the turn.
+        let mut registers = unsafe { registers() };
+        gpio_bcm2835::set_level(&mut registers, chip(), pin, high)
+            .expect("gpio: a pin of the block");
     }
 
     /// Switch the pin at `slot` of function select register `register`.

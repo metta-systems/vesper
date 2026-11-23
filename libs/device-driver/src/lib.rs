@@ -180,6 +180,73 @@ pub const DATA_WINDOW_VA: u64 = 0x3a00_0000;
 /// Most data areas an exporting driver serves: one per client instance.
 pub const MAX_AREAS: usize = 16;
 
+/// The GPIO pins a client may drive, as the badge of its key to an interface
+/// that says `badged by pins;` (`gpio_v1`): Kickstart badges the key with the
+/// pins the client's device tree node names, and the exporter serves a client
+/// those pins only.
+///
+/// Bit `n` is pin `n` (the BCM2711 has 58); bit 63 marks the badge as a pin
+/// set, so a client that names no pin still has a nonzero badge (zero is an
+/// unbadged key) and owns nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PinSet(u64);
+
+impl PinSet {
+    /// The badge bit that marks a pin set.
+    const MARK: u64 = 1 << 63;
+    /// Pins a set can hold: bits 0 to 62.
+    pub const MAX_PINS: u32 = 63;
+
+    /// The set without pins.
+    pub const EMPTY: Self = Self(0);
+
+    /// The pins of `mask` (bit `n` is pin `n`); bit 63 is not a pin and is
+    /// dropped.
+    #[must_use]
+    pub const fn from_mask(mask: u64) -> Self {
+        Self(mask & !Self::MARK)
+    }
+
+    /// This set with `pin` added; `None` for a pin above [`Self::MAX_PINS`].
+    #[must_use]
+    pub const fn with(self, pin: u32) -> Option<Self> {
+        if pin < Self::MAX_PINS {
+            Some(Self(self.0 | (1 << pin)))
+        } else {
+            None
+        }
+    }
+
+    /// Whether the set holds `pin`.
+    #[must_use]
+    pub const fn contains(self, pin: u32) -> bool {
+        pin < Self::MAX_PINS && self.0 & (1 << pin) != 0
+    }
+
+    /// The set as a key's badge: never zero.
+    #[must_use]
+    pub const fn badge(self) -> u64 {
+        self.0 | Self::MARK
+    }
+
+    /// The set a key's `badge` carries; `None` for a badge that is not a pin
+    /// set (zero, an unbadged key, among them).
+    #[must_use]
+    pub const fn from_badge(badge: u64) -> Option<Self> {
+        if badge & Self::MARK != 0 {
+            Some(Self(badge & !Self::MARK))
+        } else {
+            None
+        }
+    }
+
+    /// The pins, as a mask (bit `n` is pin `n`).
+    #[must_use]
+    pub const fn mask(self) -> u64 {
+        self.0
+    }
+}
+
 /// Most resources a component maps.
 pub const MAX_RESOURCES: usize = 4;
 
