@@ -126,7 +126,7 @@ chainboot_baud      := '115200'
 # The rate chainofcommand asks chainboot to load the kernel at, and the console stays at
 # (e.g. `just chainboot_load_baud=2000000 boot`); empty loads at `chainboot_baud`.
 # It also asks Kickstart's console for it when the kernel boots from the SD card (`just console`)
-chainboot_load_baud := '1500000'
+chainboot_load_baud := '2000000'
 
 chainofcommand_args := chainboot_serial + ' ' + chainboot_baud + (if chainboot_load_baud != '' { ' --load-baud ' + chainboot_load_baud } else { '' })
 
