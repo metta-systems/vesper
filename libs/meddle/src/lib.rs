@@ -99,8 +99,9 @@
 //! `component` and `or` are words only there.
 //!
 //! A call passes at most six argument words and answers with an outcome word
-//! and one more word, so a function returns at most one one-word result and
-//! an exception carries at most one word; see `libmeddle-runtime` for the
+//! and five more words, so a function's results, and an exception's fields,
+//! take at most five words together. A function with several results returns
+//! them as a tuple, in declaration order; see `libmeddle-runtime` for the
 //! encoding.
 
 pub mod ast;

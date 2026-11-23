@@ -13,12 +13,13 @@
 //! Every interface function is one PPC export, called with
 //! `Invocation.Call`. Its arguments are flattened into words (see [`Words`])
 //! and passed in `x2..x7`; words the function does not use must be zero.
-//! The function answers with two words through `Thread.Return`:
+//! The function answers through `Thread.Return` with an outcome word `r0` and
+//! [`RESULT_WORDS`] more words `r1..r5`, unused ones zero:
 //!
-//! | `r0` | `r1` |
+//! | `r0` | `r1..r5` |
 //! |---|---|
-//! | [`OUTCOME_OK`] | the result word, or zero without a result |
-//! | `1..` | exception `r0 - 1` of the interface, in declaration order; its field word, or zero without a field |
+//! | [`OUTCOME_OK`] | the results' words, in declaration order |
+//! | `1..` | exception `r0 - 1` of the interface, in declaration order; its fields' words |
 //! | [`OUTCOME_MALFORMED`] | zero: the arguments did not decode |
 
 pub use {
@@ -34,6 +35,10 @@ pub use {
 
 /// Argument words of one call (`x2..x7`).
 pub const ARGUMENT_WORDS: usize = 6;
+
+/// Words a call answers with besides its outcome (`r1..r5`): the results, or
+/// the fields of an exception.
+pub const RESULT_WORDS: usize = 5;
 
 /// `r0` of a call that succeeded.
 pub const OUTCOME_OK: u64 = 0;
@@ -127,25 +132,34 @@ impl Words for IoRec {
     }
 }
 
-/// The answer of a call that succeeded with `result`.
-pub const fn ok(result: u64) -> PpcResult {
-    PpcResult::pair(OUTCOME_OK, result)
+/// The answer `outcome` followed by `words`.
+const fn answer(outcome: u64, words: [u64; RESULT_WORDS]) -> PpcResult {
+    let [r1, r2, r3, r4, r5] = words;
+    PpcResult {
+        words: [outcome, r1, r2, r3, r4, r5],
+    }
+}
+
+/// The answer of a call that succeeded with the result words `results`.
+pub const fn ok(results: [u64; RESULT_WORDS]) -> PpcResult {
+    answer(OUTCOME_OK, results)
 }
 
 /// The answer of a call that raised exception `index` (declaration order in
-/// its interface) carrying `field`.
-pub const fn exception(index: u64, field: u64) -> PpcResult {
-    PpcResult::pair(index + 1, field)
+/// its interface) carrying the field words `fields`.
+pub const fn exception(index: u64, fields: [u64; RESULT_WORDS]) -> PpcResult {
+    answer(index + 1, fields)
 }
 
 /// The answer of a call whose arguments did not decode.
 pub const fn malformed() -> PpcResult {
-    PpcResult::pair(OUTCOME_MALFORMED, 0)
+    answer(OUTCOME_MALFORMED, [0; RESULT_WORDS])
 }
 
-/// Whether every argument word from `used` on is zero.
-pub fn unused_words_are_zero(arguments: &[u64; ARGUMENT_WORDS], used: usize) -> bool {
-    arguments.iter().skip(used).all(|&word| word == 0)
+/// Whether every word from `used` on is zero: unused argument words, or
+/// answer words beyond the results or exception fields.
+pub fn unused_words_are_zero(words: &[u64], used: usize) -> bool {
+    words.iter().skip(used).all(|&word| word == 0)
 }
 
 /// One function a client may call: its Invocation. The kernel takes the
@@ -161,22 +175,32 @@ impl Binding {
     }
 
     /// Call the function with `arguments` and lend it `lent` for the duration
-    /// of the call (`Invocation.CallWithKey`), returning `(r0, r1)`. The
-    /// function's interface declared the key it takes in its `lends` clause.
+    /// of the call (`Invocation.CallWithKey`), returning the outcome `r0` and
+    /// the words `r1..r5`. The function's interface declared the key it takes
+    /// in its `lends` clause.
     pub fn call_with_key(
         &self,
         lent: RawKey,
         arguments: [u64; ARGUMENT_WORDS],
-    ) -> Result<(u64, u64), CapError> {
+    ) -> Result<(u64, [u64; RESULT_WORDS]), CapError> {
         self.invocation
             .call_with_key(lent, arguments)
-            .map(|[r0, r1, ..]| (r0, r1))
+            .map(split_answer)
     }
 
-    /// Call the function with `arguments`, returning `(r0, r1)`.
-    pub fn call(&self, arguments: [u64; ARGUMENT_WORDS]) -> Result<(u64, u64), CapError> {
-        self.invocation.call(arguments).map(|[r0, r1, ..]| (r0, r1))
+    /// Call the function with `arguments`, returning the outcome `r0` and the
+    /// words `r1..r5`.
+    pub fn call(
+        &self,
+        arguments: [u64; ARGUMENT_WORDS],
+    ) -> Result<(u64, [u64; RESULT_WORDS]), CapError> {
+        self.invocation.call(arguments).map(split_answer)
     }
+}
+
+/// The outcome and the other words of an answer.
+const fn split_answer([outcome, r1, r2, r3, r4, r5]: [u64; 6]) -> (u64, [u64; RESULT_WORDS]) {
+    (outcome, [r1, r2, r3, r4, r5])
 }
 
 /// The data area one client shares with one exporter: bytes both map at the

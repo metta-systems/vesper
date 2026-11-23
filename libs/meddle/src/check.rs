@@ -15,8 +15,9 @@ use {
 /// Argument words of a call (`x2..x7`).
 pub const ARGUMENT_WORDS: usize = 6;
 
-/// Words a call returns besides its outcome: the result or exception field.
-pub const ANSWER_WORDS: usize = 1;
+/// Words a call returns besides its outcome (`r1..r5`): the results or the
+/// exception fields.
+pub const RESULT_WORDS: usize = 5;
 
 /// Largest data area an interface may declare: it is mapped in both the client
 /// and the exporter for every pair, in a window of 2 MiB.
@@ -906,11 +907,11 @@ impl<'interface> Checker<'interface> {
         let interface = self.interface;
         for exception in &interface.exceptions {
             let words = checked.words_of_fields(&exception.fields);
-            if words > ANSWER_WORDS {
+            if words > RESULT_WORDS {
                 self.error(
                     &exception.name,
                     format!(
-                        "exception `{}` carries {words} words; at most {ANSWER_WORDS} fits beside the outcome",
+                        "exception `{}` carries {words} words; at most {RESULT_WORDS} fit beside the outcome",
                         exception.name.text
                     ),
                 );
@@ -929,12 +930,12 @@ impl<'interface> Checker<'interface> {
                 );
             }
             let words = checked.words_of_fields(&method.results);
-            if method.results.len() > 1 || words > ANSWER_WORDS {
+            if words > RESULT_WORDS {
                 self.error(
                     &method.name,
                     format!(
-                        "`{}` returns {words} words; a call returns at most one result of \
-                         {ANSWER_WORDS} word (return larger values through a reference parameter)",
+                        "`{}` returns {words} words; a call returns at most {RESULT_WORDS} beside \
+                         the outcome (return larger values through a reference parameter)",
                         method.name.text
                     ),
                 );
