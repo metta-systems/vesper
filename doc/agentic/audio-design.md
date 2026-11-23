@@ -559,6 +559,8 @@ of a ring, a block of a copy); the io-channel's FIFOs carry nothing yet. The fun
   length once it has ended or was stopped.
 - `stop(dma_channel)`, `release(dma_channel)`, and `errors(dma_channel) returns (bits)`:
   the `DEBUG` error flags (bits 0 to 2) and `CS.ERROR` (bit 3) since the chain started.
+- `status(dma_channel) returns (control_status)`: the channel's `CS` as it reads now, for
+  diagnostics (a stalled ring paused on its DREQ waits on its peripheral).
 - Every function raises `not_owner` for a channel the caller did not claim; `copy` and
   `start_ring` raise `busy` while a chain runs and `bad_transfer` for a length that is
   zero, not whole words or over the channel's limit, an unaligned or wrapping address,
