@@ -16,9 +16,10 @@ use {
 component::entry!(main);
 
 fn call(key: u64, args: [u64; 6]) -> (u64, u64) {
-    InvocationKey::from_key(RawKey::from_wire(key))
+    let [ticket, word, ..] = InvocationKey::from_key(RawKey::from_wire(key))
         .call(args)
-        .unwrap_or_else(|error| panic!("server: endpoint Call failed: {:?}", error.code()))
+        .unwrap_or_else(|error| panic!("server: endpoint Call failed: {:?}", error.code()));
+    (ticket, word)
 }
 
 fn main(_argument: u64) -> ! {

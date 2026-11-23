@@ -60,12 +60,9 @@ mod tests {
 
     #[test]
     fn outcomes_are_ok_exception_index_plus_one_or_malformed() {
-        let answer = ok(7);
-        assert_eq!((answer.r0, answer.r1), (OUTCOME_OK, 7));
-        let answer = exception(2, 9);
-        assert_eq!((answer.r0, answer.r1), (3, 9));
-        let answer = malformed();
-        assert_eq!((answer.r0, answer.r1), (OUTCOME_MALFORMED, 0));
+        assert_eq!(ok(7).words, [OUTCOME_OK, 7, 0, 0, 0, 0]);
+        assert_eq!(exception(2, 9).words, [3, 9, 0, 0, 0, 0]);
+        assert_eq!(malformed().words, [OUTCOME_MALFORMED, 0, 0, 0, 0, 0]);
     }
 
     #[test]

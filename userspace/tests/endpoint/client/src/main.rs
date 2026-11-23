@@ -32,7 +32,7 @@ fn main(index: u64) -> ! {
     set_tls(own_tls);
     for (row, &request) in CLIENT_REQUESTS[client].iter().enumerate() {
         semi::println!("client {index}: sending {request:#x} at EL0");
-        let (ticket, reply) = send
+        let [ticket, reply, ..] = send
             .call([request, 0, 0, 0, 0, 0])
             .unwrap_or_else(|error| panic!("client {index}: send failed: {:?}", error.code()));
         // The call migrated into the endpoint and blocked there: this Thread's

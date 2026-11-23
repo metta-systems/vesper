@@ -63,10 +63,7 @@ extern "C" fn fault_body(
     if FaultKind::from_wire(kind) == Some(FaultKind::CpuException) {
         LAST_SYNDROME.store(syndrome, Ordering::Release);
     }
-    PpcResult {
-        r0: FaultAction::Skip as u64,
-        r1: 0,
-    }
+    PpcResult::pair(FaultAction::Skip as u64, 0)
 }
 
 ppc_export!(
@@ -94,7 +91,7 @@ extern "C" fn probe_call_body(
     } else {
         NOT_TRAPPED_BIT
     };
-    PpcResult { r0: bits, r1: 0 }
+    PpcResult::pair(bits, 0)
 }
 
 ppc_export!(
@@ -115,7 +112,7 @@ extern "C" fn nop_body(
     _input5: u64,
 ) -> PpcResult {
     setup_return_key();
-    PpcResult { r0: 0, r1: 0 }
+    PpcResult::pair(0, 0)
 }
 
 ppc_export!(

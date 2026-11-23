@@ -300,12 +300,13 @@ pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
 /// `x2..x7` the six real inputs. The kernel picks the target stack from the
 /// Invocation's stack pool; `x9` is reserved and ignored.
 ///
-/// Returns the raw `(x0, x1, x2)` response: `SUCCESS` with the target's
-/// `(r0, r1)`, or a pre-commit rejection's status and details.
+/// Returns the raw response, `x0` and the words of `x1..x6`: `SUCCESS` with
+/// the target's six Return words `r0..r5`, or a pre-commit rejection's
+/// status and its two details (the other words zero).
 ///
-/// Register effects follow the conservative declarations: x0..x2
-/// carry inputs and responses; x3..x7 are inputs with discarded
-/// outputs; x8..x17 and the caller-volatile x18 are discarded clobbers. Built
+/// Register effects follow the conservative declarations: x0..x6
+/// carry inputs and responses; x7 is an input with a discarded output;
+/// x8..x17 and the caller-volatile x18 are discarded clobbers. Built
 /// for the hard-float target (`neon`), v0..v7 and v16..v31 are clobbers too;
 /// v8..v15, FPCR and FPSR come back as they were.
 /// The kernel restores x19..x30, SP and NZCV, but memory and flags are left
@@ -321,22 +322,21 @@ pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
 /// share.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-pub fn ppc_call(key: u64, args: [u64; 6]) -> (u64, u64, u64) {
+pub fn ppc_call(key: u64, args: [u64; 6]) -> (u64, [u64; 6]) {
     let status: u64;
-    let word1: u64;
-    let word2: u64;
+    let mut words = [0_u64; 6];
     // SAFETY: the caller upholds the Invocation contract above; every
     // register the kernel may rewrite on Call/Return is declared.
     unsafe {
         core::arch::asm!(
             "svc #0",
             inlateout("x0") key => status,
-            inlateout("x1") 0_u64 => word1,
-            inlateout("x2") args[0] => word2,
-            inlateout("x3") args[1] => _,
-            inlateout("x4") args[2] => _,
-            inlateout("x5") args[3] => _,
-            inlateout("x6") args[4] => _,
+            inlateout("x1") 0_u64 => words[0],
+            inlateout("x2") args[0] => words[1],
+            inlateout("x3") args[1] => words[2],
+            inlateout("x4") args[2] => words[3],
+            inlateout("x5") args[3] => words[4],
+            inlateout("x6") args[4] => words[5],
             inlateout("x7") args[5] => _,
             lateout("x9") _,
             lateout("x8") _,
@@ -381,7 +381,7 @@ pub fn ppc_call(key: u64, args: [u64; 6]) -> (u64, u64, u64) {
             #[cfg(target_feature = "neon")] lateout("v31") _,
         );
     }
-    (status, word1, word2)
+    (status, words)
 }
 
 /// `Invocation.CallWithKey` transport: as [`ppc_call`] with operation `1` in
@@ -397,22 +397,21 @@ pub fn ppc_call(key: u64, args: [u64; 6]) -> (u64, u64, u64) {
 /// rights, until the call returns.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-pub fn ppc_call_with_key(key: u64, lent_key: u64, args: [u64; 6]) -> (u64, u64, u64) {
+pub fn ppc_call_with_key(key: u64, lent_key: u64, args: [u64; 6]) -> (u64, [u64; 6]) {
     let status: u64;
-    let word1: u64;
-    let word2: u64;
+    let mut words = [0_u64; 6];
     // SAFETY: the caller upholds the contract above; every register the
     // kernel may rewrite on Call/Return is declared.
     unsafe {
         core::arch::asm!(
             "svc #0",
             inlateout("x0") key => status,
-            inlateout("x1") 1_u64 => word1,
-            inlateout("x2") args[0] => word2,
-            inlateout("x3") args[1] => _,
-            inlateout("x4") args[2] => _,
-            inlateout("x5") args[3] => _,
-            inlateout("x6") args[4] => _,
+            inlateout("x1") 1_u64 => words[0],
+            inlateout("x2") args[0] => words[1],
+            inlateout("x3") args[1] => words[2],
+            inlateout("x4") args[2] => words[3],
+            inlateout("x5") args[3] => words[4],
+            inlateout("x6") args[4] => words[5],
             inlateout("x7") args[5] => _,
             inlateout("x8") lent_key => _,
             lateout("x9") _,
@@ -455,7 +454,7 @@ pub fn ppc_call_with_key(key: u64, lent_key: u64, args: [u64; 6]) -> (u64, u64, 
             #[cfg(target_feature = "neon")] lateout("v31") _,
         );
     }
-    (status, word1, word2)
+    (status, words)
 }
 
 /// Single syscall with six operands and an eighth input word in `x8`
@@ -501,20 +500,21 @@ pub unsafe fn protected_call6_with_x8(
 }
 
 /// `Thread.Return` transport: `x0` the target-table-local packed Slot(1)
-/// key, `x1` operation 0, `x2`/`x3` the result words `(r0, r1)`.
+/// key, `x1` operation 0, `x2..x7` the six result words `r0..r5`, which the
+/// caller finds in its `x1..x6`.
 ///
 /// A successful Return never comes back here: the kernel resumes the source.
 /// A local response is either an ordinary rejection or, if its status is
 /// `SUCCESS`, a protocol anomaly the caller must not treat as success.
-/// x4..x7 are ignored by the kernel and not initialized here; x4..x17 and
-/// x18 are discarded clobbers. Not `noreturn`: rejection returns locally.
+/// x4..x17 and x18 are discarded clobbers. Not `noreturn`: rejection returns
+/// locally.
 ///
 /// # Safety
 /// Must run on a Thread whose current invocation it intends to complete;
 /// a successful Return abandons this execution context entirely.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-pub unsafe fn ppc_return(key: u64, r0: u64, r1: u64) -> (u64, u64, u64) {
+pub unsafe fn ppc_return(key: u64, payload: [u64; 6]) -> (u64, u64, u64) {
     let status: u64;
     let word1: u64;
     let word2: u64;
@@ -525,12 +525,12 @@ pub unsafe fn ppc_return(key: u64, r0: u64, r1: u64) -> (u64, u64, u64) {
             "svc #0",
             inlateout("x0") key => status,
             inlateout("x1") 0_u64 => word1,
-            inlateout("x2") r0 => word2,
-            inlateout("x3") r1 => _,
-            lateout("x4") _,
-            lateout("x5") _,
-            lateout("x6") _,
-            lateout("x7") _,
+            inlateout("x2") payload[0] => word2,
+            inlateout("x3") payload[1] => _,
+            inlateout("x4") payload[2] => _,
+            inlateout("x5") payload[3] => _,
+            inlateout("x6") payload[4] => _,
+            inlateout("x7") payload[5] => _,
             lateout("x8") _,
             lateout("x9") _,
             lateout("x10") _,
