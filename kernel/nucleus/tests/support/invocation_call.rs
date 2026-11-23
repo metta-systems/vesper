@@ -880,8 +880,9 @@ fn provisioned_return_key(table_address: u64) -> RawKey {
     key
 }
 
-/// A target-side Return frame: payload in x2/x3, `extra` in x4..x7, and
-/// target sentinels everywhere else that must never reach the source.
+/// A target-side Return frame: payload `r0`/`r1` in x2/x3 and `r2..r5`
+/// (`extra`) in x4..x7, and target sentinels everywhere else that must never
+/// reach the source.
 fn return_frame(key: RawKey, payload: [u64; 2], extra: [u64; 4]) -> SavedContext {
     let mut saved = SavedContext::el1t(FUNCTION + 0x40, STACK_END - 16);
     for (index, register) in saved.gpr.iter_mut().enumerate() {
@@ -983,7 +984,8 @@ fn call_then_return_restores_the_exact_source_context_and_table() {
         assert_eq!(resumed.gpr[0], libobject::syscall_status::SUCCESS);
         assert_eq!(resumed.gpr[1], payload[0]);
         assert_eq!(resumed.gpr[2], payload[1]);
-        assert!(resumed.gpr[3..19].iter().all(|&register| register == 0));
+        assert_eq!(&resumed.gpr[3..7], &[1, 2, 3, 4], "r2..r5 in x3..x6");
+        assert!(resumed.gpr[7..19].iter().all(|&register| register == 0));
         assert_eq!(&resumed.gpr[19..30], &call_saved.gpr[19..30]);
         assert_eq!(resumed.lr, call_saved.lr);
         assert_eq!(resumed.sp, call_saved.sp);
@@ -1010,22 +1012,18 @@ fn call_then_return_restores_the_exact_source_context_and_table() {
 }
 
 #[test_case]
-fn return_ignores_x4_to_x7() {
-    let mut frames = [None; 3];
-    for (run, extra) in [[0; 4], [u64::MAX; 4], [0x4, 0, u64::MAX, 0x7777]]
-        .into_iter()
-        .enumerate()
-    {
+fn return_carries_x4_to_x7_to_the_callers_x3_to_x6() {
+    for extra in [[0; 4], [u64::MAX; 4], [0x4, 0, u64::MAX, 0x7777]] {
         with_call(|nucleus, fixture| {
             committed(call(nucleus, &fixture, &call_frame(fixture.key)));
             let saved = return_frame(fixture.target_return_key, [5, 6], extra);
-            frames[run] = Some(returned(thread_return(nucleus, &saved)).resumed);
+            let resumed = returned(thread_return(nucleus, &saved)).resumed;
+            assert_eq!(&resumed.gpr[1..3], &[5, 6]);
+            assert_eq!(&resumed.gpr[3..7], &extra, "r2..r5 in x3..x6");
+            assert_eq!(resumed.gpr[7], 0, "x7 is zeroed");
             assert!(source_mut(nucleus).invocation_stack.is_empty());
         });
     }
-    assert!(frames[0].is_some());
-    assert_eq!(frames[0], frames[1]);
-    assert_eq!(frames[0], frames[2]);
 }
 
 #[test_case]

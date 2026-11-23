@@ -129,27 +129,18 @@ impl Words for IoRec {
 
 /// The answer of a call that succeeded with `result`.
 pub const fn ok(result: u64) -> PpcResult {
-    PpcResult {
-        r0: OUTCOME_OK,
-        r1: result,
-    }
+    PpcResult::pair(OUTCOME_OK, result)
 }
 
 /// The answer of a call that raised exception `index` (declaration order in
 /// its interface) carrying `field`.
 pub const fn exception(index: u64, field: u64) -> PpcResult {
-    PpcResult {
-        r0: index + 1,
-        r1: field,
-    }
+    PpcResult::pair(index + 1, field)
 }
 
 /// The answer of a call whose arguments did not decode.
 pub const fn malformed() -> PpcResult {
-    PpcResult {
-        r0: OUTCOME_MALFORMED,
-        r1: 0,
-    }
+    PpcResult::pair(OUTCOME_MALFORMED, 0)
 }
 
 /// Whether every argument word from `used` on is zero.
@@ -177,12 +168,14 @@ impl Binding {
         lent: RawKey,
         arguments: [u64; ARGUMENT_WORDS],
     ) -> Result<(u64, u64), CapError> {
-        self.invocation.call_with_key(lent, arguments)
+        self.invocation
+            .call_with_key(lent, arguments)
+            .map(|[r0, r1, ..]| (r0, r1))
     }
 
     /// Call the function with `arguments`, returning `(r0, r1)`.
     pub fn call(&self, arguments: [u64; ARGUMENT_WORDS]) -> Result<(u64, u64), CapError> {
-        self.invocation.call(arguments)
+        self.invocation.call(arguments).map(|[r0, r1, ..]| (r0, r1))
     }
 }
 

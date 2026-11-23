@@ -52,11 +52,11 @@ static BODY_DUMMIES: AtomicU64 = AtomicU64::new(u64::MAX);
 static BODY_BADGE: AtomicU64 = AtomicU64::new(u64::MAX);
 static CAPTURE: [AtomicU64; CAPTURE_WORDS] = [const { AtomicU64::new(0) }; CAPTURE_WORDS];
 static ENTRY_SP: AtomicU64 = AtomicU64::new(0);
-/// Select the target's Return path: the library helper, or raw asm with junk
-/// x4..x7 operands.
+/// Select the target's Return path: the library helper, or raw asm.
 static RETURN_VIA_LIBRARY: AtomicBool = AtomicBool::new(false);
-/// Junk Return operands x4..x7; Return must ignore them.
-const IGNORED: [u64; 4] = [0xDEAD_0004, u64::MAX, 0, 0x7777_0007];
+/// The target's Return words `r2..r5` in x4..x7, which the source finds in
+/// x3..x6.
+const EXTRA: [u64; 4] = [0xDEAD_0004, u64::MAX, 0, 0x7777_0007];
 
 /// Target entry: capture every register and NZCV/DAIF onto the target stack
 /// before any compiled code runs, then hand the capture to the body.
@@ -105,7 +105,8 @@ extern "C" fn target_body(capture: *const u64) -> ! {
     if RETURN_VIA_LIBRARY.load(Ordering::Acquire) {
         // SAFETY: completing this Call abandons the target stack and context.
         let Err(error) = unsafe {
-            ThreadReturnKey::from_key(RawKey::from_wire(key)).return_from_invocation(r0, r1)
+            ThreadReturnKey::from_key(RawKey::from_wire(key))
+                .return_from_invocation([r0, r1, EXTRA[0], EXTRA[1], EXTRA[2], EXTRA[3]])
         };
         panic!("PPC target: library Return failed: {:?}", error.code());
     }
@@ -116,7 +117,7 @@ extern "C" fn target_body(capture: *const u64) -> ! {
     }
 }
 
-/// Raw `Thread.Return` SVC with the junk [`IGNORED`] operands in x4..x7.
+/// Raw `Thread.Return` SVC with `r0`/`r1` in x2/x3 and [`EXTRA`] in x4..x7.
 /// Returns the local `(x0, x1, x2)` only when the kernel rejects the Return.
 ///
 /// # Safety
@@ -133,10 +134,10 @@ unsafe fn raw_return(key: u64, r0: u64, r1: u64) -> (u64, u64, u64) {
             inlateout("x1") 0_u64 => word1,
             inlateout("x2") r0 => word2,
             inlateout("x3") r1 => _,
-            inlateout("x4") IGNORED[0] => _,
-            inlateout("x5") IGNORED[1] => _,
-            inlateout("x6") IGNORED[2] => _,
-            inlateout("x7") IGNORED[3] => _,
+            inlateout("x4") EXTRA[0] => _,
+            inlateout("x5") EXTRA[1] => _,
+            inlateout("x6") EXTRA[2] => _,
+            inlateout("x7") EXTRA[3] => _,
             lateout("x8") _, lateout("x9") _, lateout("x10") _, lateout("x11") _,
             lateout("x12") _, lateout("x13") _, lateout("x14") _, lateout("x15") _,
             lateout("x16") _, lateout("x17") _, lateout("x18") _,
@@ -190,12 +191,13 @@ pub extern "C" fn rejection_entry(
         // The library helper decodes the rejection into Err.
         // SAFETY: a rejected Return leaves this target context intact.
         let Err(error) = unsafe {
-            ThreadReturnKey::from_key(RawKey::from_wire(key)).return_from_invocation(r0, r1)
+            ThreadReturnKey::from_key(RawKey::from_wire(key))
+                .return_from_invocation([r0, r1, 0, 0, 0, 0])
         };
         let helper = error.code();
         note_preserved();
 
-        // Raw SVC with nonzero junk x4..x7.
+        // Raw SVC with nonzero words in x4..x7.
         // SAFETY: as above; this key is expected to be rejected.
         let raw = unsafe { raw_return(key, r0, r1) };
         note_preserved();
@@ -212,7 +214,7 @@ pub extern "C" fn rejection_entry(
     // SAFETY: completing this Call abandons the target stack and context.
     let Err(error) = unsafe {
         ThreadReturnKey::from_key(RawKey::from_wire(RETURN_KEY.load(Ordering::Acquire)))
-            .return_from_invocation(r0, r1)
+            .return_from_invocation([r0, r1, 0, 0, 0, 0])
     };
     panic!(
         "PPC target: valid Return after rejections failed: {:?}",
@@ -231,7 +233,7 @@ fn current_sp() -> u64 {
 
 /// Call `key` (an Invocation of [`rejection_entry`]); inside Bounce the
 /// target attempts Return with every rejected `cases` key, through both the
-/// helper and raw SVC with junk x4..x7, then Returns validly. Every rejection
+/// helper and raw SVC with words in x4..x7, then Returns validly. Every rejection
 /// must decode to the expected error and leave the target's root and stack
 /// unchanged; the valid Return proves the continuation survived.
 pub fn return_rejection_trip(key: RawKey, cases: [RejectedReturn; REJECTION_CASES]) {
@@ -248,7 +250,8 @@ pub fn return_rejection_trip(key: RawKey, cases: [RejectedReturn; REJECTION_CASE
         .call([0; 6])
         .unwrap_or_else(|error| panic!("rejection Call failed: {:?}", error.code()));
     assert_eq!(
-        delivered, REJECTION_PAYLOAD,
+        delivered,
+        [REJECTION_PAYLOAD.0, REJECTION_PAYLOAD.1, 0, 0, 0, 0],
         "valid Return after rejections"
     );
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
@@ -267,7 +270,7 @@ pub fn return_rejection_trip(key: RawKey, cases: [RejectedReturn; REJECTION_CASE
         assert_eq!(
             observed[3..],
             expected,
-            "raw Return rejection with junk x4..x7 for {:?}",
+            "raw Return rejection with words in x4..x7 for {:?}",
             case.key
         );
     }
@@ -283,10 +286,13 @@ pub struct CallOutcome {
     pub status: u64,
     pub word1: u64,
     pub word2: u64,
+    /// x3..x6 after resumption: the Return words `r2..r5`, or the inputs a
+    /// rejected Call left there.
+    pub more: [u64; 4],
     /// 1: x19..x30 sentinels, execution SP and source NZCV intact;
     /// 2: a sentinel or SP was corrupted; 4: NZCV was not restored.
     pub check: u64,
-    /// OR of x3..x18 after resumption (zero after a scrubbed Return).
+    /// OR of x7..x18 after resumption (zero after a scrubbed Return).
     pub volatile_or: u64,
 }
 
@@ -297,6 +303,7 @@ pub struct CallOutcome {
 #[inline(never)]
 pub fn call_with_registers(key: RawKey, op: u64, args: [u64; 6]) -> CallOutcome {
     let (status, word1, word2, check, volatile_or): (u64, u64, u64, u64, u64);
+    let mut more = [0_u64; 4];
     // SAFETY: the aligned 96-byte execution-stack spill is created and
     // removed in this block; callee-saved registers/LR are restored before
     // Rust resumes. All integer registers the kernel may scrub are declared.
@@ -312,8 +319,7 @@ pub fn call_with_registers(key: RawKey, op: u64, args: [u64; 6]) -> CallOutcome 
             "mov x28, #0x2828", "mov x29, sp", "mov x30, #0x3030",
             "cmp x19, x19",
             "svc #0",
-            "orr x16, x16, x3", "orr x16, x16, x4", "orr x16, x16, x5",
-            "orr x16, x16, x6", "orr x16, x16, x7", "orr x16, x16, x8",
+            "orr x16, x16, x7", "orr x16, x16, x8",
             "orr x16, x16, x9", "orr x16, x16, x10", "orr x16, x16, x11",
             "orr x16, x16, x12", "orr x16, x16, x13", "orr x16, x16, x14",
             "orr x16, x16, x15", "orr x16, x16, x17", "orr x16, x16, x18",
@@ -341,10 +347,10 @@ pub fn call_with_registers(key: RawKey, op: u64, args: [u64; 6]) -> CallOutcome 
             inlateout("x0") key.to_wire() => status,
             inlateout("x1") op => word1,
             inlateout("x2") args[0] => word2,
-            inlateout("x3") args[1] => _,
-            inlateout("x4") args[2] => _,
-            inlateout("x5") args[3] => _,
-            inlateout("x6") args[4] => _,
+            inlateout("x3") args[1] => more[0],
+            inlateout("x4") args[2] => more[1],
+            inlateout("x5") args[3] => more[2],
+            inlateout("x6") args[4] => more[3],
             inlateout("x7") args[5] => _,
             lateout("x9") _,
             inlateout("x16") 0_u64 => volatile_or,
@@ -357,6 +363,7 @@ pub fn call_with_registers(key: RawKey, op: u64, args: [u64; 6]) -> CallOutcome 
         status,
         word1,
         word2,
+        more,
         check,
         volatile_or,
     }
@@ -383,7 +390,8 @@ pub fn assert_call_rejected(key: RawKey, op: u64, expected: CapError) {
     assert_eq!(TTBR0_EL1.get(), ttbr_before, "rejected Call switched roots");
 }
 
-/// The full same-Thread round trip. Returns the delivered `(r0, r1)`.
+/// The full same-Thread round trip. Returns the delivered `(r0, r1)`; the
+/// target's other four Return words, [`EXTRA`], are checked here.
 ///
 /// `via_library` uses `InvocationKey::call` and the target's
 /// `ThreadReturnKey` helper; otherwise the instrumented raw asm pair, which
@@ -401,13 +409,16 @@ pub fn round_trip(key: RawKey, via_library: bool) -> (u64, u64) {
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
     RETURN_VIA_LIBRARY.store(via_library, Ordering::Release);
     let delivered = if via_library {
-        InvocationKey::from_key(key)
+        let [r0, r1, more @ ..] = InvocationKey::from_key(key)
             .call(args)
-            .unwrap_or_else(|error| panic!("library PPC Call failed: {:?}", error.code()))
+            .unwrap_or_else(|error| panic!("library PPC Call failed: {:?}", error.code()));
+        assert_eq!(more, EXTRA, "Return words r2..r5 lost");
+        (r0, r1)
     } else {
         let outcome = call_with_registers(key, 0, args);
         assert_eq!(outcome.check, 1, "Return corrupted x19-x30, SP or NZCV");
-        assert_eq!(outcome.volatile_or, 0, "Return leaked x3-x18 state");
+        assert_eq!(outcome.more, EXTRA, "Return words r2..r5 not in x3..x6");
+        assert_eq!(outcome.volatile_or, 0, "Return leaked x7-x18 state");
         decode_syscall_result((outcome.status, outcome.word1, outcome.word2))
             .unwrap_or_else(|error| panic!("PPC Call failed: {:?}", error.code()))
     };
@@ -472,10 +483,10 @@ extern "C" fn export_body(
     BODY_DUMMIES.store(dummy0, Ordering::Release);
     BODY_BADGE.store(badge, Ordering::Release);
 
-    PpcResult {
-        r0: export_digest([input0, input1, input2, input3, input4, input5]),
-        r1: TTBR0_EL1.get(),
-    }
+    PpcResult::pair(
+        export_digest([input0, input1, input2, input3, input4, input5]),
+        TTBR0_EL1.get(),
+    )
 }
 
 fn export_digest(inputs: [u64; 6]) -> u64 {
@@ -489,28 +500,28 @@ ppc_export!(
     pub fn export_entry => export_body
 );
 
-/// Handler arguments the last `vesper_thread_return_fault` received.
-static FAULT_ARGS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+/// Handler arguments the last `vesper_thread_return_fault` received: the
+/// three diagnostic words, then the six original result words.
+static FAULT_ARGS: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
 static FAULT_COUNT: AtomicU64 = AtomicU64::new(0);
 /// Nonzero: the handler repairs by retrying Return with this key.
 static REPAIR_KEY: AtomicU64 = AtomicU64::new(0);
 
-/// The image-supplied libOS Return-fault handler (five-word extern-C ABI).
-/// Records its arguments, then either repairs with an explicit Return
-/// carrying the original words or halts the fixture.
+/// The image-supplied libOS Return-fault handler: the diagnostics and the
+/// original result words by reference. Records them, then either repairs
+/// with an explicit Return carrying the original words or halts the fixture.
 #[unsafe(no_mangle)]
 pub extern "C" fn vesper_thread_return_fault(
     status: u64,
     detail1: u64,
     detail2: u64,
-    original_r0: u64,
-    original_r1: u64,
+    original: &[u64; 6],
 ) -> ! {
     for (slot, value) in FAULT_ARGS
         .iter()
-        .zip([status, detail1, detail2, original_r0, original_r1])
+        .zip([status, detail1, detail2].iter().chain(original))
     {
-        slot.store(value, Ordering::Release);
+        slot.store(*value, Ordering::Release);
     }
     FAULT_COUNT.fetch_add(1, Ordering::AcqRel);
     let repair = REPAIR_KEY.load(Ordering::Acquire);
@@ -521,8 +532,7 @@ pub extern "C" fn vesper_thread_return_fault(
     // SAFETY: still inside the failed export on this Thread; a successful
     // Return abandons this handler's stack.
     let Err(error) = unsafe {
-        ThreadReturnKey::from_key(RawKey::from_wire(repair))
-            .return_from_invocation(original_r0, original_r1)
+        ThreadReturnKey::from_key(RawKey::from_wire(repair)).return_from_invocation(*original)
     };
     panic!("PPC export: repair Return failed: {:?}", error.code());
 }
@@ -555,7 +565,7 @@ pub fn export_round_trip(
         0x1234_5678_9ABC_DEF0,
         7,
     ];
-    let (r0, r1) = InvocationKey::from_key(key)
+    let [r0, r1, ..] = InvocationKey::from_key(key)
         .call(args)
         .unwrap_or_else(|error| panic!("export Call failed: {:?}", error.code()));
     assert_eq!(r0, export_digest(args), "export body result lost");
@@ -587,7 +597,7 @@ pub fn export_round_trip(
             faults, 1,
             "rejected adapter Return did not reach the handler"
         );
-        let handed: [u64; 5] =
+        let handed: [u64; 9] =
             core::array::from_fn(|index| FAULT_ARGS[index].load(Ordering::Acquire));
         let expected = CapError::InconsistentKey {
             key: stale,
@@ -595,7 +605,10 @@ pub fn export_round_trip(
             operand: 0,
         }
         .code();
-        assert_eq!(handed, [expected.0, expected.1, expected.2, r0, r1]);
+        assert_eq!(
+            handed,
+            [expected.0, expected.1, expected.2, r0, r1, 0, 0, 0, 0]
+        );
     } else {
         assert_eq!(faults, 0, "successful export reached the fault handler");
     }
@@ -671,7 +684,13 @@ pub fn live_values_trip(key: RawKey) {
                 $seed,
                 concat!("live value `", stringify!($name), "` lost across Call")
             );)*
-            assert_eq!(delivered, CLOBBER_PAYLOAD, "clobber target payload");
+            // x4..x7 still hold the target's garbage at its Return: they are
+            // the Return words r2..r5.
+            assert_eq!(
+                delivered,
+                [CLOBBER_PAYLOAD.0, CLOBBER_PAYLOAD.1, 0x0404, 0x0505, 0x0606, 0x0707],
+                "clobber target payload"
+            );
         };
     }
     live!(
@@ -787,8 +806,9 @@ pub extern "C" fn keyed_entry(
 
     let return_key = RawKey::from_wire(RETURN_KEY.load(Ordering::Acquire));
     // SAFETY: completing this Call abandons the target stack and context.
-    let Err(error) =
-        unsafe { ThreadReturnKey::from_key(return_key).return_from_invocation(0, install_key) };
+    let Err(error) = unsafe {
+        ThreadReturnKey::from_key(return_key).return_from_invocation([0, install_key, 0, 0, 0, 0])
+    };
     panic!("PPC keyed target: Return failed: {:?}", error.code());
 }
 
@@ -812,9 +832,11 @@ pub struct KeyedOutcome {
 pub fn keyed_round_trip(key: RawKey, lent: RawKey, destination_slot: u32) -> KeyedOutcome {
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
     let args = [u64::from(destination_slot), 2, 3, 4, 5, 6];
-    let delivered = InvocationKey::from_key(key)
+    let [r0, r1, more @ ..] = InvocationKey::from_key(key)
         .call_with_key(lent, args)
         .unwrap_or_else(|error| panic!("CallWithKey failed: {:?}", error.code()));
+    assert_eq!(more, [0; 4], "the keyed target Returns two words");
+    let delivered = (r0, r1);
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
     let words = |words: &[AtomicU64; 3]| {
         (
@@ -857,7 +879,7 @@ pub fn badged_export_round_trip(key: RawKey, badge: u64) {
     BODY_DUMMIES.store(u64::MAX, Ordering::Release);
     BODY_BADGE.store(u64::MAX - 1, Ordering::Release);
     let args = [1, 2, 3, 4, 5, 6];
-    let (r0, r1) = InvocationKey::from_key(key)
+    let [r0, r1, ..] = InvocationKey::from_key(key)
         .call(args)
         .unwrap_or_else(|error| panic!("badged export Call failed: {:?}", error.code()));
     assert_eq!(r0, export_digest(args));

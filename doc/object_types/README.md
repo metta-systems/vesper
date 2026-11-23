@@ -132,7 +132,7 @@ Every operation is one `svc` instruction. The immediate is ignored; the userspac
 | Out | `x0` | Status; zero is success |
 | Out | `x1`, `x2` | Two result words on success, error details on failure |
 
-Argument words an operation does not use must be zero; a nonzero unused word fails with `InvalidOperation`. Exceptions: `Thread.Return` ignores `x4..x7`; `Invocation.Call` clobbers `x9`; `Invocation.CallWithKey` also reads `x8` (the key to lend); `AddressSpace.CreateInvocation` also reads `x5` (the stack pool handle) and `x8` (the key-placement window).
+Argument words an operation does not use must be zero; a nonzero unused word fails with `InvalidOperation`. Exceptions: `Thread.Return` carries six words in `x2..x7`, all of them payload; `Invocation.Call` clobbers `x9`; `Invocation.CallWithKey` also reads `x8` (the key to lend); `AddressSpace.CreateInvocation` also reads `x5` (the stack pool handle) and `x8` (the key-placement window).
 
 An invocation writes only `x0..x2`. Every other register, SP and the NZCV flags are returned unchanged, whether the operation succeeds, fails, or blocks and resumes later. `Invocation.Call` and `Thread.Return` move the Thread between address spaces and have their own register rules; see [Invocation](core/invocation.md#register-state).
 

@@ -176,7 +176,7 @@ extern "C" fn nop_body(
 ) -> PpcResult {
     // SAFETY: the builder fills this instance's init page before any Call.
     setup_return_key(unsafe { bench_init() });
-    PpcResult { r0: 0, r1: 0 }
+    PpcResult::pair(0, 0)
 }
 
 ppc_export!(

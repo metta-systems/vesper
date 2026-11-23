@@ -376,7 +376,7 @@ fn setup_return_key(init: &FpInit) {
 /// Return `r0` from an export.
 fn complete(r0: u64) -> ! {
     // SAFETY: only reached from an export entry, entered by Invocation.Call.
-    unsafe { export::complete_export(PpcResult { r0, r1: 0 }) }
+    unsafe { export::complete_export(PpcResult::pair(r0, 0)) }
 }
 
 /// The Call target installed in the other worker's table: Returns what its

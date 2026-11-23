@@ -395,10 +395,7 @@ extern "C" fn fault_body(
     };
     libuser::semihosting::println!("{report}");
     send_last_line(format_args!("{report}"));
-    PpcResult {
-        r0: FaultAction::Terminate as u64,
-        r1: 0,
-    }
+    PpcResult::pair(FaultAction::Terminate as u64, 0)
 }
 
 ppc_export!(

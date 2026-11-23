@@ -4,12 +4,13 @@ use {
     vesper_objects::{CapError, InconsistencyReason, KeySlot, RawKey, thread::ThreadReturnKey},
 };
 
-/// Arguments the injected fault step received.
-type Handoff = (u64, u64, u64, u64, u64);
+/// Arguments the injected fault step received: the diagnostics and the
+/// original result words.
+type Handoff = (u64, u64, u64, [u64; 6]);
 
 /// Run the adapter sequence; the fault step panics with its arguments so the
 /// non-returning handoff can be observed.
-fn run_adapter(result: PpcResult, rejection: CapError) -> (Handoff, Option<(RawKey, u64, u64)>) {
+fn run_adapter(result: PpcResult, rejection: CapError) -> (Handoff, Option<(RawKey, [u64; 6])>) {
     let attempted = Cell::new(None);
     let key = ThreadReturnKey::provisioned(0x00AB_CDEF, 8);
     let outcome = panic::catch_unwind(panic::AssertUnwindSafe(|| {
@@ -18,12 +19,12 @@ fn run_adapter(result: PpcResult, rejection: CapError) -> (Handoff, Option<(RawK
             complete_with(
                 result,
                 &key,
-                |key, r0, r1| {
-                    attempted.set(Some((key.raw(), r0, r1)));
+                |key, words| {
+                    attempted.set(Some((key.raw(), words)));
                     Err(rejection)
                 },
-                |status, detail1, detail2, r0, r1| {
-                    panic::panic_any::<Handoff>((status, detail1, detail2, r0, r1))
+                |status, detail1, detail2, original| {
+                    panic::panic_any::<Handoff>((status, detail1, detail2, *original))
                 },
             )
         }
@@ -51,19 +52,12 @@ fn init_records_the_builder_supplied_key() {
 }
 
 #[test]
-fn adapter_returns_ordered_words_through_the_given_key_once() {
-    let result = PpcResult {
-        r0: 0x1111_2222_3333_4444,
-        r1: u64::MAX,
-    };
-    let (_, attempted) = run_adapter(result, CapError::InvalidOperation);
+fn adapter_returns_all_six_ordered_words_through_the_given_key_once() {
+    let words = [0x1111_2222_3333_4444, u64::MAX, 3, 0, 1 << 63, 6];
+    let (_, attempted) = run_adapter(PpcResult { words }, CapError::InvalidOperation);
     assert_eq!(
         attempted,
-        Some((
-            ThreadReturnKey::provisioned(0x00AB_CDEF, 8).raw(),
-            0x1111_2222_3333_4444,
-            u64::MAX
-        ))
+        Some((ThreadReturnKey::provisioned(0x00AB_CDEF, 8).raw(), words))
     );
 }
 
@@ -75,48 +69,35 @@ fn rejected_return_hands_exact_diagnostics_and_original_words_to_the_handler() {
         reason: InconsistencyReason::SlotIncarnationMismatch,
         operand: 0,
     };
-    let expected = (28, stale.to_wire(), 1);
-    let result = PpcResult {
-        r0: 0xAAAA,
-        r1: 0xBBBB,
-    };
-    let (handoff, _) = run_adapter(result, rejection);
-    assert_eq!(
-        handoff,
-        (expected.0, expected.1, expected.2, 0xAAAA, 0xBBBB)
-    );
+    let words = [0xAAAA, 0xBBBB, 0xCCCC, 0xDDDD, 0xEEEE, 0xFFFF];
+    let (handoff, _) = run_adapter(PpcResult { words }, rejection);
+    assert_eq!(handoff, (28, stale.to_wire(), 1, words));
 }
 
 #[test]
 fn unexpected_local_success_reaches_the_handler_with_original_words() {
-    let result = PpcResult { r0: 7, r1: 8 };
+    let words = [7, 8, 0, 0, 0, 0];
     let (handoff, _) = run_adapter(
-        result,
+        PpcResult { words },
         CapError::UnexpectedReturn {
             word1: 0xDEAD,
             word2: 0xBEEF,
         },
     );
-    assert_eq!(handoff, (35, 0xDEAD, 0xBEEF, 7, 8));
+    assert_eq!(handoff, (35, 0xDEAD, 0xBEEF, words));
 }
 
 #[test]
 fn unknown_response_diagnostics_reach_the_handler_verbatim() {
     let status = core::num::NonZeroU64::new(0x99).unwrap();
-    let result = PpcResult {
-        r0: u64::MAX,
-        r1: 0,
-    };
+    let words = [u64::MAX, 0, 0, 0, 0, 0];
     let (handoff, _) = run_adapter(
-        result,
+        PpcResult { words },
         CapError::UnknownResponse {
             status,
             detail1: 0x1234_5678_9abc_def0,
             detail2: u64::MAX,
         },
     );
-    assert_eq!(
-        handoff,
-        (0x99, 0x1234_5678_9abc_def0, u64::MAX, u64::MAX, 0)
-    );
+    assert_eq!(handoff, (0x99, 0x1234_5678_9abc_def0, u64::MAX, words));
 }

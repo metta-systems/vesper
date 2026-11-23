@@ -56,15 +56,6 @@ revisit after use. Unanswered questions:
   error? It currently surfaces as the preparation error without a pop.
 - **Scheduling attribution:** how should hierarchical schedulers observe and
   attribute migrated work beyond the source Thread's own time accounting?
-- **Component outcome through the Call status:** a successful `Thread.Return`
-  always reaches the caller as `x0 = 0` with `r0`/`r1` in `x1`/`x2`, so
-  Meddle-generated interfaces spend `r0` on their own outcome word (success,
-  exception index, malformed arguments) and get one result word. Should
-  `Thread.Return` carry a component outcome into the caller's `x0` instead,
-  for example in a status range or bit the kernel never uses for its own
-  status codes, leaving both words for results? Affects the Return and Call
-  register contracts (D7/D9), `decode_syscall_result`, the export adapter and
-  the Meddle call convention in `libs/meddle-runtime`.
 - **Freezing the provisional PPC convention (D9):** the maintainer decides
   when it becomes frozen ABI. It works end-to-end through real Call/Return;
   no validation or plan item gates the freeze, and work should not be

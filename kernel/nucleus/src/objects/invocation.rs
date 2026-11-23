@@ -631,9 +631,13 @@ pub struct PreparedReturn {
     current_address_space: AddressSpaceId,
     continuation: InvocationContinuation,
     translation: PreparedTranslationContext,
-    payload: [u64; 2],
+    payload: [u64; RETURN_PAYLOAD_WORDS],
     depth: usize,
 }
+
+/// Payload words a `Thread.Return` carries: saved `x2..x7`, resumed in the
+/// caller's `x1..x6`.
+pub const RETURN_PAYLOAD_WORDS: usize = 6;
 
 impl PreparedReturn {
     pub const fn source_thread(&self) -> ThreadId {
@@ -650,8 +654,8 @@ impl PreparedReturn {
         self.translation
     }
 
-    /// Target-provided result words `(r0, r1)` from saved `x2`/`x3`.
-    pub const fn payload(&self) -> [u64; 2] {
+    /// Target-provided result words `r0..r5` from saved `x2..x7`.
+    pub const fn payload(&self) -> [u64; RETURN_PAYLOAD_WORDS] {
         self.payload
     }
 
@@ -660,15 +664,14 @@ impl PreparedReturn {
         self.depth
     }
 
-    /// The resumed source frame: `x0 = SUCCESS`, `x1 = r0`, `x2 = r1`,
-    /// `x3..x18` zero, exact saved `x19..x30`, SP, PC, origin, raw SPSR
+    /// The resumed source frame: `x0 = SUCCESS`, `x1..x6 = r0..r5`,
+    /// `x7..x18` zero, exact saved `x19..x30`, SP, PC, origin, raw SPSR
     /// (including the source's original NZCV) and TLS (`TPIDR_EL0`).
     pub fn source_resume_context(&self) -> SavedContext {
         let record = &self.continuation;
         let mut gpr = [0; 30];
         gpr[0] = libobject::syscall_status::SUCCESS;
-        gpr[1] = self.payload[0];
-        gpr[2] = self.payload[1];
+        gpr[1..=RETURN_PAYLOAD_WORDS].copy_from_slice(&self.payload);
         gpr[19..30].copy_from_slice(&record.source_x19_x30[..11]);
         SavedContext {
             gpr,
@@ -702,7 +705,7 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Admit and prepare `Thread.Return` for the current Thread, after the API
     /// layer resolved the `CurrentReturnOnly` key. Mutates nothing.
     ///
-    /// Payload `r0`/`r1` is read from saved `x2`/`x3`; `x4..x7` are ignored.
+    /// Payload `r0..r5` is read from saved `x2..x7`.
     /// Order: kernel invariants (`Error`), then underflow
     /// (`Fault(IllegalReturn)`), then the top record's source identity
     /// (`Fault(ReturnTargetRetired)`), then its translation readiness.
@@ -739,7 +742,14 @@ impl<A: ArchObjects> Nucleus<A> {
             current_address_space: thread.address_space,
             continuation,
             translation,
-            payload: [saved.gpr[2], saved.gpr[3]],
+            payload: [
+                saved.gpr[2],
+                saved.gpr[3],
+                saved.gpr[4],
+                saved.gpr[5],
+                saved.gpr[6],
+                saved.gpr[7],
+            ],
             depth: thread.invocation_stack.len(),
         })
     }

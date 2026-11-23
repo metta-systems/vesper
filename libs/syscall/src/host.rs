@@ -93,12 +93,12 @@ pub unsafe fn protected_call0(_cap: u64, _op: u64) -> (u64, u64, u64) {
 }
 
 /// See the aarch64 `ppc_call`.
-pub fn ppc_call(_key: u64, _args: [u64; 6]) -> (u64, u64, u64) {
+pub fn ppc_call(_key: u64, _args: [u64; 6]) -> (u64, [u64; 6]) {
     unimplemented!("{UNAVAILABLE}")
 }
 
 /// See the aarch64 `ppc_call_with_key`.
-pub fn ppc_call_with_key(_key: u64, _lent_key: u64, _args: [u64; 6]) -> (u64, u64, u64) {
+pub fn ppc_call_with_key(_key: u64, _lent_key: u64, _args: [u64; 6]) -> (u64, [u64; 6]) {
     unimplemented!("{UNAVAILABLE}")
 }
 
@@ -125,6 +125,6 @@ pub unsafe fn protected_call6_with_x8(
 ///
 /// # Safety
 /// - Never returns: panics.
-pub unsafe fn ppc_return(_key: u64, _r0: u64, _r1: u64) -> (u64, u64, u64) {
+pub unsafe fn ppc_return(_key: u64, _payload: [u64; 6]) -> (u64, u64, u64) {
     unimplemented!("{UNAVAILABLE}")
 }

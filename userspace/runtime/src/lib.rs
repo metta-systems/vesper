@@ -161,12 +161,9 @@ pub extern "C" fn vesper_thread_return_fault(
     status: u64,
     detail1: u64,
     detail2: u64,
-    original_r0: u64,
-    original_r1: u64,
+    original: &[u64; 6],
 ) -> ! {
-    panic!(
-        "PPC Return rejected: ({status}, {detail1:#x}, {detail2:#x}), results ({original_r0:#x}, {original_r1:#x})"
-    );
+    panic!("PPC Return rejected: ({status}, {detail1:#x}, {detail2:#x}), results {original:#x?}");
 }
 
 /// Define `_start` for a passive component — one that only exports

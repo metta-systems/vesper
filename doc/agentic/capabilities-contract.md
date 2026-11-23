@@ -197,7 +197,7 @@ Every operation's shared contract must specify: ID, argument widths and units, c
 
 Decode full-width inputs before narrowing. Reject unknown opcodes, unrepresentable slots/lengths, invalid alignment, and unknown rights/flag bits. A requested-rights word with any bit outside `Rights::all()` fails with `InvalidOperation` before authority checks (shared `Rights::from_wire`). Check addition, shifts, rounding, and multiplication. Spare arguments are not authority and must not acquire undocumented meaning; any reserved-zero requirements belong to the operation schema.
 
-**Strict wire-argument convention:** unless an operation explicitly specifies otherwise, argument words it does not use are transmitted as zero — every ordinary `protected_call*` transport variant zeroes its unused argument registers — and the kernel rejects a nonzero unused word with a defined error instead of ignoring it. `Thread.Return` ignores `x4..x7`. Rationale: a fully determined request encoding is easier to validate and formalise, keeps per-operation wire tests exact, and lets a future optional argument attach meaning to a word that old callers already transmit as zero. The alternative — the kernel ignoring unused words — was considered and deferred; adopting it later is an ABI change to be recorded here first.
+**Strict wire-argument convention:** unless an operation explicitly specifies otherwise, argument words it does not use are transmitted as zero — every ordinary `protected_call*` transport variant zeroes its unused argument registers — and the kernel rejects a nonzero unused word with a defined error instead of ignoring it. `Thread.Return` carries all of `x2..x7` as its payload, so it has no unused word. Rationale: a fully determined request encoding is easier to validate and formalise, keeps per-operation wire tests exact, and lets a future optional argument attach meaning to a word that old callers already transmit as zero. The alternative — the kernel ignoring unused words — was considered and deferred; adopting it later is an ABI change to be recorded here first.
 
 ### Errors and evolution
 
@@ -591,7 +591,8 @@ On success the kernel pushes a continuation, migrates the Thread, installs the t
 |---|---|---|
 | `x0`, `x1` | `x0` zero (a reserved dummy); `x1` the invoked key's badge, zero if unbadged (see [Badges](#badges)) | `SUCCESS (0)` / first payload word `r0` |
 | `x2` | First argument, unchanged | Second payload word `r1` |
-| `x3..x7` | Remaining arguments, unchanged | Zero |
+| `x3..x6` | Remaining arguments, unchanged | Payload words `r2..r5` |
+| `x7` | Last argument, unchanged | Zero |
 | `x8..x18` | Zero (including `x9`) | Zero |
 | `x19..x30` | Zero; the source values are saved privately | Exact saved source values |
 | NZCV | Zero | From the saved source SPSR |
@@ -680,7 +681,7 @@ On Return, the time since the top record's stamp is charged to the source Thread
 
 #### Return: `Thread.Return` (op 0 on `CurrentReturnOnly`)
 
-Inputs: `x0` the caller-table-local packed key of `KeySlot::THREAD_RETURN` (Slot 1), `x1 = 0`, payload `r0`/`r1` in `x2`/`x3`. `x4..x7` are ignored: they need no initialization and carry no meaning. Return pops only the invoking Thread's own top continuation and resumes the source as in the table above.
+Inputs: `x0` the caller-table-local packed key of `KeySlot::THREAD_RETURN` (Slot 1), `x1 = 0`, payload `r0..r5` in `x2..x7`. Return pops only the invoking Thread's own top continuation and resumes the source as in the table above, the payload in its `x1..x6`. **Six payload words (maintainer decision, 2026-11-23, C1(b)):** a Return carries six words, mirroring Call's six arguments, and the caller's `x0` stays the kernel's own status alone. This settles the question of a component outcome through the Call status: an interface convention spends its outcome on a payload word, not on `x0`, and keeps five words for results.
 
 **The return key.** The Slot 1 entry is a Thread capability with the explicit `CurrentReturnOnly` selector, never `Named(ObjectId)`: it names no Thread, function or AddressSpace, carries no Thread-management rights, and has no object identity to extract. It is not per-invocation authority — the per-Thread invocation stack is the validation state (Composite's cap-0 sentinel, NOVA's implicit reply slot) — so every Thread in an AddressSpace may use the same entry. Only the kernel constructs it: `KeyTable::bind_address_space`, the only issuer of the binding an AddressSpace is created from, installs it into a vacant never-issued Slot 1 at incarnation `KeySlot::THREAD_RETURN_INCARNATION` (1), accepts an existing sentinel unchanged on rebinding, and rejects a foreign entry (`SlotOccupied`) or a vacant previously issued slot (`InvalidOperation`). The key is therefore deterministic (`ThreadReturnKey::provisioned`). The builder passes it to the component's init, which records it for the export adapter (`export::init_return_key`); the channel is part of the open init-handoff design. Lookup is ordinary — guard, incarnation, bounds, presence, no bypass — so a component that deletes its own sentinel gets an ordinary lookup error.
 
@@ -701,9 +702,9 @@ These are libOS conventions over the kernel ABI, not kernel enforcement; a compo
 
 - **Raw wrappers** (`libsyscall::ppc_call` / `ppc_return`) declare `x0..x18` to the compiler: inputs/results as `inlateout`, everything else as discarded clobbers, with no `nomem`, `readonly`, `pure`, `preserves_flags` or `clobber_abi("C")`. `x18` is ordinary caller-volatile scratch, declared only where the target permits it (Apple hosts running the ABI tests reserve it). The Return SVC is not `noreturn`, since a local rejection returns.
 - **Export entry** (`ppc_export!`): `CreateInvocation` receives the address of a per-procedure non-returning wrapper with an `extern "C"` eight-`u64` signature (two dummies, six arguments). Call reaches it by exception return, not `BL`; it calls the linked body with the same positional arguments, then completes the call through `export::complete_export`. It never returns through its entry linkage, retries, or reruns the body.
-- **Completion** (`export::complete_export`): spill the body's `(r0, r1)` to a 16-byte, 16-aligned slot on the target stack (export setup budgets it in the published headroom), load the return key, and Return with the payload in `x2`/`x3`.
+- **Completion** (`export::complete_export`): spill the body's six words `r0..r5` (`PpcResult`, returned in memory through `x8` under AAPCS64) to a 48-byte, 16-aligned slot on the target stack, load the return key, and Return with the payload in `x2..x7`.
 - **Return helper** (`ThreadReturnKey::return_from_invocation`): returns `Result<Infallible, CapError>`. A successful Return never comes back. An ordinary rejection is `Err` with shared diagnostics and nothing popped. A local `SUCCESS` is reported as `UnexpectedReturn` (the local `x1`/`x2` verbatim), which promises neither unchanged state nor safe retry.
-- **Error handoff:** on `Err`, the adapter calls the image-supplied, link-resolved, non-returning `vesper_thread_return_fault` with five `u64` words: `x0..x2` the error from `CapError::code()`, `x3`/`x4` the original `r0`/`r1`. The handler may diagnose, repair and retry, or terminate; it is userspace reporting, not a kernel fault.
+- **Error handoff:** on `Err`, the adapter calls the image-supplied, link-resolved, non-returning `vesper_thread_return_fault` with `x0..x2` the error from `CapError::code()` and `x3` the address of the original six words `r0..r5` in the spill slot. The handler may diagnose, repair and retry, or terminate; it is userspace reporting, not a kernel fault.
 
 #### Component interfaces and imports
 

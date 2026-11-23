@@ -909,7 +909,7 @@ pub fn run() {
     }
 
     // Rejected Returns from inside a migrated call: every bad key, through
-    // the library helper and through raw SVC with junk x4..x7, yields the
+    // the library helper and through raw SVC with words in x4..x7, yields the
     // ordinary lookup/operation error and leaves the target running in
     // Bounce on its own stack with the continuation intact; a valid Return
     // then completes the Call. Return on a named Thread needs a named

@@ -129,14 +129,13 @@ impl InvocationKey {
     /// `Invocation.Call` (op 0): migrate this Thread into the target
     /// `AddressSpace`, run its entry with `args` in x2..x7 on a stack the
     /// kernel takes from the Invocation's stack pool, and return the target's
-    /// `(r0, r1)` once it completes `Thread.Return`.
+    /// six result words `r0..r5` once it completes `Thread.Return`.
     ///
     /// An exhausted pool is `NoFreeStack`; a full invocation stack is
     /// `NestingDepth`. Rejections happen before migration and leave this
     /// Thread unchanged.
-    pub fn call(&self, args: [u64; 6]) -> Result<(u64, u64), CapError> {
-        let response = ppc_call(self.key.to_wire(), args);
-        decode_syscall_result(response)
+    pub fn call(&self, args: [u64; 6]) -> Result<[u64; 6], CapError> {
+        call_result(ppc_call(self.key.to_wire(), args))
     }
 
     /// `Invocation.CallWithKey` (op 1): as [`call`](Self::call), and lend
@@ -152,8 +151,18 @@ impl InvocationKey {
     /// lent, then `NoFreeStack` and `NestingDepth`, then `NoPlacementSlot`.
     /// The target may use the lent key, within its rights, for as long as the
     /// call lasts.
-    pub fn call_with_key(&self, lent_key: RawKey, args: [u64; 6]) -> Result<(u64, u64), CapError> {
-        let response = ppc_call_with_key(self.key.to_wire(), lent_key.to_wire(), args);
-        decode_syscall_result(response)
+    pub fn call_with_key(&self, lent_key: RawKey, args: [u64; 6]) -> Result<[u64; 6], CapError> {
+        call_result(ppc_call_with_key(
+            self.key.to_wire(),
+            lent_key.to_wire(),
+            args,
+        ))
     }
+}
+
+/// The outcome of a Call response `(x0, x1..x6)`: the six Return words, or
+/// the rejection `x0..x2` carries (a rejected Call leaves `x3..x6` as the
+/// caller set them).
+fn call_result((status, words): (u64, [u64; 6])) -> Result<[u64; 6], CapError> {
+    decode_syscall_result((status, words[0], words[1])).map(|_| words)
 }

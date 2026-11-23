@@ -83,10 +83,7 @@ fn receive(init: &EndpointInit) -> PpcResult {
         if taken < SUBMITTED.load(Ordering::Acquire) {
             let ticket = taken + 1;
             TAKEN.store(ticket, Ordering::Release);
-            return PpcResult {
-                r0: ticket,
-                r1: REQUESTS[slot(ticket)].load(Ordering::Acquire),
-            };
+            return PpcResult::pair(ticket, REQUESTS[slot(ticket)].load(Ordering::Acquire));
         }
         doorbell(init)
             .await_bits(NotificationKey::WAIT_INFINITE)
@@ -109,10 +106,7 @@ extern "C" fn send_body(
     let init = setup();
     let ticket = SUBMITTED.load(Ordering::Acquire) + 1;
     if ticket - REPLIED.load(Ordering::Acquire) > QUEUE_SLOTS {
-        return PpcResult {
-            r0: 0,
-            r1: QUEUE_FULL,
-        };
+        return PpcResult::pair(0, QUEUE_FULL);
     }
     REQUESTS[slot(ticket)].store(request, Ordering::Release);
     SUBMITTED.store(ticket, Ordering::Release);
@@ -124,10 +118,7 @@ extern "C" fn send_body(
         .await_ge(ticket, EventCountKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("endpoint: done await failed: {:?}", error.code()));
     assert_eq!(tls(), ENDPOINT_TLS, "endpoint: TLS lost across a block");
-    PpcResult {
-        r0: ticket,
-        r1: REPLIES[slot(ticket)].load(Ordering::Acquire),
-    }
+    PpcResult::pair(ticket, REPLIES[slot(ticket)].load(Ordering::Acquire))
 }
 
 extern "C" fn receive_body(
@@ -156,10 +147,7 @@ extern "C" fn reply_receive_body(
     let init = setup();
     let replied = REPLIED.load(Ordering::Acquire);
     if ticket != replied + 1 || ticket > TAKEN.load(Ordering::Acquire) {
-        return PpcResult {
-            r0: 0,
-            r1: BAD_REPLY,
-        };
+        return PpcResult::pair(0, BAD_REPLY);
     }
     REPLIES[slot(ticket)].store(reply, Ordering::Release);
     REPLIED.store(ticket, Ordering::Release);

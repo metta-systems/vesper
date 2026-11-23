@@ -106,10 +106,7 @@ extern "C" fn fault_body(
         // `MODE_TERMINATE`, and anything unknown.
         _ => FaultAction::Terminate,
     };
-    PpcResult {
-        r0: action as u64,
-        r1: 0,
-    }
+    PpcResult::pair(action as u64, 0)
 }
 
 ppc_export!(
@@ -161,7 +158,7 @@ fn sequence(return_key: &ThreadReturnKey) {
     arm(MODE_SKIP);
     // SAFETY: at depth 0 this Return cannot succeed; the fault handler skips
     // the `svc` and this code continues.
-    let outcome = unsafe { return_key.return_from_invocation(0, 0) };
+    let outcome = unsafe { return_key.return_from_invocation([0; 6]) };
     // Skipped, the `svc` "returns" the registers it was issued with, which
     // never decode as success.
     assert!(outcome.is_err(), "a skipped Return cannot report success");

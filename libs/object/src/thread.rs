@@ -196,7 +196,8 @@ impl ThreadReturnKey {
     }
 
     /// `Thread.Return` (op 0): complete the current invocation, delivering
-    /// `(r0, r1)` to the immediate source as `x1`/`x2` with `SUCCESS` in `x0`.
+    /// the six words `payload` (`r0..r5`) to the immediate source as
+    /// `x1..x6` with `SUCCESS` in `x0`.
     ///
     /// Success never returns locally. `Err` is an ordinary pre-commit
     /// rejection (lookup, wrong form) with shared diagnostics and no pop; the
@@ -210,10 +211,10 @@ impl ThreadReturnKey {
     /// A successful Return abandons this execution context: no destructor
     /// or later code on this stack runs, and the target stack becomes free
     /// for the target component's reuse.
-    pub unsafe fn return_from_invocation(&self, r0: u64, r1: u64) -> Result<Infallible, CapError> {
+    pub unsafe fn return_from_invocation(&self, payload: [u64; 6]) -> Result<Infallible, CapError> {
         // SAFETY: forwarded caller contract; ppc_return declares every
         // register a local response may rewrite.
-        let response = unsafe { ppc_return(self.key.to_wire(), r0, r1) };
+        let response = unsafe { ppc_return(self.key.to_wire(), payload) };
         match decode_syscall_result(response) {
             Ok((word1, word2)) => Err(CapError::UnexpectedReturn { word1, word2 }),
             Err(error) => Err(error),

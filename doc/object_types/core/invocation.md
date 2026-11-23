@@ -16,14 +16,14 @@ Invocations are created by [`AddressSpace.CreateInvocation`](../arch/address_spa
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Call | `x2..x7` six arguments | `Call` | `x1` `r0`, `x2` `r1` returned by the target |
+| 0 | Call | `x2..x7` six arguments | `Call` | `x1..x6` the six words `r0..r5` the target returned |
 | 1 | CallWithKey | As Call, plus `x8` the key to lend | `Call` on the Invocation, `Lend` on the lent key | As Call |
 
 Any other operation fails with `InvalidOperation`.
 
 ### Call
 
-The caller passes six `u64` arguments in `x2..x7`; `x9` is clobbered. The kernel takes the lowest free stack of the Invocation's pool and the Thread runs the target entry on it with the register state below. When the target calls `Thread.Return(r0, r1)`, the caller resumes after its `svc` with `x0 = 0`, `x1 = r0`, `x2 = r1`.
+The caller passes six `u64` arguments in `x2..x7`; `x9` is clobbered. The kernel takes the lowest free stack of the Invocation's pool and the Thread runs the target entry on it with the register state below. When the target calls `Thread.Return` with six words `r0..r5`, the caller resumes after its `svc` with `x0 = 0` and `x1..x6 = r0..r5`.
 
 A call can nest: code running inside a target can call further Invocations, up to 16 levels deep. A call at depth 16 fails with `NestingDepth` (`x1` = 16).
 
@@ -72,10 +72,11 @@ Each operation stops at the first failing check and changes nothing:
 
 | State | Target entry after Call | Caller after Return |
 |---|---|---|
-| `x0` | Zero (unused); after CallWithKey the borrowed key | 0 / `r0` |
-| `x1` | The badge of the invoked key; zero for an unbadged key | 0 / `r1` |
+| `x0` | Zero (unused); after CallWithKey the borrowed key | 0 |
+| `x1` | The badge of the invoked key; zero for an unbadged key | `r0` |
 | `x2` | First argument | `r1` |
-| `x3..x7` | Remaining arguments | Zero |
+| `x3..x6` | Remaining arguments | `r2..r5` |
+| `x7` | Last argument | Zero |
 | `x8..x18` | Zero (including `x8`, the lent key of CallWithKey, and `x9`) | Zero |
 | `x19..x30` | Zero | As before the Call |
 | NZCV | Zero | As before the Call |
@@ -91,8 +92,8 @@ A rejected Call or Return is an ordinary error: the registers follow the usual [
 
 ## Userspace support
 
-- `InvocationKey::call(args)`, `InvocationKey::call_with_key(lent_key, args)` and `ThreadReturnKey::return_from_invocation(r0, r1)` in `libs/object` wrap Call, CallWithKey and Return. The raw `libsyscall::ppc_call`, `ppc_call_with_key` and `ppc_return` declare `x0..x18` as clobbered; built for the hard-float target, `ppc_call` and `ppc_call_with_key` also declare `v0..v7` and `v16..v31`. `AddressSpaceKey::create_invocation_with_window` declares the placement window; `create_invocation` creates an Invocation that accepts no key.
-- `ppc_export!(entry => body)` generates an entry function to pass to CreateInvocation. The entry takes eight `u64` arguments (two unused, then the six call arguments) and calls `body` with them. `body` returns `PpcResult { r0, r1 }`, which the entry hands to Return using the key recorded by `export::init_return_key`. If Return is rejected, the entry calls `vesper_thread_return_fault(status, detail1, detail2, r0, r1)`, which the component image must provide. For a CallWithKey target the first of the two unused arguments is the borrowed key.
+- `InvocationKey::call(args)`, `InvocationKey::call_with_key(lent_key, args)` and `ThreadReturnKey::return_from_invocation(words)` in `libs/object` wrap Call, CallWithKey and Return; the calls return the six words `r0..r5`. The raw `libsyscall::ppc_call`, `ppc_call_with_key` and `ppc_return` declare `x0..x18` as clobbered; built for the hard-float target, `ppc_call` and `ppc_call_with_key` also declare `v0..v7` and `v16..v31`. `AddressSpaceKey::create_invocation_with_window` declares the placement window; `create_invocation` creates an Invocation that accepts no key.
+- `ppc_export!(entry => body)` generates an entry function to pass to CreateInvocation. The entry takes eight `u64` arguments (two unused, then the six call arguments) and calls `body` with them. `body` returns `PpcResult { words }`, six words (`PpcResult::pair(r0, r1)` for two), which the entry hands to Return using the key recorded by `export::init_return_key`. If Return is rejected, the entry calls `vesper_thread_return_fault(status, detail1, detail2, &words)`, which the component image must provide. For a CallWithKey target the first of the two unused arguments is the borrowed key.
 
 ## Implementation
 

@@ -19,7 +19,7 @@ A Thread capability takes one of two forms:
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Return | `x2` `r0`, `x3` `r1` | Return key | Does not return; the caller of the Invocation resumes |
+| 0 | Return | `x2..x7` six words `r0..r5` | Return key | Does not return; the caller of the Invocation resumes |
 | 1 | Grant | — | — | Not implemented: `InvalidOperation` |
 | 2 | Suspend | — | `Write` on a named Thread | — |
 | 3 | Resume | — | `Write` on a named Thread | — |
@@ -27,7 +27,7 @@ A Thread capability takes one of two forms:
 
 ### Return
 
-Ends the current Invocation call and resumes the Thread in the AddressSpace it called from, with `x0 = 0`, `x1 = r0`, `x2 = r1`; see [Invocation](invocation.md#register-state) for the full register state. `x0` holds the key of slot 1 in the current AddressSpace's table, and `x4..x7` are ignored.
+Ends the current Invocation call and resumes the Thread in the AddressSpace it called from, with `x0 = 0` and `x1..x6 = r0..r5`; see [Invocation](invocation.md#register-state) for the full register state. `x0` holds the key of slot 1 in the current AddressSpace's table.
 
 The key is the same for every Thread in the AddressSpace: `ThreadReturnKey::provisioned(guard, size_bits)` builds it from the table's guard and size, since slot 1 always holds incarnation 1. A component that deletes its slot 1 entry can no longer return.
 
@@ -40,7 +40,7 @@ The key is the same for every Thread in the AddressSpace: `ThreadReturnKey::prov
 
 The two faults are reported at the Return's `svc` through [fault delivery](#fault-delivery); the call is not ended.
 
-`ThreadReturnKey::return_from_invocation(r0, r1)` wraps Return. It returns `Result<Infallible, CapError>`: on success it does not return; a rejection is `Err`; a local `Success` status is reported as `CapError::UnexpectedReturn` (status 35).
+`ThreadReturnKey::return_from_invocation(words)` wraps Return, the six words in an array. It returns `Result<Infallible, CapError>`: on success it does not return; a rejection is `Err`; a local `Success` status is reported as `CapError::UnexpectedReturn` (status 35).
 
 ### Suspend
 

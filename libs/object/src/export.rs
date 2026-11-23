@@ -23,26 +23,34 @@ use {
     },
 };
 
-/// The two `u64` result words a body returns in x0/x1 (`#[repr(C)]`, no
-/// hidden result pointer under AAPCS64). Experimental convention, not frozen.
+/// The six `u64` result words `r0..r5` a body returns, which `Thread.Return`
+/// carries to the caller's `x1..x6` (`#[repr(C)]`; at 48 bytes AAPCS64
+/// returns it through the hidden result pointer in `x8`). Experimental
+/// convention, not frozen.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PpcResult {
-    pub r0: u64,
-    pub r1: u64,
+    pub words: [u64; 6],
 }
 
-/// The adapter-owned 16-byte target-stack area holding `(r0, r1)` across key
-/// loading, the Return attempt and the fault handoff.
+impl PpcResult {
+    /// The result `r0`, `r1`, with the other four words zero.
+    pub const fn pair(r0: u64, r1: u64) -> Self {
+        Self {
+            words: [r0, r1, 0, 0, 0, 0],
+        }
+    }
+}
+
+/// The adapter-owned 48-byte target-stack area holding the result words
+/// across key loading, the Return attempt and the fault handoff.
 #[repr(C, align(16))]
-struct ResultSpill([u64; 2]);
+struct ResultSpill([u64; 6]);
 
 const _: () = {
-    assert!(size_of::<PpcResult>() == 16);
+    assert!(size_of::<PpcResult>() == 48);
     assert!(align_of::<PpcResult>() == 8);
-    assert!(core::mem::offset_of!(PpcResult, r0) == 0);
-    assert!(core::mem::offset_of!(PpcResult, r1) == 8);
-    assert!(size_of::<ResultSpill>() == 16);
+    assert!(size_of::<ResultSpill>() == 48);
     assert!(align_of::<ResultSpill>() == 16);
 };
 
@@ -65,14 +73,14 @@ pub fn return_key() -> ThreadReturnKey {
 unsafe extern "C" {
     /// Image-supplied, link-resolved libOS handler for a rejected Return:
     /// `(status, detail1, detail2)` from [`CapError::code`] plus the body's
-    /// original `(r0, r1)`. It must not return to the completed adapter; it
+    /// original six result words, by reference (they would not fit the
+    /// argument registers). It must not return to the completed adapter; it
     /// may diagnose, repair and explicitly retry Return, or terminate.
     fn vesper_thread_return_fault(
         status: u64,
         detail1: u64,
         detail2: u64,
-        original_r0: u64,
-        original_r1: u64,
+        original: &[u64; 6],
     ) -> !;
 }
 
@@ -90,9 +98,9 @@ pub unsafe fn complete_export(result: PpcResult) -> ! {
         complete_with(
             result,
             &return_key(),
-            |key, r0, r1| key.return_from_invocation(r0, r1),
-            |status, detail1, detail2, r0, r1| {
-                vesper_thread_return_fault(status, detail1, detail2, r0, r1)
+            |key, words| key.return_from_invocation(words),
+            |status, detail1, detail2, original| {
+                vesper_thread_return_fault(status, detail1, detail2, original)
             },
         )
     }
@@ -107,20 +115,19 @@ pub unsafe fn complete_export(result: PpcResult) -> ! {
 pub unsafe fn complete_with(
     result: PpcResult,
     key: &ThreadReturnKey,
-    return_step: impl FnOnce(&ThreadReturnKey, u64, u64) -> Result<Infallible, CapError>,
-    fault_step: impl FnOnce(u64, u64, u64, u64, u64) -> !,
+    return_step: impl FnOnce(&ThreadReturnKey, [u64; 6]) -> Result<Infallible, CapError>,
+    fault_step: impl FnOnce(u64, u64, u64, &[u64; 6]) -> !,
 ) -> ! {
-    // Materialize the ordered pair in its 16-byte stack area before anything
-    // that can clobber registers; later loads read memory, not stale copies.
-    let spill = ResultSpill([result.r0, result.r1]);
+    // Materialize the ordered words in their stack area before anything that
+    // can clobber registers; later loads read memory, not stale copies.
+    let spill = ResultSpill(result.words);
     let spilled = core::ptr::from_ref(&spill);
     // SAFETY: `spilled` points at the live, aligned local above.
     let load = || unsafe { core::ptr::read_volatile(spilled).0 };
-    let [r0, r1] = load();
-    let Err(error) = return_step(key, r0, r1);
+    let Err(error) = return_step(key, load());
     let (status, detail1, detail2) = error.code();
-    let [original_r0, original_r1] = load();
-    fault_step(status, detail1, detail2, original_r0, original_r1)
+    let original = load();
+    fault_step(status, detail1, detail2, &original)
 }
 
 /// Define a PPC export entry wrapper for a linked body.
