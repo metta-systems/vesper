@@ -89,4 +89,13 @@ local interface dma_v1
     errors(card32 dma_channel)
         returns (card32 bits)
         raises (not_owner);
+
+    ## The DMA channel's `CS` register as it reads now (BCM2835 ARM
+    ## Peripherals section 4.2.1.2): bit 0 active, 3 its DREQ asserted, 4
+    ## paused, 5 paused because its DREQ is low, 6 waiting for writes, 8 an
+    ## error. For a client's diagnostics: a ring that stalls with bit 5 set
+    ## waits on its peripheral.
+    status(card32 dma_channel)
+        returns (card32 control_status)
+        raises (not_owner);
 }

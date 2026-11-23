@@ -16,7 +16,7 @@ uses gpio_v1 via device compatible "brcm,bcm2835-gpio" or device compatible "brc
 # The DMA controller feeds the PWM FIFO from a ring in the driver's memory
 # (decision D1). The PWM node names no `dmas`, so the chain starts from the
 # controller's compatible string.
-uses dma_v1 via device compatible "brcm,bcm2835-dma" { claim, release, copy, start_ring, position, stop, errors }
+uses dma_v1 via device compatible "brcm,bcm2835-dma" { claim, release, copy, start_ring, position, stop, errors, status }
 # In an image with the log server (wood-test), the driver's trace goes to it on
 # the interface's io-channel; elsewhere the import stays unlinked and the trace
 # uses the serial channel (audio-test) or the backlog.

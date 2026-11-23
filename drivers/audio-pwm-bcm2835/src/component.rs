@@ -517,6 +517,7 @@ fn play(trace: &mut Trace, ring_pages: &DmaPages, output: &mut Output<'_>) {
         "audio: open for client {client}: a ramp up, then its packets"
     );
     output.start(ring_pages);
+    output.report(trace, "started");
 
     let mut late = 0;
     loop {
@@ -526,6 +527,7 @@ fn play(trace: &mut Trace, ring_pages: &DmaPages, output: &mut Output<'_>) {
                 "audio: the DMA stalled after {} periods",
                 playback.ring.finished()
             );
+            output.report(trace, "stalled");
             break;
         };
         for period in playback.ring.finished()..finished {
@@ -641,6 +643,38 @@ fn main(init_va: u64) -> ! {
 /// worth at 44.1 kHz is 46 ms.
 const PERIOD_TIMEOUT_NS: u64 = 1_000_000_000;
 
+/// A DMA channel's `CS` as `dma_v1`'s `status` returns it, shown by the
+/// flags that tell where a ring stands (BCM2835 ARM Peripherals §4.2.1.2).
+struct DmaChannelStatus(u32);
+
+impl core::fmt::Display for DmaChannelStatus {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        /// Bit and name of each flag shown.
+        const FLAGS: [(u32, &str); 6] = [
+            (0, "active"),
+            (3, "DREQ asserted"),
+            (4, "paused"),
+            (5, "paused on its DREQ"),
+            (6, "waiting for writes"),
+            (8, "error"),
+        ];
+        let mut shown = false;
+        for (bit, name) in FLAGS {
+            if self.0 & (1 << bit) != 0 {
+                if shown {
+                    formatter.write_str(", ")?;
+                }
+                formatter.write_str(name)?;
+                shown = true;
+            }
+        }
+        if !shown {
+            formatter.write_str("idle")?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(feature = "qemu")]
 use emulated::Capture as Output;
 
@@ -652,7 +686,7 @@ use board::Pwm as Output;
 #[cfg(not(feature = "qemu"))]
 mod board {
     use {
-        super::{DmaPages, PERIOD_TIMEOUT_NS, dma_events, dma_v1, timing},
+        super::{DmaChannelStatus, DmaPages, PERIOD_TIMEOUT_NS, dma_events, dma_v1, timing},
         audio_pwm_bcm2835::{
             Control, DmaConfig, MmioRegisterBlock, PERIOD_BYTES, PERIOD_FRAMES, PERIODS,
             RATE_TOLERANCE_PPM, RegisterBlock, clear_errors, clearing, deviation_ppm, dma_feed,
@@ -764,6 +798,29 @@ mod board {
         #[expect(clippy::unused_self, reason = "the same calls as the capture's")]
         pub fn next(&self, _ring: &DmaPages, _period: u64) {}
 
+        /// Trace the DMA channel's `CS` and the control block it is on, and
+        /// the block's `STA`, as they read now (`when`: just started, or
+        /// stalled). A ring stalled with the channel paused on its DREQ
+        /// waits for the PWM block to ask; `STA` shows what the block saw.
+        pub fn report(&self, trace: &mut Trace, when: &str) {
+            let control_status = self.dma.status(self.channel).unwrap_or(u32::MAX);
+            let block = self.dma.position(self.channel).unwrap_or(u32::MAX);
+            let status = self.registers.read_status();
+            trace!(
+                trace,
+                "audio: {when}: DMA CS {control_status:#010x} ({}), on block {block}; PWM STA {:#06x} (full {}, empty {}, write error {}, read error {}, bus error {}, sending {} {})",
+                DmaChannelStatus(control_status),
+                status.raw_value(),
+                status.fifo_full(),
+                status.fifo_empty(),
+                status.write_error(),
+                status.read_error(),
+                status.bus_error(),
+                status.sending1(),
+                status.sending2(),
+            );
+        }
+
         /// Stop the ring and the channels, and trace the measured rate, the
         /// `STA` flags and the DMA errors.
         pub fn stop(&mut self, trace: &mut Trace) {
@@ -817,8 +874,8 @@ mod board {
 mod emulated {
     use {
         super::{
-            Content, DMA_PAGES_VA, DmaPages, PERIOD_TIMEOUT_NS, PWM_CLOCK, clock_v1, dma_events,
-            dma_v1, timing,
+            Content, DMA_PAGES_VA, DmaChannelStatus, DmaPages, PERIOD_TIMEOUT_NS, PWM_CLOCK,
+            clock_v1, dma_events, dma_v1, timing,
         },
         audio_pwm_bcm2835::{
             MEMORY_DREQ, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_DREQ,
@@ -1232,6 +1289,17 @@ mod emulated {
                 let _timed_out = self.events.await_ge(u64::MAX, due - now);
             }
             self.copy(ring, period);
+        }
+
+        /// Trace the copy channel's `CS` as it reads now (`when`: just
+        /// started, or stalled); QEMU has no PWM block to read.
+        pub fn report(&self, trace: &mut Trace, when: &str) {
+            let control_status = self.dma.status(self.channel).unwrap_or(u32::MAX);
+            trace!(
+                trace,
+                "audio: {when}: DMA CS {control_status:#010x} ({})",
+                DmaChannelStatus(control_status)
+            );
         }
 
         pub fn stop(&mut self, trace: &mut Trace) {

@@ -491,6 +491,16 @@ mod component {
             let now = error_bits(registers.read_control_status(), registers.read_debug());
             Ok(seen | now)
         }
+
+        fn status(badge: u64, dma_channel: u32) -> Result<u32, Exception> {
+            let mut turn = TURNSTILE.enter(init());
+            let dma = dma(&mut turn);
+            dma.owned(badge, dma_channel)?;
+            Ok(dma
+                .channel(dma_channel as usize)
+                .read_control_status()
+                .raw_value())
+        }
     }
 
     dma::dma_v1_export!(Controller);
