@@ -40,4 +40,11 @@ local interface clock_v1
     rate(card32 clock)
         returns (card32 hz)
         raises (unknown_clock);
+
+    ## The generator's registers as they read now, for diagnostics: its
+    ## control (`CM_xxxCTL`: `SRC`, `ENAB`, `BUSY`, `MASH`) and divisor
+    ## (`CM_xxxDIV`: `DIVI`, `DIVF`), without the password.
+    status(card32 clock)
+        returns (card32 control, card32 divisor)
+        raises (unknown_clock);
 }

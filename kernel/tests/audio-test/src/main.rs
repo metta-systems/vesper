@@ -121,7 +121,7 @@ pub fn run() -> ! {
         let name = loaded.driver.component.name;
         let imports = init.imports();
         if name == components::AUDIO.name {
-            // The audio driver: the PWM block's page, three functions of
+            // The audio driver: the PWM block's page, four functions of
             // clock_v1, set_function of gpio_v1, the jack's pins from the
             // node's pin group, the serial channel, and the test client
             // as the one client of audio_v1, with an io-channel and no
@@ -132,8 +132,8 @@ pub fn run() -> ! {
                     .iter()
                     .filter(|record| record.type_code == CLOCK_V1)
                     .map(|record| record.function)
-                    .eq([0, 1, 3]),
-                "set_rate, enable and rate of clock_v1 (not disable, 2)"
+                    .eq([0, 1, 3, 4]),
+                "set_rate, enable, rate and status of clock_v1 (not disable, 2)"
             );
             assert!(
                 imports
@@ -156,7 +156,7 @@ pub fn run() -> ! {
                     && record.channel(DMA_CHANNEL_PAGES).is_some()),
                 "the functions of dma_v1 share one io-channel"
             );
-            assert_eq!(imports.len(), 4 + DMA_V1_FUNCTIONS);
+            assert_eq!(imports.len(), 5 + DMA_V1_FUNCTIONS);
             audio_channel = dma().next().map_or(0, |record| record.channel_base);
             assert!(
                 init.pins()

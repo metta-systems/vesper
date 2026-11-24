@@ -47,7 +47,7 @@ mod tests {
 
     /// The BCM2711's only source of known rate is its 54 MHz oscillator (audio
     /// decision, 2026-11-21): the Raspberry Pi 4's PWM clock runs from it
-    /// undivided, and PLLD per is never picked there.
+    /// divided by 2, and PLLD per is never picked there.
     #[test]
     fn the_bcm2711_divides_its_54_mhz_oscillator_only() {
         assert_eq!(Chip::from_compatible_index(0), Some(Chip::Bcm2835));
@@ -61,8 +61,11 @@ mod tests {
             })
         );
         assert_eq!(
-            choose(Chip::Bcm2711, 27_000_000).map(|setting| setting.hz(Chip::Bcm2711)),
-            Some(27_000_000)
+            choose(Chip::Bcm2711, 27_000_000),
+            Some(Setting {
+                source: ClockSource::Oscillator,
+                divisor: 2
+            })
         );
         // 100 MHz (the Raspberry Pi 3's PWM clock) is above the oscillator.
         assert_eq!(choose(Chip::Bcm2711, 100_000_000), None);

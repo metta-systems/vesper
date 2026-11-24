@@ -88,8 +88,8 @@ mod tests {
             Some(PI3_RATE)
         );
         assert_eq!(
-            midi_synth::supported_rate(54_000_000, 1225).map(Rate::millihertz),
-            Some(44_081_632)
+            midi_synth::supported_rate(27_000_000, 612).map(Rate::millihertz),
+            Some(44_117_647)
         );
         for (numerator, denominator) in [(0, 1), (48_000, 0), (7_999, 1), (192_001, 1)] {
             assert_eq!(

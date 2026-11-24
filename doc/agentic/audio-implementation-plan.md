@@ -28,7 +28,7 @@ only after its exit check has passed.
 Done in QEMU (2026-10-27), hardware check pending:
 
 - `drivers/cprman-bcm2835` for `brcm,bcm2835-cprman` exports `clock_v1` (`set_rate`,
-  `enable`, `disable`, `rate`), serving the PWM clock (binding number 30) only. The
+  `enable`, `disable`, `rate`, `status`), serving the PWM clock (binding number 30) only. The
   library picks the source and integer divisor (PLLD per 500 MHz or the 19.2 MHz
   oscillator, within 0.1 %) and programs them with the sequence of §6.3 table 6-34;
   host tests `tests/cprman.rs` (the design table's rates, the write sequence, `BUSY`

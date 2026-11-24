@@ -87,6 +87,18 @@ mod component {
             let generator = Clock::from_binding(clock).ok_or(Exception::UnknownClock { clock })?;
             Ok(rate(generator))
         }
+
+        fn status(clock: u32) -> Result<(u32, u32), Exception> {
+            /// The bits below a register's password byte.
+            const WITHOUT_PASSWORD: u32 = 0x00ff_ffff;
+            let generator = Clock::from_binding(clock).ok_or(Exception::UnknownClock { clock })?;
+            Ok(with_generator(generator, |generator| {
+                (
+                    generator.control().raw_value() & WITHOUT_PASSWORD,
+                    generator.divisor().raw_value() & WITHOUT_PASSWORD,
+                )
+            }))
+        }
     }
 
     clock::clock_v1_export!(Cprman);
