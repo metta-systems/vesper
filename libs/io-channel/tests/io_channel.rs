@@ -53,10 +53,14 @@ mod tests {
         fifo.put(&first).expect("room");
         fifo.put(&second).expect("room");
         assert!(!fifo.is_empty());
+        // A header slot per packet plus one per record.
+        assert_eq!(fifo.queued_slots(), 2 + 4);
         assert_eq!(fifo.get(), Ok(Some(first)));
+        assert_eq!(fifo.queued_slots(), 4);
         assert_eq!(fifo.get(), Ok(Some(second)));
         assert_eq!(fifo.get(), Ok(None));
         assert!(fifo.is_empty());
+        assert_eq!(fifo.queued_slots(), 0);
     }
 
     #[test]

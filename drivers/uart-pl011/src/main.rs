@@ -26,6 +26,11 @@
 //! `EventCount` (`DriverInit::event_count`): its first advance says the
 //! setup is done, and every later one that the transmit FIFO drained.
 //!
+//! Both Threads run at input priority (`libdevice_driver::Priority::INPUT`),
+//! ahead of CPU-bound programs: a burst drains in 40 us at 2 Mbaud, and at
+//! normal priority each transmit interrupt waited behind the running
+//! program's slice, sending one burst per scheduling round.
+//!
 //! Without a client the interrupt Thread serves a private channel nobody
 //! reads: the UART stays quiet, received bytes are dropped, and the transmit
 //! Thread waits for good.
@@ -33,9 +38,11 @@
 #[cfg(target_os = "vesper")]
 mod component {
     use {
+        core::sync::atomic::{AtomicU64, Ordering},
         libdevice_driver::{
-            DEVICE_WINDOW_VA, DriverInit, MAX_DEVICE_PAGES, device_address, driver_compatible,
-            driver_init, driver_threads, local_key, map_device_pages,
+            DEVICE_WINDOW_VA, DriverInit, MAX_DEVICE_PAGES, Priority, device_address,
+            driver_compatible, driver_init, driver_threads, entry_priority, local_key,
+            map_device_pages,
         },
         libio_channel::{Cursor, Event, NoEvent, Packet, WaitError},
         libobject::{
@@ -48,14 +55,17 @@ mod component {
             TRANSMIT_SUBMITTED_SLOT,
         },
         libuser::semihosting as semi,
-        uart_pl011::{Pl011, Receiver, RegisterBlock, TRANSMIT_BURST, id_names_pl011},
+        uart_pl011::{
+            Pl011, Receiver, RegisterBlock, TRANSMIT_BURST, id_names_pl011, loopback_burst,
+        },
     };
 
     libuser::entry!(main);
 
     driver_compatible!("arm,pl011");
 
-    driver_threads!(transmit_main);
+    entry_priority!(Priority::INPUT);
+    driver_threads!(transmit_main => Priority::INPUT);
 
     /// Span of the device window: one L3 table.
     const DEVICE_WINDOW_BYTES: u64 = 2 << 20;
@@ -66,6 +76,19 @@ mod component {
 
     /// The channel of a driver nobody attached to.
     static PRIVATE_CHANNEL: SerialChannel = SerialChannel::new();
+
+    /// Bytes the interrupt Thread took from the receive FIFO, stored or
+    /// dropped: in loopback, what of the sent bytes came back.
+    static RECEIVED: AtomicU64 = AtomicU64::new(0);
+
+    /// Bytes left in the receive buffer the interrupt Thread is filling, as
+    /// of its last pass; published before [`RECEIVED`] moves.
+    static FILLING_ROOM: AtomicU64 = AtomicU64::new(0);
+
+    /// How long the transmit Thread naps, in loopback, while the client has
+    /// no receive room for the next burst: the client queues its buffers
+    /// without a signal.
+    const LOOPBACK_POLL_NS: u64 = 100_000;
 
     /// The physical address of the UART's registers.
     fn registers_paddr(init: &DriverInit) -> u64 {
@@ -220,7 +243,9 @@ mod component {
             let interrupts = uart.take_interrupts();
             // Drain the receive FIFO before the transmit Thread sends more:
             // in loopback its next burst lands there.
-            uart.receive(&mut receiver);
+            let pass = uart.receive(&mut receiver);
+            FILLING_ROOM.store(receiver.filling_room(), Ordering::Relaxed);
+            RECEIVED.fetch_add((pass.stored + pass.dropped) as u64, Ordering::Release);
             // Only a client's EventCount can fail to advance.
             assert!(
                 receiver.signal().is_ok(),
@@ -244,6 +269,14 @@ mod component {
         }
     }
 
+    /// How long the transmit Thread waits for a burst to drain before it
+    /// sends on without the transmit interrupt: a burst takes 40 us at
+    /// 2 Mbaud and 0.7 ms at 115 200 baud. Sending early is safe, since
+    /// [`Pl011::transmit`] stops at a full FIFO; the wait only paces the
+    /// bursts. Without the bound a transmit interrupt served late or never
+    /// stopped the output for good.
+    const ROOM_TIMEOUT_NS: u64 = 10_000_000;
+
     /// The transmit FIFO's room, as the interrupt Thread reports it by
     /// advancing the driver's `EventCount` on each transmit interrupt.
     struct TransmitRoom {
@@ -251,6 +284,11 @@ mod component {
         /// The count that says the last full burst drained, if the
         /// transmit Thread has not waited for it yet
         awaiting: Option<u64>,
+        /// Bursts sent on after [`ROOM_TIMEOUT_NS`] without their transmit
+        /// interrupt
+        missed: u64,
+        /// Bytes written to the transmit FIFO
+        sent: u64,
     }
 
     impl TransmitRoom {
@@ -260,12 +298,47 @@ mod component {
                 .unwrap_or_else(|error| panic!("uart-pl011: Read failed: {:?}", error.code()))
         }
 
-        /// Wait for the last full burst to drain.
+        /// Wait for the last full burst to drain, at most
+        /// [`ROOM_TIMEOUT_NS`].
         fn wait(&mut self) {
-            if let Some(target) = self.awaiting.take() {
-                self.count
-                    .await_ge(target, EventCountKey::WAIT_INFINITE)
-                    .unwrap_or_else(|error| panic!("uart-pl011: Await failed: {:?}", error.code()));
+            let Some(target) = self.awaiting.take() else {
+                return;
+            };
+            match self.count.await_ge(target, ROOM_TIMEOUT_NS) {
+                Ok(_) => {}
+                Err(CapError::TimedOut { .. }) => {
+                    self.missed += 1;
+                    // On the semihosting console only: a line on the UART
+                    // would land in the middle of the client's.
+                    semi::println!(
+                        "uart-pl011: sent on without a transmit interrupt ({} so far)",
+                        self.missed
+                    );
+                }
+                Err(error) => panic!("uart-pl011: Await failed: {:?}", error.code()),
+            }
+        }
+
+        /// In loopback, wait until a burst can come back whole and return its
+        /// size ([`loopback_burst`]), napping so the client gets the CPU to
+        /// queue receive buffers. An advance of the count ends a nap early,
+        /// which only means looking again.
+        fn wait_for_loopback_room(&self, channel: &SerialChannel) -> usize {
+            loop {
+                let received = RECEIVED.load(Ordering::Acquire);
+                let filling_room = FILLING_ROOM.load(Ordering::Relaxed);
+                let burst = loopback_burst(
+                    self.sent.saturating_sub(received),
+                    filling_room,
+                    channel.receive.submit.queued_slots(),
+                );
+                if burst > 0 {
+                    return burst;
+                }
+                match self.count.await_ge(u64::MAX, LOOPBACK_POLL_NS) {
+                    Ok(_) | Err(CapError::TimedOut { .. }) => {}
+                    Err(error) => panic!("uart-pl011: Await failed: {:?}", error.code()),
+                }
             }
         }
     }
@@ -278,12 +351,33 @@ mod component {
     /// reports the room, so the FIFO never holds more than one burst. A
     /// burst short of [`TRANSMIT_BURST`] that ends the packet may never
     /// drain through the FIFO's trigger level, so nothing waits for it.
-    fn send(uart: &mut Pl011<'_>, packet: &Packet, room: &mut TransmitRoom) {
+    ///
+    /// In loopback (`loopback` is the channel) a burst instead waits until
+    /// every byte sent came back, which also means the FIFO drained, and is
+    /// no larger than the receive buffers can take
+    /// ([`TransmitRoom::wait_for_loopback_room`]).
+    fn send(
+        uart: &mut Pl011<'_>,
+        packet: &Packet,
+        room: &mut TransmitRoom,
+        loopback: Option<&SerialChannel>,
+    ) {
         let mut cursor = Cursor::START;
         while !cursor.is_at_end(packet) {
-            room.wait();
+            let limit = match loopback {
+                Some(channel) => room.wait_for_loopback_room(channel),
+                None => {
+                    room.wait();
+                    TRANSMIT_BURST
+                }
+            };
             let before = room.read();
+            let mut taken = 0;
             let written = uart.transmit(|| {
+                if taken == limit {
+                    return None;
+                }
+                taken += 1;
                 cursor.next_address(packet).map(|address| {
                     // SAFETY: the data area holds the packet and is mapped
                     // (`attach`); the client gave the buffer to the driver
@@ -291,7 +385,8 @@ mod component {
                     unsafe { (address as *const u8).read_volatile() }
                 })
             });
-            if written == TRANSMIT_BURST || !cursor.is_at_end(packet) {
+            room.sent += written as u64;
+            if loopback.is_none() && (written == TRANSMIT_BURST || !cursor.is_at_end(packet)) {
                 room.awaiting = Some(before + 1);
             }
         }
@@ -304,9 +399,14 @@ mod component {
         let init = unsafe { driver_init(init_va) };
         let mut room = TransmitRoom {
             count: EventCountKey::from_key(RawKey::from_wire(init.event_count)),
-            awaiting: Some(1),
+            awaiting: None,
+            missed: 0,
+            sent: 0,
         };
-        room.wait();
+        // The setup's advance: the interrupt Thread brings the UART up first.
+        room.count
+            .await_ge(1, EventCountKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| panic!("uart-pl011: Await failed: {:?}", error.code()));
         let mut uart = uart(init);
         // SAFETY: the interrupt Thread mapped the client's channel at
         // CONTROL_VA before its first advance.
@@ -315,6 +415,7 @@ mod component {
             event_count(init, TRANSMIT_SUBMITTED_SLOT),
             event_count(init, TRANSMIT_COMPLETED_SLOT),
         );
+        let loopback = channel.has(LOOPBACK).then_some(channel);
         loop {
             let mut packet = match requests.wait() {
                 Ok(packet) => packet,
@@ -325,7 +426,7 @@ mod component {
                 }
             };
             if DATA_AREA.holds(&packet) {
-                send(&mut uart, &packet, &mut room);
+                send(&mut uart, &packet, &mut room, loopback);
             } else {
                 // A packet outside the data area comes back with nothing sent.
                 Cursor::START.cut(&mut packet);

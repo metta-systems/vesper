@@ -253,6 +253,13 @@ impl<const SLOTS: usize> Fifo<SLOTS> {
         self.filled() == Some(0)
     }
 
+    /// Slots of the packets waiting, zero if the counters disagree: at
+    /// least `packets + recs`, so at least `slots / (MAX_PACKET_RECS + 1)`
+    /// packets wait.
+    pub fn queued_slots(&self) -> u64 {
+        self.filled().unwrap_or(0)
+    }
+
     /// Whether a packet of `recs` records fits now. Producer side only.
     pub fn has_room(&self, recs: usize) -> bool {
         self.filled()
