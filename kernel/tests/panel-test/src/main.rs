@@ -5,10 +5,12 @@
 
 //! panel-test: the SPI panel on a board, and nothing else. Kickstart loads the
 //! PL011 driver, the log server (holding its serial channel), the mailbox, the
-//! gpio component, the spi component for SPI0 and the ILI9341 panel driver for
-//! the panel node on it; the panel driver initializes the panel, turns its
-//! backlight on and draws colour bars, and its lines (with the spi
-//! component's) reach the UART through the log server.
+//! gpio component, the spi component for SPI0, the ILI9341 panel driver for
+//! the panel node on it and the panel probe. The panel driver initializes the
+//! panel, clears it and turns its backlight on, then serves `display_v1`; the
+//! probe checks the panel's description and draws on it through that
+//! interface. Their lines (with the spi component's) reach the UART through
+//! the log server.
 //!
 //! Kickstart prints on semihosting only once it drops to EL1, so this Thread
 //! then only waits.

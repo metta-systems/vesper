@@ -20,8 +20,10 @@ pub const ARGUMENT_WORDS: usize = 6;
 pub const RESULT_WORDS: usize = 5;
 
 /// Largest data area an interface may declare: it is mapped in both the client
-/// and the exporter for every pair, in a window of 2 MiB.
-pub const MAX_DATA_BYTES: u64 = 64 * 1024;
+/// and the exporter for every pair, in a window of 2 MiB that all the image's
+/// pairs share. Large enough for a small panel's whole screen (`display_v1`:
+/// 240x320 RGB565 is 150 KiB).
+pub const MAX_DATA_BYTES: u64 = 256 * 1024;
 
 /// Largest key-placement window an interface may declare: slots of the
 /// exporter's table reserved for each client.

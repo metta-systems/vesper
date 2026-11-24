@@ -1,0 +1,13 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The panel, as the one display_v1 output of panel-test: the panel driver's
+# manifest entry is named `panel`.
+uses display_v1 via component panel
+{
+    describe, modes, mode, get_mode, set_mode, rotate, flush
+}
+# The probe's lines, its fault report and its panic report go to the log
+# server, the program holding the UART.
+uses log_v1 via component log_server { flush }

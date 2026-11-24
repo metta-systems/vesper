@@ -2,7 +2,8 @@
 # needs on a board, whose lines the log server writes on the UART: the PL011,
 # the mailbox (the core clock's fastest rate), the gpio component (the SPI
 # pins and the panel's lines), the spi component on SPI0 and the ILI9341 panel
-# driver on it, both reading their nodes from device tree copies. The board's
+# driver on it, both reading their nodes from device tree copies, and a probe
+# drawing on the panel through its display_v1. The board's
 # `mipi-dbi-spi` overlay (tools/makesd/boot/config.txt) enables SPI0 and puts
 # the panel on it.
 
@@ -38,7 +39,16 @@ device_tree = true
 name = "panel"
 binary = "panel-ili9341"
 interfaces = "../../../drivers/panel-ili9341/interfaces"
+exports = ["../../../drivers/display/interfaces"]
 device_tree = true
+
+# The probe: draws on the panel through its display_v1, as the compositor will.
+[[component]]
+name = "panel_probe"
+binary = "panel-test-probe"
+interfaces = "../../../userspace/tests/panel/probe/interfaces"
+active = true
+program = true
 
 # The root dispatcher: Kickstart binds it once every other program and driver
 # is loaded, and registers the boot Thread with it.

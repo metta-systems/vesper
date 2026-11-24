@@ -259,11 +259,15 @@ mod tests {
             "whole 4096-byte pages",
         );
         assert_reports(
-            "local interface a_v1 { data 131072; f(octet& buffer); }",
-            "at most 65536 bytes",
+            "local interface a_v1 { data 266240; f(octet& buffer); }",
+            "at most 262144 bytes",
         );
         assert!(
-            check_messages("local interface a_v1 { data 65536; f(octet& buffer); }").is_empty()
+            check_messages("local interface a_v1 { data 262144; f(octet& buffer); }").is_empty()
+        );
+        // A small panel's whole screen (display_v1): 240x320 RGB565 in pages.
+        assert!(
+            check_messages("local interface a_v1 { data 155648; f(octet& buffer); }").is_empty()
         );
     }
 

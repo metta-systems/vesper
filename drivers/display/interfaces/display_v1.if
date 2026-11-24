@@ -1,0 +1,114 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## One display output, exported by the driver that owns it: the mailbox
+## framebuffer (a scanout output: it shows its own memory by itself) or a panel
+## behind a bus (a flush output: every change is sent to it). The compositor
+## holds every output: it reads the description and the mode, writes the
+## output's pixels in the output's format, and, for a flush output, says which
+## rectangle changed. See `doc/agentic/multi-display-design.md`.
+## Prototype: edited in place.
+local interface display_v1
+{
+    ## The pixels of a flush output: the compositor writes the whole screen
+    ## there, in the current mode's format and pitch, and `flush` sends a
+    ## rectangle of it. 240x320 RGB565 is 153600 bytes, 37.5 pages, so 38
+    ## pages. A scanout output leaves it unused.
+    data 155648;
+
+    ## Every function receives the badge of the key it was called through: the
+    ## output knows its caller's data area from the key.
+    badged;
+
+    ## A client lends one table at a time to `frames`, so one slot of the
+    ## output's table is reserved for it.
+    placement 1;
+
+    ## How pixels sit in the output's memory: `xrgb8888` 32-bit with blue in
+    ## the lowest byte, `xbgr8888` 32-bit with red in the lowest byte,
+    ## `rgb565_be` 16-bit 5-6-5 with red in the top bits, the high byte first.
+    enum format {
+        xrgb8888, xbgr8888, rgb565_be
+    }
+
+    ## A turn of the output's scan direction, clockwise; in a set of
+    ## rotations, bit `n` stands for the turn of `n` quarters.
+    enum rotation { r0, r90, r180, r270 }
+
+    ## The output is gone; `generation` is the generation it went away in.
+    exception not_present { card32 generation; }
+
+    ## The output cannot do this itself: a rotation outside its set, or
+    ## `frames` of an output with no memory of its own.
+    exception unsupported {}
+
+    ## There is no mode `index`, or the output refused to switch to it.
+    exception no_mode { card32 index; }
+
+    ## The rectangle is empty or not inside the screen, or `screen` is not
+    ## inside the caller's data area or too short for the mode.
+    exception bad_rectangle {}
+
+    ## The lent table refused a Frame: `installed` Frames of the call are in it.
+    exception install_failed { card32 installed; }
+
+    ## The output's memory was handed out already in this generation.
+    exception already_handed_out {}
+
+    ## The output went wrong sending pixels or a command.
+    exception failed {}
+
+    ## What the output is: the generation (it changes whenever anything here
+    ## or the mode changes), whether it scans out by itself (else it needs
+    ## `flush`), its physical size in millimetres (0 when unknown) and the set
+    ## of rotations `rotate` accepts.
+    describe()
+        returns (card32 generation, boolean scanout, card32 width_mm, card32 height_mm,
+                 card32 rotations)
+        raises (not_present);
+
+    ## How many modes the output has; mode 0 is its preferred one.
+    modes()
+        returns (card32 count)
+        raises (not_present);
+
+    ## Mode `index`: its size in pixels, format and refresh rate in millihertz
+    ## (0 when unknown).
+    mode(card32 index)
+        returns (card32 width, card32 height, format format, card32 refresh_mhz)
+        raises (not_present, no_mode);
+
+    ## The current mode, as the output is turned now, and its pitch in bytes.
+    ## An output starts in a mode of its own choosing.
+    get_mode()
+        returns (card32 width, card32 height, card32 pitch, format format)
+        raises (not_present);
+
+    ## Switch to mode `index` and return it as `get_mode` does; advances the
+    ## generation when the mode changes.
+    set_mode(card32 index)
+        returns (card32 width, card32 height, card32 pitch, format format)
+        raises (not_present, no_mode, failed);
+
+    ## A scanout output: install the Frames of its memory in the lent table,
+    ## at consecutive slots from `first_slot` in address order, and return how
+    ## many; once per generation.
+    frames(card32 first_slot) lends (key_table into)
+        returns (card32 installed)
+        raises (not_present, unsupported, already_handed_out, install_failed);
+
+    ## Turn the output's scan direction to `rotation` and return the size the
+    ## mode now has; advances the generation when the turn changes.
+    rotate(rotation rotation)
+        returns (card32 width, card32 height)
+        raises (not_present, unsupported, failed);
+
+    ## Send the rectangle of `width` by `height` pixels at (`x`, `y`) of
+    ## `screen` to the glass, and return when it is sent. `screen` is the
+    ## whole screen in the caller's data area, in the current mode's format
+    ## and pitch: at least pitch times height bytes. A scanout output returns
+    ## at once.
+    flush(card32 x, card32 y, card32 width, card32 height, octet& screen)
+        raises (not_present, bad_rectangle, failed);
+}

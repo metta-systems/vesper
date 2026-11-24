@@ -1115,6 +1115,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "display"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "display-client"
+version = "0.0.1"
+dependencies = [
+ "display",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
 name = "dlib"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3373,6 +3390,7 @@ checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
 name = "panel-ili9341"
 version = "0.0.1"
 dependencies = [
+ "display",
  "embedded-graphics-core",
  "embedded-hal",
  "gpio-client",
@@ -3402,6 +3420,20 @@ dependencies = [
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
+]
+
+[[package]]
+name = "panel-test-probe"
+version = "0.0.1"
+dependencies = [
+ "display",
+ "display-client",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-log-client",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
 ]
 
 [[package]]
