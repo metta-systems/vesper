@@ -47,18 +47,19 @@ impl Timing {
 /// first whose clock rate the manager can set:
 ///
 /// - the Raspberry Pi 3's: [`PWM_CLOCK_HZ`] and [`RANGE`] (decision D4);
-/// - the Raspberry Pi 4's: its 54 MHz oscillator undivided, the BCM2711's
-///   only clock source of documented rate, over 1225, 44 081.6 Hz, about
-///   10.3 bits per sample (audio decision, 2026-11-21); 230 ppm below the
-///   Raspberry Pi 3's rate.
+/// - the Raspberry Pi 4's: its 54 MHz oscillator, the BCM2711's only clock
+///   source of documented rate (audio decision, 2026-11-21), divided by 2,
+///   over 612: 44 117.6 Hz, about 9.3 bits per sample. Undivided, the
+///   generator runs (`BUSY`) but the PWM block takes no FIFO words; Linux
+///   never programs the PWM clock (a MASH clock there) below a divisor of 2.
 pub const TIMINGS: [Timing; 2] = [
     Timing {
         clock_hz: PWM_CLOCK_HZ,
         range: RANGE,
     },
     Timing {
-        clock_hz: 54_000_000,
-        range: 1225,
+        clock_hz: 27_000_000,
+        range: 612,
     },
 ];
 
@@ -215,6 +216,39 @@ pub const fn clear_errors() -> Status {
         .with_gap3(true)
         .with_gap4(true)
         .with_bus_error(true)
+}
+
+/// Writes [`write_settled`] makes before it gives up.
+pub const SETTLE_ATTEMPTS: u32 = 4;
+
+/// Write `value` to a PWM register and wait until it reads back as
+/// `expected`: §9.6 (BCM2711 §8.6, `STA`, `BERR`) warns that writes following each other
+/// faster than the synchroniser into the PWM clock domain copes with can
+/// contaminate the data. Each attempt writes, calls `wait`, then reads; the
+/// next write goes out only once the last one shows. Returns the attempts it
+/// took, or the last value read after [`SETTLE_ATTEMPTS`].
+///
+/// # Errors
+///
+/// The register never read back as `expected`: the last value read.
+pub fn write_settled<Registers, Value: Copy + PartialEq>(
+    registers: &mut Registers,
+    write: impl Fn(&mut Registers, Value),
+    read: impl Fn(&mut Registers) -> Value,
+    wait: impl Fn(),
+    value: Value,
+    expected: Value,
+) -> Result<u32, Value> {
+    let mut last = expected;
+    for attempt in 1..=SETTLE_ATTEMPTS {
+        write(registers, value);
+        wait();
+        last = read(registers);
+        if last == expected {
+            return Ok(attempt);
+        }
+    }
+    Err(last)
 }
 
 /// Whether `status` shows an error or a gap.

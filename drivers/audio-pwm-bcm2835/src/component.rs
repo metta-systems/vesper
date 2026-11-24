@@ -198,6 +198,25 @@ fn start_clock(trace: &mut Trace, clock: &clock_v1::Client) -> u32 {
         trace,
         "audio: PWM clock set to {actual} Hz, reads back {rate} Hz"
     );
+    match clock.status(PWM_CLOCK) {
+        // CTL: SRC bits 0..=3, ENAB bit 4, BUSY bit 7, MASH bits 9..=10; DIV:
+        // DIVI bits 12..=23, DIVF bits 0..=11 (BCM2835 §6.3, tables 6-34 and
+        // 6-35).
+        Ok((control, divisor)) => trace!(
+            trace,
+            "audio: PWM clock generator: CTL {control:#08x} (source {}, enabled {}, busy {}, MASH {}), DIV {divisor:#08x} (integer {}, fraction {})",
+            control & 0xf,
+            control >> 4 & 1 == 1,
+            control >> 7 & 1 == 1,
+            control >> 9 & 0x3,
+            divisor >> 12 & 0xfff,
+            divisor & 0xfff,
+        ),
+        Err(error) => trace!(
+            trace,
+            "audio: reading the PWM clock generator failed: {error:?}"
+        ),
+    }
     rate
 }
 
@@ -587,7 +606,11 @@ fn main(init_va: u64) -> ! {
         emulated::Capture::new(init, &dma, next_slot)
     };
     #[cfg(not(feature = "qemu"))]
-    let (mut output, next_slot) = board::Pwm::new(init, &dma);
+    let (mut output, next_slot) = {
+        let (mut pwm, next_slot) = board::Pwm::new(init, &dma);
+        pwm.probe_fifo_drain(&mut trace);
+        (pwm, next_slot)
+    };
 
     // The doorbell and the count of closes.
     let table = KeyTableKey::from_key(RawKey::from_wire(init.table));
@@ -689,18 +712,33 @@ mod board {
     use {
         super::{DmaChannelStatus, DmaPages, PERIOD_TIMEOUT_NS, dma_events, dma_v1, timing},
         audio_pwm_bcm2835::{
-            Control, DmaConfig, MmioRegisterBlock, PERIOD_BYTES, PERIOD_FRAMES, PERIODS,
-            RATE_TOLERANCE_PPM, RegisterBlock, clear_errors, clearing, deviation_ppm, dma_feed,
-            fifo_stereo, measured_rate_millihertz, pwm_dreq,
+            Control, DmaConfig, FIFO_WORDS, MmioRegisterBlock, PERIOD_BYTES, PERIOD_FRAMES,
+            PERIODS, RATE_TOLERANCE_PPM, RegisterBlock, clear_errors, clearing, deviation_ppm,
+            dma_feed, fifo_stereo, measured_rate_millihertz, pwm_dreq, write_settled,
         },
         libdevice_driver::{DriverInit, device_address, map_device_pages},
         libobject::EventCountKey,
         libserial_trace::{Trace, trace},
     };
 
+    /// Wait for a PWM register write to cross into the PWM clock domain.
+    /// shortcut: 1 µs, far above the few PWM clock cycles (19 ns each at
+    /// 54 MHz) a synchroniser takes; the manual gives no figure, so measure
+    /// it if writes still need retries.
+    fn wait_for_synchroniser() {
+        let until = libuser::clock::now_ns() + 1000;
+        while libuser::clock::now_ns() < until {
+            core::hint::spin_loop();
+        }
+    }
+
     /// The PWM block and the DMA channel feeding it.
     pub struct Pwm<'dma> {
         registers: MmioRegisterBlock<'static>,
+        /// Register writes that read back right only after a retry
+        retried_writes: u32,
+        /// Register writes that never read back right
+        unsettled_writes: u32,
         dma: &'dma dma_v1::Client,
         channel: u32,
         events: EventCountKey,
@@ -723,24 +761,140 @@ mod board {
                 device_address(init, init.regions()[0].start).expect("audio: registers mapped");
             // SAFETY: mapped for good just above; the refill Thread is the
             // only one touching the block.
-            let mut registers = unsafe { RegisterBlock::new_mmio(address as *mut RegisterBlock) };
-            registers.write_control(Control::ZERO);
-            registers.write_dma_config(DmaConfig::ZERO);
+            let registers = unsafe { RegisterBlock::new_mmio(address as *mut RegisterBlock) };
             let channel = dma
                 .claim(pwm_dreq(init.regions()[0].start))
                 .unwrap_or_else(|error| panic!("audio: claiming a DMA channel failed: {error:?}"));
-            (
-                Self {
-                    registers,
-                    dma,
-                    channel,
-                    events: dma_events(dma),
-                    base: 0,
-                    first: None,
-                    latest: (0, 0),
+            let mut pwm = Self {
+                registers,
+                retried_writes: 0,
+                unsettled_writes: 0,
+                dma,
+                channel,
+                events: dma_events(dma),
+                base: 0,
+                first: None,
+                latest: (0, 0),
+            };
+            pwm.set_control(Control::ZERO);
+            pwm.set_dma_config(DmaConfig::ZERO);
+            (pwm, next_slot)
+        }
+
+        /// Write `value` until it reads back as `expected`
+        /// ([`write_settled`]), counting the writes that needed a retry or
+        /// never settled.
+        fn settle<Value: Copy + PartialEq>(
+            &mut self,
+            write: impl Fn(&mut MmioRegisterBlock<'static>, Value),
+            read: impl Fn(&mut MmioRegisterBlock<'static>) -> Value,
+            value: Value,
+            expected: Value,
+        ) {
+            match write_settled(
+                &mut self.registers,
+                write,
+                read,
+                wait_for_synchroniser,
+                value,
+                expected,
+            ) {
+                Ok(1) => {}
+                Ok(_) => self.retried_writes += 1,
+                Err(_) => self.unsettled_writes += 1,
+            }
+        }
+
+        /// Set `CTL`; `CLRF` acts once and reads as 0.
+        fn set_control(&mut self, control: Control) {
+            self.settle(
+                MmioRegisterBlock::write_control,
+                |registers| registers.read_control(),
+                control,
+                control.with_clear_fifo(false),
+            );
+        }
+
+        fn set_dma_config(&mut self, config: DmaConfig) {
+            self.settle(
+                MmioRegisterBlock::write_dma_config,
+                |registers| registers.read_dma_config(),
+                config,
+                config,
+            );
+        }
+
+        /// Set `RNG1` and `RNG2` to `range`.
+        fn set_ranges(&mut self, range: u32) {
+            self.settle(
+                MmioRegisterBlock::write_range1,
+                |registers| registers.read_range1(),
+                range,
+                range,
+            );
+            self.settle(
+                MmioRegisterBlock::write_range2,
+                |registers| registers.read_range2(),
+                range,
+                range,
+            );
+        }
+
+        /// Time how long the channels take to empty a full FIFO, filled with
+        /// silence by the CPU, no DMA: whether they take words at all, and
+        /// how fast. Leaves the block stopped.
+        pub fn probe_fifo_drain(&mut self, trace: &mut Trace) {
+            /// How long the probe waits for the FIFO to empty; it takes
+            /// about 0.1 ms at the expected rate.
+            const PROBE_TIMEOUT_NS: u64 = 10_000_000;
+            let range = timing().range;
+            self.set_control(Control::ZERO);
+            self.set_dma_config(DmaConfig::ZERO);
+            self.set_ranges(range);
+            self.set_control(clearing());
+            self.clear_status();
+            for _ in 0..FIFO_WORDS {
+                self.registers.write_fifo(range / 2);
+                wait_for_synchroniser();
+            }
+            let filled = self.registers.read_status();
+            let started = libuser::clock::now_ns();
+            self.set_control(fifo_stereo());
+            let mut status = self.registers.read_status();
+            while !status.fifo_empty() && libuser::clock::now_ns() - started < PROBE_TIMEOUT_NS {
+                core::hint::spin_loop();
+                status = self.registers.read_status();
+            }
+            let elapsed_ns = libuser::clock::now_ns() - started;
+            self.set_control(Control::ZERO);
+            self.clear_status();
+            // Each channel takes one word per `range` clock cycles.
+            let expected_ns = FIFO_WORDS as u64 / 2 * u64::from(range) * 1_000_000_000
+                / u64::from(timing().clock_hz);
+            trace!(
+                trace,
+                "audio: FIFO drain probe: {FIFO_WORDS} words in, STA {:#06x} (full {}); {} after {} us (about {} us expected); STA then {:#06x} (bus error {}, sending {} {})",
+                filled.raw_value(),
+                filled.fifo_full(),
+                if status.fifo_empty() {
+                    "empty"
+                } else {
+                    "still not empty"
                 },
-                next_slot,
-            )
+                elapsed_ns / 1000,
+                expected_ns / 1000,
+                status.raw_value(),
+                status.bus_error(),
+                status.sending1(),
+                status.sending2(),
+            );
+        }
+
+        /// Clear every `STA` flag; write-one-to-clear, so nothing to read
+        /// back.
+        fn clear_status(&mut self) {
+            self.registers.write_status(clear_errors());
+            wait_for_synchroniser();
         }
 
         /// Start the channels on the ring, every slot filled and cleaned:
@@ -749,12 +903,11 @@ mod board {
         /// then the channels start on it. No `RPTL`: a FIFO the DMA did not
         /// refill in time shows as a gap.
         pub fn start(&mut self, ring: &DmaPages) {
-            self.registers.write_control(Control::ZERO);
-            self.registers.write_range1(timing().range);
-            self.registers.write_range2(timing().range);
-            self.registers.write_control(clearing());
-            self.registers.write_dma_config(dma_feed());
-            self.registers.write_status(clear_errors());
+            self.set_control(Control::ZERO);
+            self.set_ranges(timing().range);
+            self.set_control(clearing());
+            self.set_dma_config(dma_feed());
+            self.clear_status();
             self.base = self.events.read().unwrap_or_else(|error| {
                 panic!("audio: reading the DMA EventCount: {:?}", error.code())
             });
@@ -767,7 +920,7 @@ mod board {
                     u32::try_from(PERIODS).expect("four periods"),
                 )
                 .unwrap_or_else(|error| panic!("audio: starting the DMA ring failed: {error:?}"));
-            self.registers.write_control(fifo_stereo());
+            self.set_control(fifo_stereo());
         }
 
         /// Wait until the DMA finished more than `finished` periods; how
@@ -820,6 +973,17 @@ mod board {
                 status.sending1(),
                 status.sending2(),
             );
+            trace!(
+                trace,
+                "audio: {when}: PWM CTL {:#06x} RNG1 {} RNG2 {} DMAC {:#010x} (range written {}); register writes retried {}, never settled {}",
+                self.registers.read_control().raw_value(),
+                self.registers.read_range1(),
+                self.registers.read_range2(),
+                self.registers.read_dma_config().raw_value(),
+                timing().range,
+                self.retried_writes,
+                self.unsettled_writes,
+            );
         }
 
         /// Stop the ring and the channels, and trace the measured rate, the
@@ -832,9 +996,9 @@ mod board {
                 .stop(self.channel)
                 .unwrap_or_else(|error| panic!("audio: stopping the DMA ring failed: {error:?}"));
             let dma_errors = self.dma.errors(self.channel).unwrap_or(u32::MAX);
-            self.registers.write_control(Control::ZERO);
-            self.registers.write_dma_config(DmaConfig::ZERO);
-            self.registers.write_status(clear_errors());
+            self.set_control(Control::ZERO);
+            self.set_dma_config(DmaConfig::ZERO);
+            self.clear_status();
             let rate_millihertz = timing().sample_rate_millihertz();
             if let Some((first_count, first_at)) = self.first
                 && self.latest.0 > first_count

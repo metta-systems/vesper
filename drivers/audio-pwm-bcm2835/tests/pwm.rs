@@ -4,10 +4,59 @@
 mod tests {
     use audio_pwm_bcm2835::{
         Control, DmaConfig, MEMORY_DREQ, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_CLOCK_HZ,
-        PWM_DREQ, PWM1_DREQ, RANGE, RATE_TOLERANCE_PPM, RegisterBlock, SINE, Side, Status, TIMINGS,
-        Timing, Tone, clear_errors, clearing, deviation_ppm, dma_feed, fifo_stereo, has_errors,
-        measured_rate_millihertz, pwm_dreq, sample_rate_millihertz, side_frame, word,
+        PWM_DREQ, PWM1_DREQ, RANGE, RATE_TOLERANCE_PPM, RegisterBlock, SETTLE_ATTEMPTS, SINE, Side,
+        Status, TIMINGS, Timing, Tone, clear_errors, clearing, deviation_ppm, dma_feed,
+        fifo_stereo, has_errors, measured_rate_millihertz, pwm_dreq, sample_rate_millihertz,
+        side_frame, word, write_settled,
     };
+
+    /// A register that drops its first `dropped` writes, as a write lost in
+    /// the synchroniser would be, and counts the writes and waits.
+    struct LossyRegister {
+        value: u32,
+        dropped: u32,
+        writes: u32,
+    }
+
+    impl LossyRegister {
+        fn write(&mut self, value: u32) {
+            self.writes += 1;
+            if self.writes > self.dropped {
+                self.value = value;
+            }
+        }
+    }
+
+    fn settle(register: &mut LossyRegister, value: u32, expected: u32) -> Result<u32, u32> {
+        write_settled(
+            register,
+            LossyRegister::write,
+            |register| register.value,
+            || {},
+            value,
+            expected,
+        )
+    }
+
+    #[test]
+    fn settled_writes_retry_until_the_register_reads_back() {
+        let fresh = |dropped| LossyRegister {
+            value: 7,
+            dropped,
+            writes: 0,
+        };
+        let mut register = fresh(0);
+        assert_eq!(settle(&mut register, 1225, 1225), Ok(1));
+        let mut register = fresh(2);
+        assert_eq!(settle(&mut register, 1225, 1225), Ok(3));
+        assert_eq!((register.value, register.writes), (1225, 3));
+        // Never landing: every attempt is made, the last value read returned.
+        let mut register = fresh(u32::MAX);
+        assert_eq!(settle(&mut register, 1225, 1225), Err(7));
+        assert_eq!(register.writes, SETTLE_ATTEMPTS);
+        // `CLRF` reads as 0, so a clearing write expects CTL without it.
+        assert_eq!(clearing().with_clear_fifo(false), Control::ZERO);
+    }
 
     #[test]
     fn control_values_match_the_datasheet() {
@@ -85,10 +134,10 @@ mod tests {
     }
 
     /// The Raspberry Pi 3's D4 timing first; the Raspberry Pi 4's 54 MHz
-    /// oscillator over 1225 next, within 0.1 % of the first rate so a client
-    /// rendering at it plays at nearly the same pitch.
+    /// oscillator divided by 2, over 612, next. Clients render at the exact
+    /// rate `audio_v1.rate` reports, so each needs only to be near 44.1 kHz.
     #[test]
-    fn each_timing_gives_about_44092_hz() {
+    fn each_timing_gives_about_44100_hz() {
         assert_eq!(
             TIMINGS[0],
             Timing {
@@ -96,10 +145,10 @@ mod tests {
                 range: RANGE
             }
         );
-        assert_eq!(TIMINGS[1].clock_hz, 54_000_000);
-        assert_eq!(TIMINGS[1].sample_rate_millihertz(), 44_081_632);
+        assert_eq!(TIMINGS[1].clock_hz, 54_000_000 / 2);
+        assert_eq!(TIMINGS[1].sample_rate_millihertz(), 44_117_647);
         for timing in TIMINGS {
-            assert!(deviation_ppm(timing.sample_rate_millihertz(), 44_091_710) <= 250);
+            assert!(deviation_ppm(timing.sample_rate_millihertz(), 44_100_000) <= 1000);
         }
     }
 
