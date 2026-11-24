@@ -4325,6 +4325,76 @@ dependencies = [
 ]
 
 [[package]]
+name = "spi"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "spi-bcm2835"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "gpio-client",
+ "mailbox-client",
+ "metta-meddle-runtime",
+ "spi",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "spi-client"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+ "spi",
+]
+
+[[package]]
+name = "spi-test"
+version = "0.0.1"
+dependencies = [
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "spi-test-probe"
+version = "0.0.1"
+dependencies = [
+ "driver-protocol",
+ "metta-meddle-runtime",
+ "spi-client",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "spirv"
 version = "0.4.0+sdk-1.4.341.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

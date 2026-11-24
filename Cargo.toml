@@ -70,6 +70,10 @@ members = [
   "drivers/cprman-bcm2835",
   "drivers/cprman-bcm2835/client",
   "drivers/cprman-bcm2835/server",
+  # SPI0 bus component and its spi_v1 interface crates
+  "drivers/spi-bcm2835",
+  "drivers/spi-bcm2835/client",
+  "drivers/spi-bcm2835/server",
   # DMA controller component and its dma_v1 interface crates
   "drivers/dma-bcm2835",
   "drivers/dma-bcm2835/client",
@@ -82,6 +86,7 @@ members = [
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
   "kernel/tests/sdhci-test",
+  "kernel/tests/spi-test",
   "kernel/tests/board-test",
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
@@ -145,6 +150,7 @@ members = [
   "userspace/tests/driver/echo-client",
   "userspace/tests/driver/probe",
   "userspace/tests/driver/protocol",
+  "userspace/tests/spi/probe",
   "userspace/tests/fault/bare",
   "userspace/tests/fault/faulter",
   "userspace/tests/fault/protocol",
@@ -270,6 +276,8 @@ gpio = { path = "drivers/gpio-bcm2835/server" }
 gpio-client = { path = "drivers/gpio-bcm2835/client" }
 clock = { path = "drivers/cprman-bcm2835/server" }
 clock-client = { path = "drivers/cprman-bcm2835/client" }
+spi = { path = "drivers/spi-bcm2835/server" }
+spi-client = { path = "drivers/spi-bcm2835/client" }
 dma = { path = "drivers/dma-bcm2835/server" }
 dma-client = { path = "drivers/dma-bcm2835/client" }
 audio = { path = "drivers/audio-pwm-bcm2835/server" }

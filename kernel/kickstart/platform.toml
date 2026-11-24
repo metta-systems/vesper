@@ -72,6 +72,18 @@ name = "dma"
 binary = "dma-bcm2835"
 interfaces = "../../drivers/dma-bcm2835/interfaces"
 
+# ─── Buses ───────────────────────────────────────────────────────────────
+
+# The SPI0 bus, loaded where its node is enabled (the stock trees disable it;
+# the `mipi-dbi-spi` overlay enables it with a panel on it): devices whose
+# nodes sit on it call it through `spi_v1`. It reads its chip selects
+# (`cs-gpios`) from its copy of the device tree.
+[[driver]]
+name = "spi"
+binary = "spi-bcm2835"
+interfaces = "../../drivers/spi-bcm2835/interfaces"
+device_tree = true
+
 # ─── USB ─────────────────────────────────────────────────────────────────
 
 # The Raspberry Pi 3's DWC2 host controller, loaded once per enabled

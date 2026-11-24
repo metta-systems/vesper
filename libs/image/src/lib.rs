@@ -258,6 +258,10 @@ pub struct DriverImage {
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`; see `libserial-channel`)
     pub serial: bool,
+    /// Whether the instance gets a read-only copy of the device tree at
+    /// `libdevice_driver::DEVICE_TREE_VA` and the path of its node
+    /// (`device_tree = true`), to read the properties of its node itself
+    pub device_tree: bool,
     /// Whether the program is the root dispatcher (`dispatcher = true`): the
     /// Scheduler binds its Thread rather than the loader starting it
     pub dispatcher: bool,

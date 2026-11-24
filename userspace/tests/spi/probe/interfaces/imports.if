@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The probe's node (`panel@0`) sits on the SPI controller's node: its bus is
+# its parent.
+uses spi_v1 via device parent { write }

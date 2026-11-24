@@ -180,6 +180,18 @@ pub const DATA_WINDOW_VA: u64 = 0x3a00_0000;
 /// Most data areas an exporting driver serves: one per client instance.
 pub const MAX_AREAS: usize = 16;
 
+/// The 2 MiB span where Kickstart maps a read-only copy of the device tree
+/// into a component whose manifest entry says `device_tree = true`
+/// (`DriverInit::device_tree`): the component reads its own node's
+/// properties from it (`DriverInit::node_path`).
+pub const DEVICE_TREE_VA: u64 = 0x3600_0000;
+
+/// Most bytes of the device tree copy: the span at [`DEVICE_TREE_VA`].
+pub const MAX_DEVICE_TREE_BYTES: u64 = 2 << 20;
+
+/// Bytes of a node's full path in the init record.
+pub const NODE_PATH_BYTES: usize = 96;
+
 /// The GPIO pins a client may drive, as the badge of its key to an interface
 /// that says `badged by pins;` (`gpio_v1`): Kickstart badges the key with the
 /// pins the client's device tree node names, and the exporter serves a client
@@ -783,6 +795,12 @@ pub struct DriverInit {
     /// What a PCI host bridge driver receives; empty for every other
     /// component
     pub pci: PciHost,
+    /// Bytes of the device tree copy mapped read-only at [`DEVICE_TREE_VA`],
+    /// if the manifest entry says `device_tree = true` (zero: none)
+    pub device_tree_len: u64,
+    /// The full path of the component's node (`/soc/spi@7e204000/panel@0`),
+    /// NUL-padded; empty for a program, which has no node
+    pub node_path: [u8; NODE_PATH_BYTES],
 }
 
 /// The page tables Kickstart provisions for mapping a framebuffer at
@@ -901,7 +919,44 @@ impl DriverInit {
         name: [0; NAME_BYTES],
         thread_stacks: [StackSpan { bottom: 0, top: 0 }; 1 + MAX_FURTHER_THREADS],
         pci: PciHost::EMPTY,
+        device_tree_len: 0,
+        node_path: [0; NODE_PATH_BYTES],
     };
+
+    /// The device tree, as bytes, if the component asked for it
+    /// (`device_tree = true`): Kickstart maps a copy read-only at
+    /// [`DEVICE_TREE_VA`] for the component's lifetime.
+    pub fn device_tree(&self) -> Option<&'static [u8]> {
+        let len = usize::try_from(self.device_tree_len)
+            .ok()
+            .filter(|&len| len != 0)?;
+        // SAFETY: mapped read-only by Kickstart at `DEVICE_TREE_VA` for `len`
+        // bytes.
+        Some(unsafe { core::slice::from_raw_parts(DEVICE_TREE_VA as *const u8, len) })
+    }
+
+    /// The full path of the component's node, if it has one (and it is UTF-8).
+    pub fn node_path(&self) -> Option<&str> {
+        let len = self
+            .node_path
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(NODE_PATH_BYTES);
+        core::str::from_utf8(&self.node_path[..len])
+            .ok()
+            .filter(|path| !path.is_empty())
+    }
+
+    /// Record `path` as the node's path; `None` (nothing recorded) when it
+    /// does not fit [`NODE_PATH_BYTES`].
+    pub fn set_node_path(&mut self, path: &str) -> Option<()> {
+        if path.len() > NODE_PATH_BYTES {
+            return None;
+        }
+        self.node_path = [0; NODE_PATH_BYTES];
+        self.node_path[..path.len()].copy_from_slice(path.as_bytes());
+        Some(())
+    }
 
     /// The component's manifest name ("?" if it is not UTF-8).
     pub fn name(&self) -> &str {

@@ -3,11 +3,11 @@
 #[cfg(test)]
 mod tests {
     use vesper_devicetree::{
-        BrcmPin, Cells, DevTreeIndex, DeviceTree, PropReader, Region, brcm_dma_channel_mask,
-        brcm_pins, bus_cells, dma_address, dump, find_compatible, generic_function_code, gpio_pins,
-        interrupt_cells, interrupt_parent, interrupt_specifier, is_compatible, is_enabled,
-        is_interrupt_controller, linked_phandle, node_by_phandle, phandle, property, reg,
-        reg_cells, regions, translate,
+        BrcmPin, Cells, DevTreeIndex, DeviceTree, GpioSpecifier, PropReader, Region,
+        brcm_dma_channel_mask, brcm_pins, bus_cells, dma_address, dump, find_compatible,
+        generic_function_code, gpio_pins, gpio_specifier, interrupt_cells, interrupt_parent,
+        interrupt_specifier, is_compatible, is_enabled, is_interrupt_controller, linked_phandle,
+        node_by_phandle, phandle, property, reg, reg_cells, regions, translate, write_path,
     };
 
     /// A DTB blob copied into u32-aligned storage, as `DevTree` requires.
@@ -429,6 +429,69 @@ mod tests {
                     },
                 ]
             );
+        });
+    }
+
+    #[test]
+    fn gpio_specifiers_read_in_order_with_their_flags() {
+        with_index(SPI_PANEL, |index| {
+            let (gpio, _) = find_compatible(index, &["brcm,bcm2711-gpio"]).expect("gpio");
+            let controller = phandle(&gpio).expect("the gpio node's phandle");
+            let node = |name: &str| {
+                index
+                    .nodes()
+                    .find(|node| node.name() == Ok(name))
+                    .unwrap_or_else(|| panic!("{name}"))
+            };
+            // SPI0's `cs-gpios = <&gpio 8 1 &gpio 7 1>`: chip select 0 is
+            // GPIO 8, 1 is GPIO 7, both active low.
+            let spi = node("spi@7e204000");
+            let chip_select = |cs| gpio_specifier(index, &spi, "cs-gpios", cs);
+            assert_eq!(
+                chip_select(0),
+                Some(GpioSpecifier {
+                    controller,
+                    pin: 8,
+                    flags: 1
+                })
+            );
+            assert!(chip_select(0).is_some_and(|specifier| specifier.active_low()));
+            assert_eq!(chip_select(1).map(|specifier| specifier.pin), Some(7));
+            assert_eq!(chip_select(2), None);
+            // The panel's D/C and reset pins, active high.
+            let panel = node("panel@0");
+            let dc = gpio_specifier(index, &panel, "dc-gpios", 0).expect("dc-gpios");
+            assert_eq!((dc.pin, dc.active_low()), (24, false));
+            assert_eq!(
+                gpio_specifier(index, &panel, "reset-gpios", 0).map(|reset| reset.pin),
+                Some(25)
+            );
+            assert_eq!(gpio_specifier(index, &panel, "missing-gpios", 0), None);
+        });
+    }
+
+    #[test]
+    fn a_node_path_names_every_level_from_the_root() {
+        with_index(SPI_PANEL, |index| {
+            let path_of = |name: &str, room: usize| {
+                let node = index
+                    .nodes()
+                    .find(|node| node.name() == Ok(name))
+                    .unwrap_or_else(|| panic!("{name}"));
+                let mut out = vec![0; room];
+                write_path(&node, &mut out).map(|len| String::from_utf8(out[..len].to_vec()))
+            };
+            assert_eq!(
+                path_of("panel@0", 96),
+                Some(Ok("/soc/spi@7e204000/panel@0".to_string()))
+            );
+            assert_eq!(
+                path_of("spi@7e204000", 96),
+                Some(Ok("/soc/spi@7e204000".to_string()))
+            );
+            assert_eq!(path_of("", 96), Some(Ok("/".to_string())), "the root");
+            // A path that does not fit is refused, not cut.
+            assert_eq!(path_of("panel@0", 20), None);
         });
     }
 

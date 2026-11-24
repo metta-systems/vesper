@@ -186,6 +186,28 @@ impl Builder<'_> {
         pages: u32,
         slots: &mut SlotCursor,
     ) -> u64 {
+        self.private_pages_with_rights(
+            address_space,
+            l2,
+            vaddr,
+            pages,
+            Rights(Rights::READ | Rights::WRITE),
+            slots,
+        )
+    }
+
+    /// [`Self::private_pages`] mapped with `rights` only: `READ` alone for
+    /// data the component reads but the builder writes, through the kernel's
+    /// window onto the returned physical base.
+    pub fn private_pages_with_rights(
+        &self,
+        address_space: RawKey,
+        l2: RawKey,
+        vaddr: u64,
+        pages: u32,
+        rights: Rights,
+        slots: &mut SlotCursor,
+    ) -> u64 {
         assert_eq!(vaddr % LEAF_SPAN, 0);
         Self::map_table(self.carve_tables(slots.take(1), 1), l2, vaddr);
         let first = slots.take(pages);
@@ -196,7 +218,7 @@ impl Builder<'_> {
             pages,
             address_space,
             vaddr,
-            Rights(Rights::READ | Rights::WRITE),
+            rights,
         );
         Self::contiguous_frames(first, frames.incarnation(), pages)
     }

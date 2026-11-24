@@ -1,0 +1,43 @@
+# What spi-test bundles (see vesper-image-build): the PL011 driver, the
+# mailbox (the core clock's fastest rate), the gpio component (the SPI pins and
+# chip selects), the spi component for SPI0 and the probe driver for the panel
+# node on it, both with a copy of the device tree to read their nodes from.
+# `just _test-spi` boots it on raspi4b with targets/spi-panel-test.dtb, the
+# Raspberry Pi 4 tree with the MSP2202 panel on SPI0 CE0.
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "gpio"
+binary = "gpio-bcm2835"
+interfaces = "../../../drivers/gpio-bcm2835/interfaces"
+
+# The SPI0 bus: reads its chip selects (`cs-gpios`) from its device tree copy.
+[[driver]]
+name = "spi"
+binary = "spi-bcm2835"
+interfaces = "../../../drivers/spi-bcm2835/interfaces"
+device_tree = true
+
+# The panel node's probe, linked to the spi component through its parent node.
+[[driver]]
+name = "probe"
+binary = "spi-test-probe"
+interfaces = "../../../userspace/tests/spi/probe/interfaces"
+device_tree = true
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

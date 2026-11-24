@@ -49,6 +49,13 @@ local interface mailbox_v1
         returns (card32 hz)
         raises (firmware_error, busy);
 
+    ## The fastest rate the firmware runs `which` at, in Hz (its "max clock
+    ## rate" tag): the bound a divisor is sized against when the firmware
+    ## scales the clock (the core clock SPI0 divides).
+    get_max_clock_rate(clock which)
+        returns (card32 hz)
+        raises (firmware_error, busy);
+
     ## Whether `which` is powered on.
     get_power_state(device which)
         returns (boolean on)

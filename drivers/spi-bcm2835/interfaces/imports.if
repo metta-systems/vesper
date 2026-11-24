@@ -1,0 +1,14 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The controller's pins (its node's pin group: MISO, MOSI and SCLK on ALT0) and
+# its chip selects (`cs-gpios`, plain outputs it drives around each
+# transaction) go through the GPIO block; its key owns those pins only.
+uses gpio_v1 via device compatible "brcm,bcm2835-gpio" or device compatible "brcm,bcm2711-gpio"
+{
+    set_function, set_level
+}
+# The controller divides the core clock (`clocks = <&clocks 20>`), which the
+# firmware scales: the divisor is sized against its fastest rate.
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { get_max_clock_rate }

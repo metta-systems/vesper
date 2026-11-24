@@ -74,13 +74,14 @@
 use {
     crate::{
         bootstrap::{
-            BootState, device_untypeds, interrupt_controllers, kernel_owned_device_ranges,
-            video_untypeds,
+            BootState, device_tree_blob, device_untypeds, interrupt_controllers,
+            kernel_owned_device_ranges, video_untypeds,
         },
         device_tree,
         privileged::SHARES_KERNEL_PAGES,
         serial::SerialChannelParts,
     },
+    libaddress::PhysAddr,
     libcomponent_loader::{
         builder::Builder,
         component::Component,
@@ -88,14 +89,15 @@ use {
         loader::{StackRegion, update_init, write_init},
     },
     libdevice_driver::{
-        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DeviceBlock, DevicePage, DispatchInit, DriverInit,
-        ExportedArea, FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_PAGES, INIT_VA, Interrupt,
-        MAX_AREAS, MAX_DEVICE_PAGES, MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS,
-        MAX_INTERRUPTS, MAX_PCI_CHILDREN, MAX_PINS, MAX_REGIONS, MAX_RESETS, MAX_RESOURCES,
-        MAX_VIDEO_BLOCKS, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN, MapWindow, NO_BUS_ADDRESS,
-        NO_PULL, NONE_INDEX, PAGE_FRAME, PAGE_UNTYPED, PCI_SPACE_IO, PCI_SPACE_MEMORY32,
-        PCI_SPACE_MEMORY64, PciChild, PciHost, PciWindow, PinSet, PinSetting, Priority,
-        RESET_NAME_BYTES, Region, Reset, ResourceRecord, STACK_REGION, StackSpan,
+        DATA_WINDOW_VA, DEVICE_TREE_VA, DEVICE_WINDOW_VA, DeviceBlock, DevicePage, DispatchInit,
+        DriverInit, ExportedArea, FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_PAGES, INIT_VA,
+        Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_DEVICE_TREE_BYTES, MAX_DISPATCHED_THREADS,
+        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PCI_CHILDREN, MAX_PINS, MAX_REGIONS,
+        MAX_RESETS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN,
+        MapWindow, NO_BUS_ADDRESS, NO_PULL, NODE_PATH_BYTES, NONE_INDEX, PAGE_FRAME, PAGE_UNTYPED,
+        PCI_SPACE_IO, PCI_SPACE_MEMORY32, PCI_SPACE_MEMORY64, PciChild, PciHost, PciWindow, PinSet,
+        PinSetting, Priority, RESET_NAME_BYTES, Region, Reset, ResourceRecord, STACK_REGION,
+        StackSpan,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
@@ -106,7 +108,7 @@ use {
             PciRange, PciSpace, brcm_msi_offset, host_bridge_of, msi_parent, msi_range,
             pci_dma_ranges, pci_function, pci_ranges, resets,
         },
-        phandle, primecell_periphid, reg, regions,
+        phandle, primecell_periphid, reg, regions, write_path,
     },
     libimage::{DriverImage, Extra, Link, Provider},
     libmeddle_runtime::ImportRecord,
@@ -1211,6 +1213,46 @@ pub fn load_drivers(
             };
         }
         init.compatible_index = instance.compatible_index as u64;
+        // ── Its node, and the device tree to read the node's properties ──
+        if let Some(node) = instance.node.as_ref() {
+            let mut path = [0; NODE_PATH_BYTES];
+            let recorded = write_path(node, &mut path)
+                .and_then(|len| core::str::from_utf8(&path[..len]).ok())
+                .and_then(|path| init.set_node_path(path));
+            if recorded.is_none() {
+                crate::early_println!(
+                    "🥾 Driver {}: {name}'s path is longer than {NODE_PATH_BYTES} bytes",
+                    image.name
+                );
+            }
+        }
+        if driver.device_tree {
+            let blob = device_tree_blob();
+            assert!(
+                blob.size <= MAX_DEVICE_TREE_BYTES,
+                "🥾 the device tree is larger than {MAX_DEVICE_TREE_BYTES} bytes"
+            );
+            let pages = u32::try_from(blob.size.div_ceil(PAGE)).unwrap_or(u32::MAX);
+            let copy = builder.private_pages_with_rights(
+                component.address_space_key,
+                component.l2,
+                DEVICE_TREE_VA,
+                pages,
+                Rights(Rights::READ),
+                slots,
+            );
+            // SAFETY: both through the kernel's physical window: the blob is
+            // reserved for the whole boot, and the pages were carved just above
+            // for this copy alone; the regions do not overlap.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    PhysAddr::new(blob.phys).user_to_kernel().as_ptr::<u8>(),
+                    PhysAddr::new(copy).user_to_kernel().as_mut_ptr::<u8>(),
+                    usize::try_from(blob.size).unwrap_or(0),
+                );
+            }
+            init.device_tree_len = blob.size;
+        }
         init.region_count = instance.region_count as u64;
         init.regions = instance.regions;
         for (record, &page) in init.pages.iter_mut().zip(instance.pages()) {
