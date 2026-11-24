@@ -90,9 +90,12 @@ pub const MAX_FURTHER_THREADS: usize = 4;
 /// one. The kernel knows nothing of it: Kickstart hands it to the root
 /// dispatcher (`DispatchInit::priorities`).
 ///
-/// There is no starvation guard: a Thread above normal that never blocks
-/// keeps every Thread below it from running. Every Thread above normal must
-/// block most of the time and do little work each time it wakes.
+/// The root dispatcher's starvation guard demotes a Thread above normal to
+/// normal once it has run for a whole slice without blocking, until it
+/// blocks again (`root_dispatcher::Rounds`). A raised Thread that blocks
+/// often but is runnable most of the time still keeps the Threads below it
+/// waiting: every Thread above normal must block most of the time and do
+/// little work each time it wakes.
 #[repr(transparent)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Priority(pub u8);
@@ -100,11 +103,12 @@ pub struct Priority(pub u8);
 impl Priority {
     /// Every Thread's priority unless it declares another.
     pub const NORMAL: Self = Self(0);
-    /// Runs ahead of every normal Thread, behind every high one: for the
-    /// cheap Threads on the path of a key from the USB controller to the
-    /// focused window (the controller's interrupt and poller Threads, the HID
-    /// component, the compositor's input Thread), so a key is not kept
-    /// waiting behind CPU-bound programs.
+    /// Runs ahead of every normal Thread, behind every high one: for cheap
+    /// device-interrupt Threads that must not wait behind CPU-bound
+    /// programs. The Threads on the path of a key from the USB controller to
+    /// the focused window (the controller's interrupt and poller Threads, the
+    /// HID component, the compositor's input Thread), and the UART driver's,
+    /// whose transmit FIFO drains in tens of microseconds.
     pub const INPUT: Self = Self(1);
     /// Runs ahead of every other Thread: for a Thread with a deadline, such
     /// as an audio playback Thread.

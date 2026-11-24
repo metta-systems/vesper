@@ -14,9 +14,26 @@ mod tests {
         libserial_channel::SerialChannel,
         uart_pl011::{
             Interrupts, PART_NUMBER0, Pl011, RECEIVE_BURST, Received, Receiver, RegisterBlock,
-            TRANSMIT_BURST, id_names_pl011,
+            TRANSMIT_BURST, id_names_pl011, loopback_burst,
         },
     };
+
+    #[test]
+    fn loopback_sends_one_byte_per_receive_buffer_certain_to_be_there() {
+        // A queued packet takes at most 1 + MAX_PACKET_RECS (8) slots, so 9
+        // slots are one buffer for certain; the one being filled counts if
+        // it has room.
+        assert_eq!(loopback_burst(0, 0, 0), 0);
+        assert_eq!(loopback_burst(0, 0, 8), 0);
+        assert_eq!(loopback_burst(0, 0, 9), 1);
+        assert_eq!(loopback_burst(0, 1, 0), 1);
+        assert_eq!(loopback_burst(0, 64, 27), 4);
+        // Never more than a burst.
+        assert_eq!(loopback_burst(0, 64, 31), 4);
+        assert_eq!(loopback_burst(0, 1, 9 * 20), TRANSMIT_BURST);
+        // Nothing while sent bytes are still on their way back.
+        assert_eq!(loopback_burst(1, 64, 31), 0);
+    }
 
     /// The PL011 register block as the hardware sees it, with plain words so
     /// the tests check the bit positions the driver uses.

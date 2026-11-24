@@ -31,7 +31,9 @@ use {
     bitbybit::{bitenum, bitfield},
     core::sync::atomic::{AtomicU64, Ordering},
     derive_mmio::Mmio,
-    libio_channel::{Consumer, Corrupt, Cursor, DataArea, Event, NoEvent, Packet, Producer},
+    libio_channel::{
+        Consumer, Corrupt, Cursor, DataArea, Event, MAX_PACKET_RECS, NoEvent, Packet, Producer,
+    },
     libmmio::assert_register_offsets,
     libserial_channel::{SLOTS, SerialChannel},
 };
@@ -285,6 +287,27 @@ pub const RECEIVE_BURST: usize = 32;
 /// overflows before the receive side drains it.
 pub const TRANSMIT_BURST: usize = 8;
 
+/// How many bytes the transmit side may send in loopback, at most
+/// [`TRANSMIT_BURST`]: none while sent bytes are still on their way back
+/// (`in_flight`), else one per receive buffer certain to be there. A byte
+/// sent in loopback must come back, so the driver sends none it could not
+/// store, and a client that recycles its receive buffers slower than the
+/// driver's Threads run loses nothing.
+///
+/// Each byte needs at most one buffer: the interrupt Thread completes the
+/// buffer it is filling at the end of every pass, so the bytes of one burst
+/// can land in as many buffers as passes. The buffers certain to be there
+/// are the one being filled, if it has room (`filling_room`), and those
+/// queued, at least `queued_slots / (MAX_PACKET_RECS + 1)`.
+#[must_use]
+pub fn loopback_burst(in_flight: u64, filling_room: u64, queued_slots: u64) -> usize {
+    if in_flight > 0 {
+        return 0;
+    }
+    let buffers = queued_slots / (MAX_PACKET_RECS as u64 + 1) + u64::from(filling_room > 0);
+    usize::try_from(buffers).map_or(TRANSMIT_BURST, |buffers| buffers.min(TRANSMIT_BURST))
+}
+
 /// The interrupt sources [`Pl011::take_interrupts`] found pending.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Interrupts {
@@ -388,6 +411,14 @@ impl<'channel, Completed: Event> Receiver<'channel, Completed> {
                 self.filling = Some((packet, cursor));
             }
         }
+    }
+
+    /// Bytes left in the buffer being filled; zero without one.
+    #[must_use]
+    pub fn filling_room(&self) -> u64 {
+        self.filling.as_ref().map_or(0, |(packet, cursor)| {
+            packet.bytes().saturating_sub(cursor.passed(packet))
+        })
     }
 
     /// Tell the client about the buffers completed since the last signal.
