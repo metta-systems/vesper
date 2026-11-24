@@ -4,9 +4,9 @@
 // tests: the effect of the firmware's
 //
 //     dtoverlay=mipi-dbi-spi,spi0-0,speed=32000000,write-only
-//     dtparam=compatible=ilitek,ili9341\0panel-mipi-dbi-spi
+//     dtparam=compatible=ili9341\0panel-mipi-dbi-spi
 //     dtparam=width=240,height=320,width-mm=34,height-mm=45
-//     dtparam=reset-gpio=25,dc-gpio=24,backlight-gpio=23
+//     dtparam=reset-gpio=24,dc-gpio=25,backlight-gpio=23
 //
 // in `config.txt` on the board (tools/makesd/boot/config.txt), with the
 // overlay's parameters already applied (raspberrypi/firmware
@@ -38,14 +38,14 @@
 			status = "okay";
 
 			panel: panel@0 {
-				compatible = "ilitek,ili9341", "panel-mipi-dbi-spi";
+				compatible = "ili9341", "panel-mipi-dbi-spi";
 				reg = <0>;
 				spi-max-frequency = <32000000>;
 				write-only;
 				width-mm = <34>;
 				height-mm = <45>;
-				reset-gpios = <&gpio 25 0>;
-				dc-gpios = <&gpio 24 0>;
+				reset-gpios = <&gpio 24 0>;
+				dc-gpios = <&gpio 25 0>;
 				backlight = <&backlight_gpio>;
 
 				panel-timing {

@@ -43,7 +43,7 @@ device_test_rustflags := fixed_rustflags + ' -C link-arg=--script=' + test_link
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client pci-probe pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell spi-bcm2835 spi-test-probe uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid usb-test-client window-events'
+user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client panel-ili9341 pci-probe pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell spi-bcm2835 spi-test-probe uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid usb-test-client window-events'
 # EL0 components built for the hard-float `fp_target`, loaded into an AddressSpace that allows
 # FP/SIMD (packages, built by `_build-components`).
 fp_components := 'fp-worker fp-bench-worker'
@@ -59,7 +59,7 @@ synth_fp_opt := '--config profile.release.package.vesper-synth.opt-level=3 --con
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml
 # and the platform.toml it includes)
-driver_components := 'compositor cprman-bcm2835 dma-bcm2835 fb-impl gpio-bcm2835 mailbox-impl pcie-brcmstb power-impl root-dispatcher sdhci shell spi-bcm2835 uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid'
+driver_components := 'compositor cprman-bcm2835 dma-bcm2835 fb-impl gpio-bcm2835 mailbox-impl panel-ili9341 pcie-brcmstb power-impl root-dispatcher sdhci shell spi-bcm2835 uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -399,6 +399,14 @@ _build-board-test-hw board=boards features='': (_build-components board '' featu
 [group("hw")]
 boot-board-test features='': (_build-board-test-hw boards features) chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
+
+# Build panel-test for the boards (no QEMU, no semihosting): only the SPI panel's chain, the spi component and the ILI9341 panel driver with what they need, their lines on the UART through the log server
+_build-panel-test-hw board=boards features='': (_build-components board '' features) (_build-test-kernel 'panel-test' board features)
+
+# Build panel-test and boot it via chainofcommand on a Raspberry Pi 4 with the MSP2202 panel on SPI0 (the `[pi4]` `mipi-dbi-spi` lines of tools/makesd/boot/config.txt, on the card through `just cb-sdimage`); `just boot-panel-test debug_kernel` builds a debug kernel. The UART shows `spi:` lines (its chip selects and the core clock's fastest rate) and `panel:` lines (its node, the initialization at 10 MHz, the backlight and the colour bars' time at the panel's rate), and the panel shows eight colour bars
+[group("hw")]
+boot-panel-test features='': (_build-panel-test-hw boards features) chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'panel-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
 
 # Build fp-bench and boot it via chainofcommand on a Raspberry Pi 4 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-fp-bench`); `just boot-fp-bench fp_entry_trap` builds the second profile, with the nucleus's kernel-entry FP guard. The UART shows, for Doom's vertex projection over E1M1 with nothing, a Signal, a Call into an integer-only component and a Call into an FP component per 16-vertex chunk, the fastest and slowest of five runs and what one call adds, then the benchmark Thread's FP counters and the nucleus's FP totals
 [group("hw")]

@@ -27,7 +27,7 @@ mod tests {
             // SAFETY: `block` outlives the handle and nothing else touches it.
             let mut registers =
                 unsafe { RegisterBlock::new_mmio(block.0.as_mut_ptr().cast::<RegisterBlock>()) };
-            // The panel's backlight on (GPIO 23), D/C low (GPIO 24), and a pin
+            // The panel's backlight on (GPIO 23), reset low (GPIO 24), and a pin
             // of the second bank (GPIO 41) high.
             assert_eq!(set_level(&mut registers, Chip::Bcm2711, 23, true), Some(()));
             assert_eq!(

@@ -12,3 +12,6 @@ uses gpio_v1 via device compatible "brcm,bcm2835-gpio" or device compatible "brc
 # The controller divides the core clock (`clocks = <&clocks 20>`), which the
 # firmware scales: the divisor is sized against its fastest rate.
 uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { get_max_clock_rate }
+# In an image with the log server, the component's trace goes to it on the
+# interface's io-channel; elsewhere the import stays unlinked.
+uses log_v1 via component log_server { flush }

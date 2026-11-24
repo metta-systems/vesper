@@ -5,6 +5,10 @@
 # `just _test-spi` boots it on raspi4b with targets/spi-panel-test.dtb, the
 # Raspberry Pi 4 tree with the MSP2202 panel on SPI0 CE0.
 
+# The spi component imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked and its trace goes to semihosting.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
 [[driver]]
 name = "uart"
 binary = "uart-pl011"

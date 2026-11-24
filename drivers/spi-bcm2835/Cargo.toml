@@ -35,6 +35,7 @@ libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
+libserial-trace = { workspace = true }
 libuser = { workspace = true }
 mailbox-client = { workspace = true }
 spi = { workspace = true }

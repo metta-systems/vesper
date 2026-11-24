@@ -1,7 +1,5 @@
 // The component runs on Vesper only; see the host stub below.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
-// `semi::println!` expands to `format_args_nl!` only under `qemu`.
-#![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! The spi component: the one owner of the BCM2835/BCM2711 SPI0 block, behind
 //! `spi_v1` (see `interfaces/spi_v1.if`), polled.
@@ -33,13 +31,15 @@ mod component {
             DriverInit, INIT_VA, Turnstile, device_address, driver_compatible, driver_init,
             map_device_pages,
         },
-        libdevicetree::{DeviceTree, INDEX_BUFFER_BYTES, gpio_specifier},
+        libdevicetree::{
+            DeviceTree, FallibleIterator, INDEX_BUFFER_BYTES, PropReader, gpio_specifier, property,
+        },
         libmeddle_runtime::{DataArea, IoRec},
         libobject::{
             EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
             export::init_return_key, thread::ThreadReturnKey,
         },
-        libuser::semihosting as semi,
+        libserial_trace::{Trace, trace},
         mailbox_client::mailbox_v1,
         spi::spi_v1::{Exception, Mode, SpiV1},
         spi_bcm2835::{MmioRegisterBlock, RegisterBlock, Registers, idle, set_rate, write},
@@ -120,9 +120,12 @@ mod component {
     /// Drive chip select `(pin, active_low)` asserted or released.
     fn drive(chip_select: (u32, bool), asserted: bool) {
         let (pin, active_low) = chip_select;
-        // The pin is the component's own (its node's `cs-gpios`): the gpio
-        // component refuses nothing it owns.
-        let _owned = gpio().set_level(pin, asserted != active_low);
+        // The pin is the component's own (its node's `cs-gpios`): a refusal
+        // means the chip select never moves and every transaction is lost, so
+        // it ends the component rather than passing for a write.
+        gpio()
+            .set_level(pin, asserted != active_low)
+            .unwrap_or_else(|error| panic!("spi: chip select GPIO {pin}: {error:?}"));
     }
 
     /// The SPI mode of `mode`.
@@ -244,10 +247,11 @@ mod component {
     spi::spi_v1_export!(Spi);
 
     /// Read the node's chip selects from the device tree copy into
-    /// [`CHIP_SELECTS`]; returns how many it names.
-    fn read_chip_selects(init: &DriverInit) -> usize {
+    /// [`CHIP_SELECTS`], and log the devices on the bus (its child nodes);
+    /// returns how many chip selects it names.
+    fn read_chip_selects(trace: &mut Trace, init: &DriverInit) -> usize {
         let (Some(blob), Some(path)) = (init.device_tree(), init.node_path()) else {
-            semi::println!("spi: no device tree copy: no chip selects");
+            trace!(trace, "spi: no device tree copy: no chip selects");
             return 0;
         };
         // SAFETY: Kickstart mapped the copy read-only for good; the index
@@ -257,13 +261,28 @@ mod component {
                 .and_then(|raw| DeviceTree::new(raw, &mut *core::ptr::addr_of_mut!(INDEX)))
         };
         let Ok(tree) = tree else {
-            semi::println!("spi: the device tree copy does not parse");
+            trace!(trace, "spi: the device tree copy does not parse");
             return 0;
         };
         let Some(node) = tree.node(path) else {
-            semi::println!("spi: {path} is not in the device tree copy");
+            trace!(trace, "spi: {path} is not in the device tree copy");
             return 0;
         };
+        // What sits on the bus, as the tree describes it: a device driver is
+        // loaded for a child whose `compatible` names it.
+        for child in node.children() {
+            let name = child.name().unwrap_or("?");
+            let status = property(&child, "status")
+                .and_then(|prop| prop.str().ok())
+                .unwrap_or("okay");
+            trace!(trace, "spi: device {name} ({status})");
+            if let Some(prop) = property(&child, "compatible") {
+                let mut strings = prop.iter_str();
+                while let Ok(Some(compatible)) = strings.next() {
+                    trace!(trace, "spi:   compatible \"{compatible}\"");
+                }
+            }
+        }
         let mut count = 0;
         for (number, entry) in CHIP_SELECTS.iter().enumerate() {
             let Some(specifier) = gpio_specifier(tree.index(), &node, "cs-gpios", number) else {
@@ -275,7 +294,8 @@ mod component {
                 0
             };
             entry.store((specifier.pin + 1) | active_low, Ordering::Release);
-            semi::println!(
+            trace!(
+                trace,
                 "spi: chip select {number} is GPIO {}, active {}",
                 specifier.pin,
                 if specifier.active_low() {
@@ -291,19 +311,13 @@ mod component {
 
     /// Route the node's pin group (MISO, MOSI and SCLK on ALT0, the chip
     /// selects as outputs).
-    #[cfg_attr(
-        not(feature = "qemu"),
-        expect(
-            unused_variables,
-            reason = "the routing is reported over semihosting only"
-        )
-    )]
-    fn route_pins(init: &DriverInit) {
+    fn route_pins(trace: &mut Trace, init: &DriverInit) {
         let gpio = gpio();
         for setting in init.pins() {
             let routed = gpio_v1::PinFunction::from_select_code(setting.function)
                 .is_some_and(|function| gpio.set_function(setting.pin, function).is_ok());
-            semi::println!(
+            trace!(
+                trace,
                 "spi: GPIO {} to function {}: {}",
                 setting.pin,
                 setting.function,
@@ -323,15 +337,16 @@ mod component {
             device_address(init, init.regions()[0].start).expect("spi: registers mapped"),
             Ordering::Release,
         );
+        let mut trace = Trace::new(init);
         // Release every chip select before the pin group makes them outputs,
         // so no device sees one asserted.
-        let chip_selects = read_chip_selects(init);
+        let chip_selects = read_chip_selects(&mut trace, init);
         for number in 0..u32::try_from(chip_selects).unwrap_or(0) {
             if let Some(chip_select) = chip_select(number) {
                 drive(chip_select, false);
             }
         }
-        route_pins(init);
+        route_pins(&mut trace, init);
         let mailbox = mailbox_v1::Client::new(mailbox_v1::Bindings::from_imports(init.imports()));
         let core_max_hz = mailbox
             .get_max_clock_rate(mailbox_v1::Clock::Core)
@@ -340,7 +355,10 @@ mod component {
         // SAFETY: no call is served yet; nothing else touches the block.
         let mut registers = unsafe { registers() };
         registers.write_control_status(idle(spi_bcm2835::Mode::numbered(0)));
-        semi::println!("spi: {chip_selects} chip selects, the core clock at most {core_max_hz} Hz");
+        trace!(
+            trace,
+            "spi: {chip_selects} chip selects, the core clock at most {core_max_hz} Hz"
+        );
         let table = KeyTableKey::from_key(RawKey::from_wire(init.table));
         let turns = UntypedKey::from_key(RawKey::from_wire(init.memory))
             .retype(
