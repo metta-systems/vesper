@@ -1,0 +1,36 @@
+[package]
+name = "spi-test-probe"
+
+description = "spi-test EL0 driver for the panel node on SPI0: checks its node path and properties in its device tree copy, then calls spi_v1 through its parent link and reports."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+qemu = ["libuser/qemu"]
+
+[dependencies]
+driver-protocol = { workspace = true }
+libdevice-driver = { workspace = true }
+libdevicetree = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+spi-client = { workspace = true }
+
+[[bin]]
+name = "spi-test-probe"
+test = false
+
+[lints]
+workspace = true

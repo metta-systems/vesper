@@ -1010,6 +1010,9 @@ struct Settings {
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`)
     serial: bool,
+    /// Whether the instance gets a read-only copy of the device tree and the
+    /// path of its node (`device_tree = true`)
+    device_tree: bool,
     /// Whether the program is the root dispatcher (`dispatcher = true`):
     /// Kickstart binds its Thread to the root Scheduler instead of starting it
     dispatcher: bool,
@@ -1067,6 +1070,10 @@ fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Sett
         extra,
         serial: entry
             .get("serial")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false),
+        device_tree: entry
+            .get("device_tree")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false),
         dispatcher: entry
@@ -1455,6 +1462,7 @@ fn driver_context(settings: &Settings, image: &ElfImage, what: &str) -> Value {
         memory_bits => settings.memory_bits,
         extra => settings.extra,
         serial => settings.serial,
+        device_tree => settings.device_tree,
         dispatcher => settings.dispatcher,
         priority => image.entry_priority,
         threads => image

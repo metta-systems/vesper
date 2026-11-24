@@ -1,0 +1,47 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## An SPI bus, served by the spi component that owns its controller (the
+## BCM2835/BCM2711 SPI0 block) to the devices on it: a device driver whose node
+## sits on the controller's node (`uses spi_v1 via device parent`) writes
+## transactions to its chip select.
+##
+## A transaction asserts the chip select the controller's node names
+## (`cs-gpios`, driven as a GPIO), clocks the bytes out, and releases it.
+## Prototype: edited in place.
+local interface spi_v1
+{
+    ## Each client shares one page with the component: the bytes of a
+    ## transaction.
+    data 4096;
+
+    ## Every function receives the badge of the key it was called through: the
+    ## component knows its caller's data area from the key.
+    badged;
+
+    ## The clock polarity and phase (SPI modes 0 to 3: CPOL is bit 1, CPHA
+    ## bit 0).
+    enum mode {
+        mode0, mode1, mode2, mode3
+    }
+
+    ## The controller's node names no chip select `chip_select`
+    ## (`cs-gpios`).
+    exception invalid_chip_select { card32 chip_select; }
+
+    ## The bytes are not in the caller's data area.
+    exception invalid_data {}
+
+    ## The controller did not finish the transaction in time; the chip
+    ## select was released.
+    exception timeout {}
+
+    ## Write `bytes` to the device on `chip_select` in `mode`, at the fastest
+    ## rate not above `max_hz` the controller reaches from its clock's fastest
+    ## rate, and return that rate. Empty `bytes` asserts nothing and only
+    ## answers the rate.
+    write(card32 chip_select, card32 max_hz, mode mode, octet& bytes)
+        returns (card32 hz)
+        raises (invalid_chip_select, invalid_data, timeout);
+}

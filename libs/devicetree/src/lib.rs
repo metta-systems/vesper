@@ -287,6 +287,40 @@ pub fn find_compatible<'a, 'i: 'a, 'dt: 'i, 's>(
     })
 }
 
+/// Most levels [`write_path`] walks up from a node.
+const MAX_PATH_DEPTH: usize = 16;
+
+/// Write `node`'s full path (`/soc/spi@7e204000/panel@0`, `/` for the root)
+/// into `out`; returns its length, or `None` when it does not fit `out` or
+/// the node sits deeper than 16 levels.
+pub fn write_path(node: &Node<'_, '_, '_>, out: &mut [u8]) -> Option<usize> {
+    let mut names = [""; MAX_PATH_DEPTH];
+    let mut depth = 0;
+    let mut current = Some(node.clone());
+    while let Some(level) = current {
+        let parent = level.parent();
+        // The root has no parent; its name is empty.
+        if parent.is_some() {
+            *names.get_mut(depth)? = level.name().ok()?;
+            depth += 1;
+        }
+        current = parent;
+    }
+    if depth == 0 {
+        *out.first_mut()? = b'/';
+        return Some(1);
+    }
+    let mut len = 0;
+    for name in names[..depth].iter().rev() {
+        let end = len + 1 + name.len();
+        let part = out.get_mut(len..end)?;
+        part[0] = b'/';
+        part[1..].copy_from_slice(name.as_bytes());
+        len = end;
+    }
+    Some(len)
+}
+
 /// Whether `node` is enabled: its `status` is absent, `"okay"` or `"ok"`.
 pub fn is_enabled(node: &Node<'_, '_, '_>) -> bool {
     property(node, "status")
@@ -556,6 +590,59 @@ fn gpio_specifier_pins(
         }
     }
     mask
+}
+
+/// One GPIO a `<name>-gpios` property names: the controller's phandle, the
+/// pin, and the flags cell (bit 0: active low) when the controller has one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpioSpecifier {
+    pub controller: u32,
+    pub pin: u32,
+    pub flags: u32,
+}
+
+impl GpioSpecifier {
+    /// Whether the line is asserted by driving it low (flags bit 0).
+    #[must_use]
+    pub const fn active_low(&self) -> bool {
+        self.flags & 1 != 0
+    }
+}
+
+/// The `index`-th specifier of `node`'s `property` (`cs-gpios`, `dc-gpios`,
+/// ...), each one phandle and the controller's `#gpio-cells` (2 when absent)
+/// cells: the pin, then the flags.
+pub fn gpio_specifier(
+    tree: &DevTreeIndex<'_, '_>,
+    node: &Node<'_, '_, '_>,
+    property_name: &str,
+    index: usize,
+) -> Option<GpioSpecifier> {
+    let prop = property(node, property_name)?;
+    let words = prop.length() / size_of::<u32>();
+    let mut at = 0;
+    let mut position = 0;
+    while at < words {
+        let controller = prop.u32(at).ok()?;
+        let cells = node_by_phandle(tree, controller)
+            .and_then(|provider| property(&provider, "#gpio-cells"))
+            .and_then(|cells| cells.u32(0).ok())
+            .map_or(2, |cells| cells as usize);
+        if position == index {
+            return Some(GpioSpecifier {
+                controller,
+                pin: prop.u32(at + 1).ok()?,
+                flags: if cells >= 2 {
+                    prop.u32(at + 2).ok()?
+                } else {
+                    0
+                },
+            });
+        }
+        at += 1 + cells;
+        position += 1;
+    }
+    None
 }
 
 /// The node in `tree` whose `phandle` property equals `phandle`.

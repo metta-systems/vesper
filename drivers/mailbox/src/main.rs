@@ -86,6 +86,10 @@ impl MailboxV1 for VideoCoreMailbox {
         call(tag::GET_CLOCK_RATE, &[clock_id(which)], 2).map(|values| values[1])
     }
 
+    fn get_max_clock_rate(_badge: u64, which: Clock) -> Result<u32, Exception> {
+        call(tag::GET_MAX_CLOCK_RATE, &[clock_id(which)], 2).map(|values| values[1])
+    }
+
     fn get_power_state(_badge: u64, which: Device) -> Result<bool, Exception> {
         call(tag::GET_POWER_STATE, &[device_id(which)], 2).and_then(|values| power_state(values[1]))
     }

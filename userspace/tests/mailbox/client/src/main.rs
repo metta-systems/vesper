@@ -64,6 +64,17 @@ fn report(revision: u32, serial: u64, uart_hz: u32, uart_on: bool) {
 #[cfg(not(feature = "qemu"))]
 fn report(_revision: u32, _serial: u64, _uart_hz: u32, _uart_on: bool) {}
 
+/// Report the core clock's current and fastest rates (under QEMU).
+#[cfg(feature = "qemu")]
+fn report_core(core_hz: u32, core_max_hz: u32) {
+    use libuser::semihosting as semi;
+
+    semi::println!("mailbox-test-client: core clock {core_hz} Hz, at most {core_max_hz} Hz");
+}
+
+#[cfg(not(feature = "qemu"))]
+fn report_core(_core_hz: u32, _core_max_hz: u32) {}
+
 /// A request of one tag with `value_words` zeroed value words: header, tag,
 /// values and end tag.
 fn request(id: u32, value_words: usize) -> ([u32; 16], usize) {
@@ -376,6 +387,18 @@ fn main(init_va: u64) -> ! {
         .get_clock_rate(Clock::Uart)
         .unwrap_or_else(|error| panic!("get_clock_rate failed: {error:?}"));
     assert_ne!(uart_hz, 0, "the UART clock runs");
+    // The core clock (SPI0 divides it) never runs above its maximum rate.
+    let core_hz = mailbox
+        .get_clock_rate(Clock::Core)
+        .unwrap_or_else(|error| panic!("get_clock_rate failed: {error:?}"));
+    let core_max_hz = mailbox
+        .get_max_clock_rate(Clock::Core)
+        .unwrap_or_else(|error| panic!("get_max_clock_rate failed: {error:?}"));
+    assert!(
+        core_max_hz >= core_hz && core_max_hz != 0,
+        "the core clock runs at {core_hz} Hz, at most {core_max_hz} Hz"
+    );
+    report_core(core_hz, core_max_hz);
     let uart_on = mailbox
         .get_power_state(Device::Uart0)
         .unwrap_or_else(|error| panic!("get_power_state failed: {error:?}"));

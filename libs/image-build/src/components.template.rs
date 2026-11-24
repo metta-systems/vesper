@@ -67,6 +67,7 @@ pub static {{component.stem}}_DRIVER: DriverImage = DriverImage {
     memory_bits: {{component.driver.memory_bits}},
     extra: Extra::{{component.driver.extra}},
     serial: {{component.driver.serial | bool}},
+    device_tree: {{component.driver.device_tree | bool}},
     dispatcher: {{component.driver.dispatcher | bool}},
     priority: {{component.driver.priority}},
     threads: &[{% for thread in component.driver.threads %}ThreadImage { entry: {{thread.entry | hex}}, priority: {{thread.priority}} }{% if not loop.last %}, {% endif %}{% endfor %}],
