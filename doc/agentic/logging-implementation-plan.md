@@ -49,7 +49,7 @@ Exit checks:
   output line pass.
 - [x] `just _test-wood`: passes as before, and the UART file holds the server's start
   line, the compositor's display and device lines, `wood: the engine started`, Wood's
-  music summary, `midi-synth: ready at 44091710 mHz` and the audio driver's
+  music summary, `midi-synth: ready` and the audio driver's
   `open for client 0`, each with the `[seconds] I ` prefix (0 lines dropped in the
   runs so far).
 - [x] Unchanged behaviour where the import stays unlinked: `just _test-compositor`,

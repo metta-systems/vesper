@@ -28,7 +28,7 @@ use {
         Bindings as SynthBindings, CHANNEL_PAGES as SYNTH_PAGES, Client as SynthClient,
         Error as SynthError, Exception as SynthException,
     },
-    vesper_synth::{OUTPUT_RATE, Song},
+    vesper_synth::{Rate, Song},
 };
 
 libuser::entry!(main);
@@ -109,7 +109,7 @@ fn log_clocks(init: &DriverInit) {
 
 /// Log what the song is, as the synthesiser's sequencer will play it; `None`
 /// if it does not parse (the synthesiser will refuse it too).
-fn describe(midi: &[u8], rate_millihertz: u32) -> Option<SongInfo> {
+fn describe(midi: &[u8], rate: Rate) -> Option<SongInfo> {
     let song = match Song::parse(midi) {
         Ok(song) => song,
         Err(error) => {
@@ -117,8 +117,8 @@ fn describe(midi: &[u8], rate_millihertz: u32) -> Option<SongInfo> {
             return None;
         }
     };
-    let info = SongInfo::of(&song, OUTPUT_RATE);
-    let pass_ms = info.pass_frames() * 1_000_000 / u64::from(rate_millihertz.max(1));
+    let info = SongInfo::of(&song, rate);
+    let pass_ms = info.pass_frames() * 1_000_000 / rate.millihertz().max(1);
     log::info!(
         "song: {} bytes, division {} ticks per quarter, tempo {} us per quarter ({} bpm), {} tempo events, {} events, {} notes, end tick {}: a pass of {} frames ({}.{:03} s)",
         midi.len(),
@@ -151,27 +151,26 @@ struct Synthesiser {
 }
 
 impl Synthesiser {
-    fn open(init: &DriverInit, audio_millihertz: u32) -> Result<Self, &'static str> {
+    fn open(init: &DriverInit, rate: Rate) -> Result<Self, &'static str> {
         let client = SynthClient::new(SynthBindings::from_imports(init.imports()));
-        let rate = client.rate().map_err(|error| match error {
-            SynthError::NotGranted => "no MIDI synthesiser in the image",
-            _ => "the MIDI synthesiser did not answer",
-        })?;
-        if rate != audio_millihertz {
-            return Err("the MIDI synthesiser renders at another rate than the audio driver");
-        }
         let area = client
             .channel()
             .ok_or("no io-channel to the MIDI synthesiser")?;
         if area.event == 0 || area.data.len != SYNTH_PAGES * PAGE_BYTES {
             return Err("the io-channel to the MIDI synthesiser is not as declared");
         }
-        client.open().map_err(|error| match error {
-            SynthError::Exception(SynthException::Busy) => {
-                "the MIDI synthesiser is busy or has no bank"
-            }
-            _ => "opening the MIDI synthesiser failed",
-        })?;
+        client
+            .open(rate.numerator, rate.denominator)
+            .map_err(|error| match error {
+                SynthError::NotGranted => "no MIDI synthesiser in the image",
+                SynthError::Exception(SynthException::Busy) => {
+                    "the MIDI synthesiser is busy or has no bank"
+                }
+                SynthError::Exception(SynthException::UnsupportedRate) => {
+                    "the MIDI synthesiser does not render at the audio driver's rate"
+                }
+                _ => "opening the MIDI synthesiser failed",
+            })?;
         // SAFETY: Kickstart mapped the channel's control page read/write for
         // good, shared with the synthesiser only.
         let channel = unsafe { synth_channel_at(area.control) };
@@ -179,7 +178,14 @@ impl Synthesiser {
             NoEvent,
             EventCountKey::from_key(RawKey::from_wire(area.event)),
         );
-        log::info!("the MIDI synthesiser plays at {rate} mHz");
+        let millihertz = rate.millihertz();
+        log::info!(
+            "the MIDI synthesiser plays at {}/{} ({}.{:03}) Hz",
+            rate.numerator,
+            rate.denominator,
+            millihertz / 1000,
+            millihertz % 1000
+        );
         Ok(Self {
             client,
             submit,
@@ -320,7 +326,7 @@ struct Output {
     completions: Consumer<'static, AUDIO_SLOTS, EventCountKey>,
     /// The first data page
     data_base: u64,
-    rate_millihertz: u32,
+    rate: Rate,
 }
 
 impl Output {
@@ -328,7 +334,7 @@ impl Output {
     /// once the first buffers are queued).
     fn new(init: &DriverInit) -> Result<Self, &'static str> {
         let client = AudioClient::new(AudioBindings::from_imports(init.imports()));
-        let rate_millihertz = client.rate().map_err(|error| match error {
+        let (numerator, denominator) = client.rate().map_err(|error| match error {
             AudioError::NotGranted => "no audio driver in the image (is the PWM node enabled?)",
             _ => "the audio driver did not answer",
         })?;
@@ -350,7 +356,10 @@ impl Output {
             submit,
             completions,
             data_base: area.data.base,
-            rate_millihertz,
+            rate: Rate {
+                numerator,
+                denominator,
+            },
         })
     }
 
@@ -441,8 +450,7 @@ impl Player {
         let new_underruns = underruns.wrapping_sub(self.summary_underruns);
         self.summary_underruns = underruns;
         let refill_max_us = core::mem::take(&mut self.refill_max_ns) / 1000;
-        let period_us =
-            PERIOD_FRAMES as u64 * 1_000_000_000 / u64::from(self.output.rate_millihertz.max(1));
+        let period_us = PERIOD_FRAMES as u64 * 1_000_000_000 / self.output.rate.millihertz().max(1);
         let playing = self
             .synth
             .client
@@ -503,10 +511,11 @@ impl Player {
             );
             return;
         }
+        let millihertz = self.output.rate.millihertz();
         log::info!(
             "audio: open at {}.{:03} Hz, {QUEUED_BUFFERS} buffers of {PERIOD_FRAMES} frames queued",
-            self.output.rate_millihertz / 1000,
-            self.output.rate_millihertz % 1000
+            millihertz / 1000,
+            millihertz % 1000
         );
         let mut outstanding = QUEUED_BUFFERS;
         loop {
@@ -553,9 +562,9 @@ fn main(init_va: u64) -> ! {
     };
     log_clocks(init);
     let output = Output::new(init).unwrap_or_else(|reason| give_up(init, reason));
-    let song = describe(midi, output.rate_millihertz);
-    let mut synth = Synthesiser::open(init, output.rate_millihertz)
-        .unwrap_or_else(|reason| give_up(init, reason));
+    let song = describe(midi, output.rate);
+    let mut synth =
+        Synthesiser::open(init, output.rate).unwrap_or_else(|reason| give_up(init, reason));
     synth.control(volume_value(MUSIC_VOLUME, 0));
     let handled = synth.send_song(midi, LOOPING);
     let playing = synth.client.playing().is_ok_and(|playing| playing != 0);

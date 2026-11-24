@@ -463,7 +463,7 @@ The decided options are drawn; each box below names the decision it rests on.
   - *Playback Thread* (Wood's `sound.rs`). A further Thread of the program
     (`driver_threads!`, high priority), on the 32 KiB stack Kickstart gives it; the
     mixer writes straight into the io-channel's data pages. It waits on Wood's
-    `EventCount` for `sound_init`, then calls `rate`, takes the MIDI synthesiser,
+    `EventCount` for `sound_init`, then calls `rate`, takes the MIDI synthesiser at that rate,
     queues its first 8 buffers and only then calls `open` (it is the only Thread calling
     `audio_v1`, whose import area serves one Thread at a time), and answers; on a
     missing driver or `busy` it logs once and the engine runs silent. It keeps 8 buffers
@@ -483,7 +483,8 @@ The decided options are drawn; each box below names the decision it rests on.
 `badged;` (the driver tells clients and their io-channels apart by the badge of their
 keys) and `channel 4;` (a control page and four data pages, 4096 frames, per client).
 
-- `rate() returns (card32 millihertz)`: 44 091 710 (100 MHz / 2268).
+- `rate() returns (card32 numerator, card32 denominator)`: the exact rate in Hz, the PWM
+  clock over the range, 100 000 000 / 2268 on the Pi 3.
 - `open() raises (busy)`: the caller gets the output; `busy` while another client has
   it, or it is still closing. Resets the underrun count.
 - `close() raises (not_open)`: plays out what the caller queued, ramps down, stops;
@@ -822,9 +823,10 @@ run on Vesper (that is A5c) or on the board (A5a, A5d).
   `voice` plays one sample; `envelope` is the volume envelope; `synth` holds 16 channels
   and the voices; `smf` and `sequencer` play a MIDI file; `trim` is D9.4's trimming.
 - **Fixed point.** Sample positions and steps are 32.32 (absolute sample-point indices),
-  interpolation is linear with 15 bits of fraction. The output rate is the exact fraction
-  100 000 000 / 2268 Hz (`OUTPUT_RATE`), so the step is `sample_rate * 2268 / 10^8 *
-  2^(cents/1200)` in integer arithmetic. Pitch in cents is `(key - root) * scaleTuning +
+  interpolation is linear with 15 bits of fraction. The output rate is an exact fraction
+  `numerator / denominator` Hz (`Rate`, the one the client opens at: 100 000 000 / 2268 on
+  the Pi 3), so the step is `sample_rate * denominator / numerator * 2^(cents/1200)` in
+  integer arithmetic. Pitch in cents is `(key - root) * scaleTuning +
   coarseTune * 100 + fineTune + the sample's correction + the channel's bend`; the step
   is recomputed only when the bend changes. Levels are attenuations in centibels (Q16 in
   the envelope); gains are Q16, pan gains Q15. The envelope and the gains move on a grid
@@ -914,8 +916,9 @@ Built 2026-10-28 after D10; checked in QEMU, not on the board.
   samples read in place), then says the exports can be served; its Thread then sleeps.
   The work runs in the exports, on the caller's Thread and Time.
 - **The interface** (`interfaces/midi_synth_v1.if`, a prototype): `badged;` and
-  `channel 16;` (a control page and 16 data pages), `rate` (44 091 710 mHz), `open`
-  (`busy` if another client holds it or the bank did not load), `close`, `service`
+  `channel 16;` (a control page and 16 data pages), `open(numerator, denominator)` at the
+  audio output's exact rate (`busy` if another client holds it or the bank did not load,
+  `unsupported_rate` outside 8 kHz to 192 kHz), `close`, `service`
   (handle every packet the caller put, in order; returns how many) and `playing`.
 - **Both directions on one io-channel** (D10's "bidirectional xbufs"). The client owns
   the buffers in its data pages and submits packets; every packet comes back on the

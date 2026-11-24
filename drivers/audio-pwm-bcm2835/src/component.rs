@@ -98,9 +98,10 @@ impl AudioV1 for Jack {
         )));
     }
 
-    fn rate(_badge: u64) -> u32 {
+    fn rate(_badge: u64) -> (u32, u32) {
         wait_ready();
-        u32::try_from(timing().sample_rate_millihertz()).unwrap_or(u32::MAX)
+        let timing = timing();
+        (timing.clock_hz, timing.range)
     }
 
     fn open(badge: u64) -> Result<(), Exception> {

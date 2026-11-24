@@ -53,11 +53,4 @@ pub mod tables;
 pub mod trim;
 pub mod voice;
 
-pub use {
-    bank::Bank,
-    sequencer::Sequencer,
-    smf::Song,
-    synth::Synth,
-    tables::{OUTPUT_RATE, Rate},
-    voice::Engine,
-};
+pub use {bank::Bank, sequencer::Sequencer, smf::Song, synth::Synth, tables::Rate, voice::Engine};

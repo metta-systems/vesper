@@ -24,14 +24,15 @@ impl Rate {
             denominator: 1,
         }
     }
-}
 
-/// The audio driver's output rate: the 100 MHz PWM clock over a range of
-/// 2268, 44 091.71 Hz (audio design, D4).
-pub const OUTPUT_RATE: Rate = Rate {
-    numerator: 100_000_000,
-    denominator: 2268,
-};
+    /// The rate in millihertz, rounded down (zero for a zero denominator).
+    #[must_use]
+    pub fn millihertz(self) -> u64 {
+        (u64::from(self.numerator) * 1000)
+            .checked_div(u64::from(self.denominator))
+            .unwrap_or(0)
+    }
+}
 
 /// Attenuation at and past which a voice is silent, in centibels (96 dB).
 pub const SILENT_CENTIBELS: u32 = 960;

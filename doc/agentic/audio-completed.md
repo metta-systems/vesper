@@ -27,3 +27,8 @@ decision and the alternatives weighed, is in [audio-design.md](audio-design.md).
   `midi_synth_v1`, the `midi-synth-fp` FP component (`fp_binaries`). Exercised by the
   fp-mode host tests (43.5 dB from the integer engine on the test song), `just
   _synth-fp-vectorized` and `just _test-midi-fp` (three runs, the host's hash each time).
+- [x] Exact rate handoff: `audio_v1.rate` returns `(numerator, denominator)` Hz (the PWM
+  clock over the range), `midi_synth_v1.open(numerator, denominator)` renders at it
+  (`unsupported_rate` outside 8 kHz to 192 kHz), `midi_synth_v1.rate` and
+  `vesper_synth::OUTPUT_RATE` are gone. Exercised by `just _test-vesper-synth` (rates,
+  Room's music hashes), `just _test-audio`, `just _test-midi` and `just _test-wood`.

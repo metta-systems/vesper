@@ -13,9 +13,9 @@ use {
     libmeddle_runtime::PAGE_BYTES,
     libobject::{EventCountKey, RawKey, export::init_return_key, thread::ThreadReturnKey},
     libserial_trace::note,
-    midi_synth::{Handled, Memory, RATE_MILLIHERTZ, Session, channel_at},
+    midi_synth::{Handled, Memory, Session, channel_at, supported_rate},
     midi_synth_server::midi_synth_v1::{CHANNEL_PAGES, Exception, MidiSynthV1},
-    vesper_synth::Bank,
+    vesper_synth::{Bank, Rate},
 };
 
 libuser::entry!(main);
@@ -85,7 +85,7 @@ fn main(_init_va: u64) -> ! {
     match start(init, slot) {
         Ok(session) => {
             SHARED.set(session);
-            note(format_args!("midi-synth: ready at {RATE_MILLIHERTZ} mHz"));
+            note(format_args!("midi-synth: ready"));
         }
         Err(reason) => note(format_args!(
             "midi-synth: {reason}; every song stays silent"
@@ -99,6 +99,10 @@ fn main(_init_va: u64) -> ! {
         let _parked = ready.await_ge(u64::MAX, EventCountKey::WAIT_INFINITE);
     }
 }
+
+/// The rate the session starts at; nothing renders at it, since every client
+/// opens at its own.
+const START_RATE: Rate = Rate::hz(48_000);
 
 /// Carve the heap and load the bundled SoundFont.
 fn start(init: &DriverInit, slot: u32) -> Result<Session<'static>, &'static str> {
@@ -119,10 +123,14 @@ fn start(init: &DriverInit, slot: u32) -> Result<Session<'static>, &'static str>
         note(format_args!(
             "midi-synth: f64 engine (fp-mode), integer on request"
         ));
-        Ok(Session::with_engine(bank, vesper_synth::Engine::Float))
+        Ok(Session::with_engine(
+            bank,
+            vesper_synth::Engine::Float,
+            START_RATE,
+        ))
     }
     #[cfg(not(feature = "fp-mode"))]
-    Ok(Session::new(bank))
+    Ok(Session::new(bank, START_RATE))
 }
 
 /// Wait until start-up finished.
@@ -249,18 +257,22 @@ impl MidiSynthV1 for Synthesiser {
         )));
     }
 
-    fn rate(_badge: u64) -> u32 {
-        RATE_MILLIHERTZ
-    }
-
-    fn open(badge: u64) -> Result<(), Exception> {
+    fn open(badge: u64, numerator: u32, denominator: u32) -> Result<(), Exception> {
         wait_ready();
+        let rate = supported_rate(numerator, denominator).ok_or(Exception::UnsupportedRate)?;
         let (client, _area) = init().area_for_badge(badge).ok_or(Exception::Busy)?;
         // Without a bank there is nothing to open.
         SHARED.with(|_session| ()).ok_or(Exception::Busy)?;
         OWNER
             .compare_exchange(0, client as u64 + 1, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_owner| Exception::Busy)?;
+        SHARED.with(|session| session.open(rate));
+        let millihertz = rate.millihertz();
+        note(format_args!(
+            "midi-synth: open at {numerator}/{denominator} ({}.{:03}) Hz",
+            millihertz / 1000,
+            millihertz % 1000
+        ));
         Ok(())
     }
 

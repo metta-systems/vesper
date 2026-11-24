@@ -9,7 +9,7 @@ uses audio_v1 via device compatible "brcm,bcm2835-pwm" { rate, open, close, unde
 # It sends the song to the MIDI synthesiser, a program in the same image, and
 # pulls each period's rendered frames back on the interface's io-channel, as
 # Wood's playback Thread does; `voices` gives the summary its voice count.
-uses midi_synth_v1 via component midi_synth { rate, open, close, service, playing, voices }
+uses midi_synth_v1 via component midi_synth { open, close, service, playing, voices }
 # Its lines go to the log server, the program holding the UART, and never wait.
 uses log_v1 via component log_server { flush }
 # The ARM and core clocks, logged at start: the synthesiser's render time per

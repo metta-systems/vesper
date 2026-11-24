@@ -4,7 +4,8 @@
 #
 ## A General MIDI synthesiser: Standard MIDI Files in, rendered sound out
 ## (`doc/agentic/audio-design.md`, decisions D9 and D10). The synthesiser plays
-## a SoundFont bundled with it, at the audio output's rate, `rate`.
+## a SoundFont bundled with it, at the rate its client opens it at (the audio
+## output's, `audio_v1.rate`).
 ##
 ## Both directions travel on the interface's io-channel (xbufs): the client
 ## submits packets naming buffers of the channel's data pages, the synthesiser
@@ -53,14 +54,15 @@ local interface midi_synth_v1
     ## The caller does not hold the synthesiser.
     exception not_open {}
 
-    ## The rate the synthesiser renders at in millihertz: 44 091 710, the audio
-    ## driver's (100 MHz over 2268).
-    rate()
-        returns (card32 millihertz);
+    ## The rate is not one the synthesiser renders at: zero numerator or
+    ## denominator, or outside 8 kHz to 192 kHz.
+    exception unsupported_rate {}
 
-    ## Take the synthesiser for the caller: nothing plays, the volume is full.
-    open()
-        raises (busy);
+    ## Take the synthesiser for the caller, rendering at `numerator /
+    ## denominator` Hz (exact: pass `audio_v1.rate` on): nothing plays, the
+    ## volume is full.
+    open(card32 numerator, card32 denominator)
+        raises (busy, unsupported_rate);
 
     ## Give the synthesiser back; what played stops at once.
     close()

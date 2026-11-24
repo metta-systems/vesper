@@ -14,7 +14,7 @@ mod tests {
         },
         std::{fs, path::Path},
         vesper_synth::{
-            Bank, OUTPUT_RATE, Rate, Sequencer, Song, Synth,
+            Bank, Rate, Sequencer, Song, Synth,
             envelope::{Envelope, EnvelopeParameters, Stage},
             generator,
             sequencer::frames_per_tick,
@@ -24,6 +24,27 @@ mod tests {
             },
         },
     };
+
+    /// The Raspberry Pi 3's audio rate: the 100 MHz PWM clock over a range of
+    /// 2268, 44 091.71 Hz.
+    const PI3_RATE: Rate = Rate {
+        numerator: 100_000_000,
+        denominator: 2268,
+    };
+
+    #[test]
+    fn rates_convert_to_millihertz_rounding_down() {
+        assert_eq!(PI3_RATE.millihertz(), 44_091_710);
+        assert_eq!(Rate::hz(48_000).millihertz(), 48_000_000);
+        assert_eq!(
+            Rate {
+                numerator: 1,
+                denominator: 0
+            }
+            .millihertz(),
+            0
+        );
+    }
 
     fn render(synth: &mut Synth<'_>, frames: usize) -> Vec<i16> {
         let mut out = vec![0; frames * 2];
@@ -56,7 +77,7 @@ mod tests {
         assert_eq!(scale_by_cents(1_000_000, 700), 1_498_307);
         assert_eq!(timecents_frames(0, Rate::hz(44_100)), 44_100);
         assert_eq!(timecents_frames(-1200, Rate::hz(44_100)), 22_050);
-        assert_eq!(timecents_frames(0, OUTPUT_RATE), 44_092);
+        assert_eq!(timecents_frames(0, PI3_RATE), 44_092);
         // -12 000 timecents is 1/1024 s.
         assert_eq!(timecents_frames(-12_000, Rate::hz(102_400)), 100);
         assert_eq!(attenuation_gain(0), 65_536);
@@ -278,7 +299,7 @@ mod tests {
     #[test]
     fn pitch_follows_key_tuning_and_bend() {
         let font = sine_font(69);
-        let rate = OUTPUT_RATE;
+        let rate = PI3_RATE;
         let frames = 44_092;
         let measure = |messages: &[[u8; 3]]| {
             let mut synth = Synth::new(Bank::new(&font).unwrap(), rate);
@@ -481,7 +502,7 @@ mod tests {
         let song = Song::parse(&midi).unwrap();
         let frames = 60_000;
         let render_in = |pieces: &[usize]| {
-            let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), OUTPUT_RATE));
+            let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), PI3_RATE));
             sequencer.play(song.clone(), false);
             let mut out = vec![0_i16; 2 * frames];
             let mut done = 0;
@@ -584,10 +605,10 @@ mod tests {
         );
         let song = Song::parse(&midi).unwrap();
         assert_eq!(song.end_tick, 50);
-        let per_tick = frames_per_tick(OUTPUT_RATE, 500_000, 70);
+        let per_tick = frames_per_tick(PI3_RATE, 500_000, 70);
         // 314.9408 frames per tick.
         assert_eq!(per_tick >> 32, 314);
-        let fast = frames_per_tick(OUTPUT_RATE, 250_000, 70);
+        let fast = frames_per_tick(PI3_RATE, 250_000, 70);
         let frame = |time: u64| time.div_ceil(1 << 32);
         let expected = [
             frame(10 * per_tick),
@@ -596,14 +617,14 @@ mod tests {
         ];
         assert_eq!(expected, [3150, 7874, 11_023]);
 
-        let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), OUTPUT_RATE));
+        let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), PI3_RATE));
         sequencer.play(song.clone(), false);
         assert_eq!(note_starts(&mut sequencer, 14_000), expected);
         assert!(!sequencer.is_playing());
 
         // Looping: the second pass starts where the first ended, exactly.
         let end = 30 * per_tick + 20 * fast;
-        let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), OUTPUT_RATE));
+        let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), PI3_RATE));
         sequencer.play(song, true);
         // Two passes: the third would start at frame 28 345.
         let starts = note_starts(&mut sequencer, 25_000);
@@ -620,7 +641,7 @@ mod tests {
 
         // Pausing holds the clock; rendering in blocks lands the same.
         let midi = midi_file(70, &[(10, vec![0x90, 60, 100])], 100);
-        let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), OUTPUT_RATE));
+        let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), PI3_RATE));
         sequencer.play(Song::parse(&midi).unwrap(), false);
         let mut block = vec![0_i16; 2 * 3000];
         sequencer.render(&mut block);

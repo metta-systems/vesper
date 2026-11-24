@@ -37,8 +37,8 @@ libuser::entry!(main);
 const BUFFER_FRAMES: u64 = 512;
 /// Bytes of one buffer.
 const BUFFER_BYTES: u64 = BUFFER_FRAMES * FRAME_BYTES;
-/// The rate `audio_v1.rate` reports: 100 MHz / 2268, in millihertz.
-const RATE_MILLIHERTZ: u32 = 44_091_710;
+/// The rate `audio_v1.rate` reports: 100 MHz / 2268.
+const RATE: (u32, u32) = (100_000_000, 2268);
 
 type Submit<'channel> = Producer<'channel, { audio_pwm_bcm2835::stream::CHANNEL_SLOTS }, NoEvent>;
 type Completions<'channel> =
@@ -124,7 +124,7 @@ fn main(init_va: u64) -> ! {
     // SAFETY: Kickstart passes the init page's address in x0.
     let init = unsafe { driver_init(init_va) };
     let client = Client::new(Bindings::from_imports(init.imports()));
-    assert_eq!(client.rate(), Ok(RATE_MILLIHERTZ), "100 MHz / 2268");
+    assert_eq!(client.rate(), Ok(RATE), "100 MHz / 2268");
     let control = client
         .channel()
         .expect("the program shares an io-channel with the driver")
@@ -284,10 +284,13 @@ mod capture {
 #[cfg(not(feature = "qemu"))]
 mod tone {
     use {
-        super::{BUFFER_FRAMES, Output, RATE_MILLIHERTZ, sleep_ms},
+        super::{BUFFER_FRAMES, Output, sleep_ms},
         audio_pwm_bcm2835::{Side, Tone, side_frame},
         libdevice_driver::DriverInit,
     };
+
+    /// `super::RATE` in millihertz.
+    const RATE_MILLIHERTZ: u32 = 44_091_710;
 
     /// The tone's pitch.
     const TONE_HZ: u32 = 440;
