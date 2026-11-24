@@ -12,7 +12,14 @@ mod tests {
             engine_value, volume_value,
         },
         std::{fs, path::Path, sync::OnceLock},
-        vesper_synth::{Bank, Engine, OUTPUT_RATE, Sequencer, Song, Synth},
+        vesper_synth::{Bank, Engine, Rate, Sequencer, Song, Synth},
+    };
+
+    /// The Raspberry Pi 3's audio rate, 100 MHz over 2268: the rate the
+    /// hashes below were taken at.
+    const PI3_RATE: Rate = Rate {
+        numerator: 100_000_000,
+        denominator: 2268,
     };
 
     /// The test song, Bach's Prelude in C (BWV 846, from the Mutopia
@@ -71,7 +78,32 @@ mod tests {
     }
 
     fn session() -> Session<'static> {
-        Session::new(Bank::new(bank()).unwrap())
+        Session::new(Bank::new(bank()).unwrap(), PI3_RATE)
+    }
+
+    #[test]
+    fn open_checks_the_rate_and_renders_at_it() {
+        assert_eq!(
+            midi_synth::supported_rate(100_000_000, 2268),
+            Some(PI3_RATE)
+        );
+        assert_eq!(
+            midi_synth::supported_rate(54_000_000, 1225).map(Rate::millihertz),
+            Some(44_081_632)
+        );
+        for (numerator, denominator) in [(0, 1), (48_000, 0), (7_999, 1), (192_001, 1)] {
+            assert_eq!(
+                midi_synth::supported_rate(numerator, denominator),
+                None,
+                "{numerator}/{denominator}"
+            );
+        }
+        assert!(midi_synth::supported_rate(192_000, 1).is_some());
+        let mut session = Session::new(Bank::new(bank()).unwrap(), Rate::hz(48_000));
+        session.open(PI3_RATE);
+        assert_eq!(session.rate(), PI3_RATE);
+        session.open(Rate::hz(22_050));
+        assert_eq!(session.rate(), Rate::hz(22_050));
     }
 
     /// Send `midi` as song packets of at most `chunk` bytes, through the song
@@ -140,7 +172,7 @@ mod tests {
 
     /// A sequencer playing the test song on `engine`.
     fn prelude_on(engine: Engine, looping: bool, volume: u8) -> Sequencer<'static> {
-        let mut synth = Synth::new(Bank::new(bank()).unwrap(), OUTPUT_RATE);
+        let mut synth = Synth::new(Bank::new(bank()).unwrap(), PI3_RATE);
         synth.set_engine(engine);
         let mut sequencer = Sequencer::new(synth);
         sequencer.play(Song::parse(PRELUDE).unwrap(), looping);
@@ -204,7 +236,8 @@ mod tests {
             // A new client finds the session's own engine again.
             session.reset();
             assert_eq!(session.engine_in_use(), Engine::Integer);
-            let mut float_session = Session::with_engine(Bank::new(bank()).unwrap(), Engine::Float);
+            let mut float_session =
+                Session::with_engine(Bank::new(bank()).unwrap(), Engine::Float, PI3_RATE);
             float_session.reset();
             assert_eq!(float_session.engine_in_use(), Engine::Float);
         }
@@ -415,7 +448,7 @@ mod tests {
     fn single_notes_match_between_the_engines() {
         for key in [36_u8, 48, 55, 60, 64, 67, 72, 76, 79, 84] {
             let render = |engine| {
-                let mut synth = Synth::new(Bank::new(bank()).unwrap(), OUTPUT_RATE);
+                let mut synth = Synth::new(Bank::new(bank()).unwrap(), PI3_RATE);
                 synth.set_engine(engine);
                 synth.message(0x90, key, 100);
                 let mut out = vec![0_i16; 2 * 44_092];

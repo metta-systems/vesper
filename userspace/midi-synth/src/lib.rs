@@ -12,7 +12,7 @@ extern crate alloc;
 use {
     alloc::vec::Vec,
     libio_channel::{Channel, DataArea, IoRec, Packet},
-    vesper_synth::{Bank, Engine, OUTPUT_RATE, Sequencer, Song, Synth},
+    vesper_synth::{Bank, Engine, Rate, Sequencer, Song, Synth},
 };
 
 /// Slots of each of the channel's FIFOs.
@@ -36,9 +36,19 @@ pub unsafe fn channel_at<'page>(address: u64) -> &'page SynthChannel {
     unsafe { &*core::ptr::with_exposed_provenance::<SynthChannel>(address) }
 }
 
-/// The rate the synthesiser renders at, in millihertz (`rate`): the audio
-/// driver's 100 MHz over 2268, as `vesper_synth::OUTPUT_RATE`.
-pub const RATE_MILLIHERTZ: u32 = 44_091_710;
+/// The rates a client may open the synthesiser at, in Hz.
+pub const SUPPORTED_HZ: core::ops::RangeInclusive<u64> = 8_000..=192_000;
+
+/// The rate `numerator / denominator` Hz, if the synthesiser renders at it
+/// (`open`): a nonzero denominator, whole Hz within [`SUPPORTED_HZ`].
+#[must_use]
+pub fn supported_rate(numerator: u32, denominator: u32) -> Option<Rate> {
+    let hz = u64::from(numerator).checked_div(u64::from(denominator))?;
+    SUPPORTED_HZ.contains(&hz).then_some(Rate {
+        numerator,
+        denominator,
+    })
+}
 
 /// Bytes of a rendered frame: two signed 16-bit samples.
 pub const FRAME_BYTES: u64 = 4;
@@ -298,18 +308,18 @@ pub struct Session<'bank> {
 }
 
 impl<'bank> Session<'bank> {
-    /// A silent synthesiser over `bank` at the output rate, full volume, on
-    /// the integer engine.
+    /// A silent synthesiser over `bank` at `rate`, full volume, on the
+    /// integer engine.
     #[must_use]
-    pub fn new(bank: Bank<'bank>) -> Self {
-        Self::with_engine(bank, Engine::Integer)
+    pub fn new(bank: Bank<'bank>, rate: Rate) -> Self {
+        Self::with_engine(bank, Engine::Integer, rate)
     }
 
-    /// A silent synthesiser over `bank` at the output rate, full volume, new
-    /// notes on `engine` (also after a [`reset`](Self::reset)).
+    /// A silent synthesiser over `bank` at `rate`, full volume, new notes on
+    /// `engine` (also after a [`reset`](Self::reset)).
     #[must_use]
-    pub fn with_engine(bank: Bank<'bank>, engine: Engine) -> Self {
-        let mut synth = Synth::new(bank, OUTPUT_RATE);
+    pub fn with_engine(bank: Bank<'bank>, engine: Engine, rate: Rate) -> Self {
+        let mut synth = Synth::new(bank, rate);
         synth.set_engine(engine);
         Self {
             default_engine: engine,
@@ -324,6 +334,22 @@ impl<'bank> Session<'bank> {
             finished_hash: None,
             peak_voices: 0,
         }
+    }
+
+    /// Silence at full volume at `rate`, as a client opening at that rate
+    /// finds it.
+    pub fn open(&mut self, rate: Rate) {
+        if self.rate() != rate {
+            let bank = self.sequencer.synth().bank().clone();
+            self.sequencer = Sequencer::new(Synth::new(bank, rate));
+        }
+        self.reset();
+    }
+
+    /// The rate the synthesiser renders at.
+    #[must_use]
+    pub const fn rate(&self) -> Rate {
+        self.sequencer.synth().rate()
     }
 
     /// Back to silence at full volume, as a new client finds it: the song

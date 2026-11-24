@@ -1023,7 +1023,8 @@ _run-midi image hash log_stem fp='':
     grep -a "midi-test: \|midi-player: \|midi-synth: \|audio: open for\|audio: closed\|audio: capture checked" "$log" | grep -v "midi-test: .* on " | tail -40
     [ "$status" -eq 0 ] || { echo "midi-test: failed with status $status; see $log"; exit 1; }
     expect() { grep -a -q "$1" "$log" || { echo "midi-test: $2; see $log"; exit 1; }; }
-    expect "midi-synth: ready at 44091710 mHz" "the MIDI synthesiser did not start"
+    expect "midi-synth: ready" "the MIDI synthesiser did not start"
+    expect "midi-synth: open at 100000000/2268 (44091.710) Hz" "the player did not open the synthesiser at the audio driver's rate"
     if [ -n "{{ fp }}" ]; then expect "midi-synth: f64 engine (fp-mode)" "the synthesiser is not the fp-mode one"; fi
     expect "midi-player: INFO song: 4676 bytes, division 384 ticks per quarter, tempo 1000000 us per quarter (60 bpm)" "the player did not read its song"
     expect "midi-player: INFO song: first notes: ch" "the player did not log the first notes"
@@ -1055,7 +1056,7 @@ _run-midi image hash log_stem fp='':
     [ $(( audible * 10 )) -ge $(( stream * 9 )) ] || { echo "midi-test: too few audible stream periods: $capture"; exit 1; }
     # The log server wrote every client's lines to the UART, each with its prefix.
     prefix='^\[ *[0-9]*\.[0-9]\{6\}\] I '
-    for expected in "log-server: 3 clients, serial output attached" "midi-synth: ready at 44091710 mHz" "midi-player: music: summary of 256 periods" "audio: open for client 0"; do
+    for expected in "log-server: 3 clients, serial output attached" "midi-synth: ready" "midi-player: music: summary of 256 periods" "audio: open for client 0"; do
       grep -a -q "${prefix}\(([0-9]* dropped) \)\?${expected}" "$serial" || { echo "midi-test: the UART got no line \"$expected\" from the log server"; exit 1; }
     done
     echo "{{ ok_label }} the player played the test song through the MIDI synthesiser and the audio driver: its first periods as on the host ($hash), $sounding of $periods periods with sound, $audible of $stream captured stream periods audible, 0 underruns; the log server wrote the lines to the UART"
@@ -1107,8 +1108,9 @@ _test-wood board=boards seconds='90' features=test_kernel_features config=(board
     # periods hash as the host test computes them (`start_hashes_of_the_first_songs` in
     # userspace/midi-synth/tests/session.rs), and nearly every period is audible.
     grep -a "midi-synth: \|wood: INFO music: " "$log" | tail -4
-    grep -q "midi-synth: ready at 44091710 mHz" "$log" || { echo "wood-test: the MIDI synthesiser did not start"; exit 1; }
-    grep -q "wood: INFO music: the MIDI synthesiser plays at 44091710 mHz" "$log" || { echo "wood-test: Wood did not take the MIDI synthesiser"; exit 1; }
+    grep -q "midi-synth: ready" "$log" || { echo "wood-test: the MIDI synthesiser did not start"; exit 1; }
+    grep -q "midi-synth: open at 100000000/2268 (44091.710) Hz" "$log" || { echo "wood-test: Wood did not open the synthesiser at the audio driver's rate"; exit 1; }
+    grep -q "wood: INFO music: the MIDI synthesiser plays at 100000000/2268 (44091.710) Hz" "$log" || { echo "wood-test: Wood did not take the MIDI synthesiser"; exit 1; }
     for expected in {{ wood_music_hashes }}; do
       bytes=${expected%%:*}; rest=${expected#*:}; looping=${rest%%:*}; hash=${rest#*:}
       line=$(grep -a -o "midi-synth: song of $bytes bytes (looping $looping, volume 64): first 64 periods hash 0x[0-9a-f]*, [0-9]* audible" "$log" | head -1)
@@ -1121,7 +1123,7 @@ _test-wood board=boards seconds='90' features=test_kernel_features config=(board
     # The log server wrote every client's lines to the UART, each with its prefix.
     prefix='^\[ *[0-9]*\.[0-9]\{6\}\] I '
     grep -a "${prefix}wood: music: summary" "$serial" | tail -2
-    for expected in "log-server: 8 clients, serial output attached" "sdhci: 0x[0-9a-f]* up" "compositor: display [0-9]*x[0-9]* pitch" "compositor: device 1 added" "wood: the engine started" "wood: music: summary of [0-9]* periods" "midi-synth: ready at 44091710 mHz" "audio: open for client 0" "usb-hcd-dwc2: core 0x[0-9a-f]* reset, host mode" "usb-hcd-dwc2: port reset: enabled" "usb-core: hub [0-9]* port [0-9]*: [a-z]* speed device at address [0-9]*" "usb-hid: serving a Keyboard as device"; do
+    for expected in "log-server: 8 clients, serial output attached" "sdhci: 0x[0-9a-f]* up" "compositor: display [0-9]*x[0-9]* pitch" "compositor: device 1 added" "wood: the engine started" "wood: music: summary of [0-9]* periods" "midi-synth: ready" "audio: open for client 0" "usb-hcd-dwc2: core 0x[0-9a-f]* reset, host mode" "usb-hcd-dwc2: port reset: enabled" "usb-core: hub [0-9]* port [0-9]*: [a-z]* speed device at address [0-9]*" "usb-hid: serving a Keyboard as device"; do
       grep -a -q "${prefix}\(([0-9]* dropped) \)\?${expected}" "$serial" || { echo "wood-test: the UART got no line \"$expected\" from the log server"; exit 1; }
     done
     dropped=0

@@ -52,7 +52,7 @@ The sections before them describe the code as it was before those changes.
 `profile_render` is an `#[ignore]` test in Room's `tests/doom_music.rs`, in the
 vesper-doom submodule (`userspace/wood/room/tests/doom_music.rs`).
 
-- It renders each of the 13 shareware songs for 60 s at `OUTPUT_RATE`, in 512-frame
+- It renders each of the 13 shareware songs for 60 s at the Pi 3 rate (100 MHz / 2268), in 512-frame
   periods, as the playback Thread does.
 - It uses the same trimmed SC-55 bank that `just _wood-soundfont` writes, built in
   memory from `userspace/wood/wad/doom1.wad` and the SC-55 file, as the golden-hash

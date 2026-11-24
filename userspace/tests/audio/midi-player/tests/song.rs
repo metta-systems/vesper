@@ -6,14 +6,20 @@
 mod tests {
     use {
         midi_player::{LevelMeter, Note, NoteList, Position, SongInfo},
-        vesper_synth::{OUTPUT_RATE, Song},
+        vesper_synth::{Rate, Song},
+    };
+
+    /// The Raspberry Pi 3's audio rate, 100 MHz over 2268.
+    const PI3_RATE: Rate = Rate {
+        numerator: 100_000_000,
+        denominator: 2268,
     };
 
     /// The test song: Bach's Prelude in C, BWV 846, from the Mutopia Project.
     const PRELUDE: &[u8] = include_bytes!("../../../../midi-synth/fixtures/wtk1-prelude1.mid");
 
     fn info() -> SongInfo {
-        SongInfo::of(&Song::parse(PRELUDE).unwrap(), OUTPUT_RATE)
+        SongInfo::of(&Song::parse(PRELUDE).unwrap(), PI3_RATE)
     }
 
     #[test]

@@ -37,10 +37,11 @@ local interface audio_v1
     ## The caller does not have the output open.
     exception not_open {}
 
-    ## The output's frame rate in millihertz: 44 091 710 (the 100 MHz PWM clock
-    ## over a range of 2268 clock cycles per sample).
+    ## The output's frame rate in Hz, as the exact fraction `numerator /
+    ## denominator`: the PWM clock over the clock cycles of one sample, 100 MHz
+    ## over 2268 on the Raspberry Pi 3 (44 091.71 Hz).
     rate()
-        returns (card32 millihertz);
+        returns (card32 numerator, card32 denominator);
 
     ## Open the output for the caller: the driver ramps it from off up to
     ## silence over one period (about 12 ms), then plays the caller's packets
