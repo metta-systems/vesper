@@ -1,0 +1,15 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The panel's node sits on the SPI controller's node: its bus is its parent.
+uses spi_v1 via device parent { write }
+# Its D/C, reset and backlight lines (`dc-gpios`, `reset-gpios`, the `gpios`
+# of its `backlight` node) are outputs it drives; its key owns those pins only.
+uses gpio_v1 via device compatible "brcm,bcm2835-gpio" or device compatible "brcm,bcm2711-gpio"
+{
+    set_function, set_level
+}
+# In an image with the log server, the driver's trace goes to it on the
+# interface's io-channel; elsewhere the import stays unlinked.
+uses log_v1 via component log_server { flush }

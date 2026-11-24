@@ -42,7 +42,10 @@ fn boot_main(dtb: u32) -> ! {
 
 #[cfg_attr(
     not(feature = "qemu"),
-    expect(unused_variables, reason = "the boot report prints over semihosting only")
+    expect(
+        unused_variables,
+        reason = "the boot report prints over semihosting only"
+    )
 )]
 pub fn run() -> ! {
     semi::println!("spi-test: enabled MMU and dropped to EL1");

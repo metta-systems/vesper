@@ -37,7 +37,7 @@ pub struct ControlStatus {
     /// A transfer is active: the block clocks out what the FIFO holds
     #[bit(7, rw)]
     transfer_active: bool,
-    /// Read enable (bidirectional mode only; reset 1)
+    /// Read enable (bidirectional mode only; reset 1, kept 0 by [`idle`])
     #[bit(12, rw)]
     read_enable: bool,
     /// The transfer is complete: the TX FIFO is empty and the last byte out
@@ -125,13 +125,16 @@ impl Mode {
 }
 
 /// `CS` with `mode`, the transfer inactive and nothing cleared: what every
-/// write of the sequence starts from.
+/// write of the sequence starts from. `REN` stays clear despite its reset
+/// value of 1: it is for the bidirectional (3-wire) mode, where MOSI turns
+/// around to read; a 4-wire write needs MOSI driven. Linux's `spi-bcm2835`
+/// writes `CS` without it for every transfer but a 3-wire read, and the
+/// Raspberry Pi 4 board showed a white panel with it set.
 #[must_use]
 pub fn idle(mode: Mode) -> ControlStatus {
     ControlStatus::ZERO
         .with_cpol(mode.cpol)
         .with_cpha(mode.cpha)
-        .with_read_enable(true)
 }
 
 /// The block as the write sequence uses it, so the sequence can be checked

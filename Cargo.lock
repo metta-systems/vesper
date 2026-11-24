@@ -418,6 +418,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "az"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b7e4c2464d97fe331d41de9d5db0def0a96f4d823b8b32a2efd503578988973"
+
+[[package]]
 name = "bit-set"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1235,6 +1241,22 @@ dependencies = [
  "vesper-print",
  "vesper-qemu",
 ]
+
+[[package]]
+name = "embedded-graphics-core"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95743bef3ff70fcba3930246c4e6872882bbea0dcc6da2ca860112e0cd4bd09f"
+dependencies = [
+ "az",
+ "byteorder",
+]
+
+[[package]]
+name = "embedded-hal"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
 name = "encoding_rs"
@@ -2744,6 +2766,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mipidsi"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790ebd28bd67addbccf41b1c0c188c26bb9f5bdcd91d4d6da9bd558e20d97a1d"
+dependencies = [
+ "embedded-graphics-core",
+ "embedded-hal",
+]
+
+[[package]]
 name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3336,6 +3368,41 @@ name = "owo-colors"
 version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
+
+[[package]]
+name = "panel-ili9341"
+version = "0.0.1"
+dependencies = [
+ "embedded-graphics-core",
+ "embedded-hal",
+ "gpio-client",
+ "metta-meddle-runtime",
+ "mipidsi",
+ "spi-client",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-trace",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "panel-test"
+version = "0.0.1"
+dependencies = [
+ "kickstart",
+ "nucleus",
+ "vesper-boot",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
 
 [[package]]
 name = "parking_lot"
@@ -4348,6 +4415,7 @@ dependencies = [
  "vesper-mmio",
  "vesper-objects",
  "vesper-print",
+ "vesper-serial-trace",
  "vesper-user-runtime",
 ]
 

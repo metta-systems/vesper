@@ -41,13 +41,17 @@ mod tests {
         }
     }
 
+    /// The modes set CPOL and CPHA and nothing else: `REN` (read enable, the
+    /// 3-wire mode's) stays clear despite its reset value, or MOSI is not
+    /// driven and the device hears nothing (a white ILI9341 on the board).
     #[test]
-    fn the_modes_set_cpol_and_cpha() {
+    fn the_modes_set_cpol_and_cpha_and_never_ren() {
         let raw = |number| idle(Mode::numbered(number)).raw_value();
-        assert_eq!(raw(0), READ_ENABLE);
-        assert_eq!(raw(1), READ_ENABLE | 1 << 2, "CPHA");
-        assert_eq!(raw(2), READ_ENABLE | 1 << 3, "CPOL");
-        assert_eq!(raw(3), READ_ENABLE | 1 << 2 | 1 << 3);
+        assert_eq!(raw(0), 0);
+        assert_eq!(raw(1), 1 << 2, "CPHA");
+        assert_eq!(raw(2), 1 << 3, "CPOL");
+        assert_eq!(raw(3), 1 << 2 | 1 << 3);
+        assert!((0..4).all(|number| raw(number) & READ_ENABLE == 0));
     }
 
     /// A stand-in for the block: a TX FIFO of `room` bytes the "wire" empties
@@ -106,6 +110,11 @@ mod tests {
                 !value.done() && !value.tx_room(),
                 "status bits are read-only"
             );
+            assert_eq!(
+                value.raw_value() & READ_ENABLE,
+                0,
+                "a 4-wire write never sets REN"
+            );
             self.writes.push(value.raw_value());
             if value.raw_value() & CLEAR_BOTH != 0 {
                 self.tx.clear();
@@ -140,10 +149,7 @@ mod tests {
         assert_eq!(wire.sent, bytes);
         assert!(wire.rx.is_empty(), "every byte in was read");
         // Clear both FIFOs with TA clear, set TA, and clear it at the end.
-        assert_eq!(
-            wire.writes,
-            [READ_ENABLE | CLEAR_BOTH, READ_ENABLE | TA, READ_ENABLE]
-        );
+        assert_eq!(wire.writes, [CLEAR_BOTH, TA, 0]);
     }
 
     #[test]
@@ -161,7 +167,7 @@ mod tests {
         assert_eq!(waits, 5);
         assert_eq!(
             wire.writes.last(),
-            Some(&(READ_ENABLE | 1 << 2 | 1 << 3)),
+            Some(&(1 << 2 | 1 << 3)),
             "TA cleared, the mode kept"
         );
         assert!(wire.sent.is_empty());

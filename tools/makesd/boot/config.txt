@@ -23,10 +23,12 @@ dtoverlay=pwm1,pins_40_41,pull_off
 # overlay enables `spi@7e204000` with a `panel@0` child, which names the
 # controller first, its size (active area 33.84x45.12 mm, here rounded to whole
 # millimetres) and its reset and D/C pins, and a `backlight_gpio` node for the
-# LED pin.
+# LED pin. The firmware splits a parameter's value at commas, so the
+# controller is named without its vendor prefix (`ili9341`, not
+# `ilitek,ili9341`, which arrives as `ilitek`).
 dtoverlay=mipi-dbi-spi,spi0-0,speed=32000000,write-only
-dtparam=compatible=ilitek,ili9341\0panel-mipi-dbi-spi
+dtparam=compatible=ili9341\0panel-mipi-dbi-spi
 dtparam=width=240,height=320,width-mm=34,height-mm=45
-dtparam=reset-gpio=25,dc-gpio=24,backlight-gpio=23
+dtparam=reset-gpio=24,dc-gpio=25,backlight-gpio=23
 
 [all]

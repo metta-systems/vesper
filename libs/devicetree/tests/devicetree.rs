@@ -461,10 +461,10 @@ mod tests {
             // The panel's D/C and reset pins, active high.
             let panel = node("panel@0");
             let dc = gpio_specifier(index, &panel, "dc-gpios", 0).expect("dc-gpios");
-            assert_eq!((dc.pin, dc.active_low()), (24, false));
+            assert_eq!((dc.pin, dc.active_low()), (25, false));
             assert_eq!(
                 gpio_specifier(index, &panel, "reset-gpios", 0).map(|reset| reset.pin),
-                Some(25)
+                Some(24)
             );
             assert_eq!(gpio_specifier(index, &panel, "missing-gpios", 0), None);
         });
@@ -512,7 +512,7 @@ mod tests {
                     .unwrap_or_else(|| panic!("{name}"));
                 gpio_pins(index, &node, controller)
             };
-            // The panel: `reset-gpios` 25, `dc-gpios` 24, and GPIO 23 of the
+            // The panel: `reset-gpios` 24, `dc-gpios` 25, and GPIO 23 of the
             // `gpio-backlight` node its `backlight` links to.
             assert_eq!(named("panel@0"), mask_of(&[23, 24, 25]));
             // SPI0: its pin groups (MISO, MOSI, SCLK on ALT0; CE0 and CE1 as

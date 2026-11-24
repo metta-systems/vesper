@@ -3,7 +3,7 @@
 // `semi::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(feature = "qemu", feature(format_args_nl))]
 
-//! spi-test's probe driver, for the panel node on SPI0 (`ilitek,ili9341`, the
+//! spi-test's probe driver, for the panel node on SPI0 (`ili9341`, the
 //! MSP2202 panel of `targets/spi-panel-test.dtb`). Kickstart loads it for a
 //! node that sits on a bus, not in the memory map, and links its `spi_v1`
 //! through its parent node, the SPI controller.
@@ -26,7 +26,7 @@ use {
 
 libuser::entry!(main);
 
-libdevice_driver::driver_compatible!("ilitek,ili9341");
+libdevice_driver::driver_compatible!("ilitek,ili9341", "ili9341");
 
 /// The device tree index (`libdevicetree`).
 static mut INDEX: [u8; INDEX_BUFFER_BYTES] = [0; INDEX_BUFFER_BYTES];

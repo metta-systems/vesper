@@ -84,6 +84,16 @@ binary = "spi-bcm2835"
 interfaces = "../../drivers/spi-bcm2835/interfaces"
 device_tree = true
 
+# The ILI9341 SPI panel (the MSP2202 module, the `mipi-dbi-spi` overlay's
+# `panel@0`, compatible `ili9341` or `ilitek,ili9341`), on the bus above: it reads its
+# chip select, lines, resolution and size from its copy of the device tree,
+# lights the panel and draws colour bars.
+[[driver]]
+name = "panel"
+binary = "panel-ili9341"
+interfaces = "../../drivers/panel-ili9341/interfaces"
+device_tree = true
+
 # ─── USB ─────────────────────────────────────────────────────────────────
 
 # The Raspberry Pi 3's DWC2 host controller, loaded once per enabled
