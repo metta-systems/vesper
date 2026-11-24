@@ -1,0 +1,37 @@
+[package]
+name = "panel-test-probe"
+
+description = "panel-test's program: the ILI9341 panel through display_v1 on a board: checks its description and modes, then writes colour bars, a moving square and a turned screen into its data area and flushes them."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+qemu = ["libuser/qemu", "liblog-client/qemu"]
+
+[dependencies]
+display = { workspace = true }
+display-client = { workspace = true }
+libdevice-driver = { workspace = true }
+# The probe's lines, its fault handler and its panic reporter.
+liblog-client = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+
+[[bin]]
+name = "panel-test-probe"
+test = false
+
+[lints]
+workspace = true

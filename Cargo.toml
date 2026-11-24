@@ -74,6 +74,9 @@ members = [
   "drivers/spi-bcm2835",
   "drivers/spi-bcm2835/client",
   "drivers/spi-bcm2835/server",
+  # The display_v1 interface crates, exported by every display output
+  "drivers/display/client",
+  "drivers/display/server",
   # The ILI9341 SPI panel driver
   "drivers/panel-ili9341",
   # DMA controller component and its dma_v1 interface crates
@@ -154,6 +157,7 @@ members = [
   "userspace/tests/driver/probe",
   "userspace/tests/driver/protocol",
   "userspace/tests/spi/probe",
+  "userspace/tests/panel/probe",
   "userspace/tests/fault/bare",
   "userspace/tests/fault/faulter",
   "userspace/tests/fault/protocol",
@@ -287,6 +291,8 @@ clock = { path = "drivers/cprman-bcm2835/server" }
 clock-client = { path = "drivers/cprman-bcm2835/client" }
 spi = { path = "drivers/spi-bcm2835/server" }
 spi-client = { path = "drivers/spi-bcm2835/client" }
+display = { path = "drivers/display/server" }
+display-client = { path = "drivers/display/client" }
 dma = { path = "drivers/dma-bcm2835/server" }
 dma-client = { path = "drivers/dma-bcm2835/client" }
 audio = { path = "drivers/audio-pwm-bcm2835/server" }

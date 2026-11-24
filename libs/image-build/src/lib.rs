@@ -505,6 +505,11 @@ fn rebased_fragment(path: &Path, mut fragment: toml::Table) -> toml::Table {
                             rebase(value);
                         }
                     }
+                    if let Some(exports) =
+                        entry.get_mut("exports").and_then(toml::Value::as_array_mut)
+                    {
+                        exports.iter_mut().for_each(rebase);
+                    }
                 }
                 _ => panic!(
                     "{}: an included manifest cannot have `{key}`",
@@ -950,6 +955,11 @@ struct ManifestEntry {
     /// to the manifest): one `<name>_vN.if` per exported interface and an
     /// `imports.if` of the functions it calls
     interfaces: Option<PathBuf>,
+    /// Further directories of interfaces the component exports (`exports =
+    /// ["...", ...]`, relative to the manifest): an interface several
+    /// components export (`display_v1`) lives in a directory of its own, and
+    /// every `.if` there but an `imports.if` counts as exported
+    exports: Vec<PathBuf>,
     /// What Kickstart gives the one instance of a program it starts at boot
     /// (a component with `program = true`); `None` for components test builders load
     program: Option<Settings>,
@@ -1131,6 +1141,7 @@ fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
                     }),
                     entry: None,
                     interfaces: interface_directory(path, entry),
+                    exports: export_directories(path, entry),
                     active: true,
                     program: None,
                     resources: Vec::new(),
@@ -1186,6 +1197,7 @@ fn read_components(path: &Path, table: &toml::Table) -> Vec<ManifestEntry> {
                 }),
                 entry: field("entry"),
                 interfaces: interface_directory(path, entry),
+                exports: export_directories(path, entry),
                 active,
                 program,
                 resources: entry
@@ -1240,44 +1252,80 @@ fn interface_directory(path: &Path, entry: &toml::Value) -> Option<PathBuf> {
     Some(path.parent().unwrap_or(Path::new(".")).join(directory))
 }
 
+/// The `exports` directories of a manifest `entry`, relative to the manifest
+/// at `path`: none when absent.
+fn export_directories(path: &Path, entry: &toml::Value) -> Vec<PathBuf> {
+    entry
+        .get("exports")
+        .map(|exports| {
+            exports
+                .as_array()
+                .unwrap_or_else(|| panic!("{}: `exports` lists directories", path.display()))
+        })
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .map(|directory| {
+            let directory = directory
+                .as_str()
+                .unwrap_or_else(|| panic!("{}: `exports` lists directories", path.display()));
+            path.parent().unwrap_or(Path::new(".")).join(directory)
+        })
+        .collect()
+}
+
 /// Panic with the rendered diagnostics of a Meddle `failure`.
 fn meddle_failure(failure: &libmeddle::Failure) -> ! {
     panic!("\n{}", failure.render(false))
 }
 
+/// The template context of the interface at `path` (in `directory`) that
+/// `component` exports, checking that `image` exports every function of it.
+fn exported_interface(
+    component: &ManifestEntry,
+    image: &ElfImage,
+    directory: &Path,
+    path: &Path,
+) -> Value {
+    let summary = libmeddle::summarize_interface(path, &[directory.to_path_buf()])
+        .unwrap_or_else(|failure| meddle_failure(&failure));
+    for index in 0..summary.functions.len() {
+        let export = summary.export_name(index).unwrap_or_default();
+        assert!(
+            image.exports.iter().any(|(name, _)| *name == export),
+            "{}: exports no `{export}` for interface `{}` (export it with `{}_export!`)",
+            component.binary,
+            summary.name,
+            summary.name
+        );
+    }
+    context! {
+        name => summary.name,
+        type_code => summary.type_code,
+    }
+}
+
 /// The interfaces `component` exports and the functions it imports, for the
 /// components template, checking that `image` exports every function of the
 /// interfaces it declares; `interface_directories` are those of every
-/// component in the manifest, where the imported interfaces are found.
+/// component in the manifest, where the imported interfaces are found. The
+/// exported interfaces are those of its own directory and of its `exports`
+/// directories.
 fn interface_contexts(
     component: &ManifestEntry,
     image: &ElfImage,
     interface_directories: &[PathBuf],
 ) -> (Vec<Value>, Vec<Value>) {
-    let Some(directory) = &component.interfaces else {
-        return (Vec::new(), Vec::new());
-    };
-    rerun_if_changed(directory);
     let mut interfaces = Vec::new();
-    for path in libmeddle::interface_files(directory) {
-        rerun_if_changed(&path);
-        let summary = libmeddle::summarize_interface(&path, std::slice::from_ref(directory))
-            .unwrap_or_else(|failure| meddle_failure(&failure));
-        for index in 0..summary.functions.len() {
-            let export = summary.export_name(index).unwrap_or_default();
-            assert!(
-                image.exports.iter().any(|(name, _)| *name == export),
-                "{}: exports no `{export}` for interface `{}` (export it with `{}_export!`)",
-                component.binary,
-                summary.name,
-                summary.name
-            );
+    for directory in component.interfaces.iter().chain(&component.exports) {
+        rerun_if_changed(directory);
+        for path in libmeddle::interface_files(directory) {
+            rerun_if_changed(&path);
+            interfaces.push(exported_interface(component, image, directory, &path));
         }
-        interfaces.push(context! {
-            name => summary.name,
-            type_code => summary.type_code,
-        });
     }
+    let Some(directory) = &component.interfaces else {
+        return (interfaces, Vec::new());
+    };
     let mut imports = Vec::new();
     let imports_file = directory.join(libmeddle::IMPORTS_FILE);
     if imports_file.is_file() {
@@ -1388,7 +1436,7 @@ pub fn bundle_components_replacing(manifest: &str, replacements: &[(&str, &str)]
     let interface_directories: Vec<PathBuf> = components
         .iter()
         .chain(driver_entries.iter().map(|driver| &driver.component))
-        .filter_map(|entry| entry.interfaces.clone())
+        .flat_map(|entry| entry.interfaces.iter().chain(&entry.exports).cloned())
         .chain(searched_interface_directories(&manifest_path, &table))
         .collect();
     let fp_components = fp_components();
@@ -1606,7 +1654,7 @@ fn component_context(
 #[cfg(test)]
 mod tests {
     use {
-        super::{fp_simd_flag, read_manifest},
+        super::{export_directories, fp_simd_flag, read_manifest},
         fp_scan::{FpClass, Hit},
         std::{
             fs,
@@ -1650,6 +1698,7 @@ binary = "uart-pl011"
 name = "xhci"
 binary = "usb-hcd-xhci"
 interfaces = "../drivers/xhci/interfaces"
+exports = ["../drivers/shared/interfaces"]
 
 [[component]]
 name = "dispatcher"
@@ -1711,6 +1760,17 @@ file = "doom1.wad"
         assert_eq!(
             interfaces[2]["interfaces"].as_str(),
             Some("audio/interfaces")
+        );
+        // A fragment's `exports` are rebased as its `interfaces` are.
+        let exports = interfaces[1]["exports"].as_array().unwrap();
+        assert_eq!(
+            exports
+                .iter()
+                .map(|value| value.as_str().map(Path::new))
+                .collect::<Vec<_>>(),
+            [Some(
+                platform.join("../drivers/shared/interfaces").as_path()
+            )]
         );
         assert_eq!(
             fields(&table, "resource", "file"),
@@ -1813,6 +1873,30 @@ file = "doom1.wad"
             "{error}"
         );
         assert_eq!(fp_simd_flag("plain", &[], false, false), Ok(false));
+    }
+
+    #[test]
+    fn export_directories_are_relative_to_the_manifest_and_optional() {
+        let manifest = Path::new("/images/test/image.toml");
+        let entry: toml::Value =
+            toml::from_str(r#"exports = ["../../drivers/display/interfaces", "/abs/interfaces"]"#)
+                .unwrap();
+        assert_eq!(
+            export_directories(manifest, &entry),
+            [
+                Path::new("/images/test/../../drivers/display/interfaces").to_path_buf(),
+                PathBuf::from("/abs/interfaces"),
+            ]
+        );
+        let none: toml::Value = toml::from_str(r#"interfaces = "own""#).unwrap();
+        assert!(export_directories(manifest, &none).is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "`exports` lists directories")]
+    fn exports_must_be_a_list() {
+        let entry: toml::Value = toml::from_str(r#"exports = "one""#).unwrap();
+        export_directories(Path::new("image.toml"), &entry);
     }
 
     #[test]
