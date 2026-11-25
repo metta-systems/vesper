@@ -1,7 +1,8 @@
 # Multi-display design
 
-Status: slices 1–5 built (see Slices). The layout EventCount and slice 6 wait
-for D3 and D5. Decisions
+Status: **paused** (2026-11-25). Slices 1–5 are built and board-verified (see
+Slices). The layout EventCount and slice 6 (hotplug) wait for D3 and D5,
+which are written up under "Paused: D3 and D5". Decisions
 M1–M10 and the three follow-ups were
 answered by the maintainer on 2026-11-24, as were D1, D2, D4, D6 and D7; all are
 recorded here. D3 and D5 (how EventCounts reach the compositor and its clients)
@@ -514,18 +515,88 @@ local interface display_layout_v1
    removal and arrival policy (after D3), tested with a fake provider that
    comes and goes (`not_present`).
 
-## Open questions
+## Paused: D3 and D5
 
-These are to be discussed in more detail later; slices 5 and 6 wait for them.
+Work stopped here on 2026-11-25 by the maintainer's choice, after slices 1–5
+were built and board-verified. It resumes by discussing D3 and D5 in detail;
+both are still open, and nothing below is decided.
 
-- **D3 – The provider EventCount.** Options:
-  - (a) declare `channel 0;`-style "notify" on `display_v1`, so that Kickstart
-    gives each client the exporter's EventCount (it already does this for
-    channels);
-  - (b) `describe` polling by the compositor at frame time;
-  - (c) installing an await-only EventCount key through a `display_v1` call.
-- **D5 – The layout EventCount for clients.** Options:
-  - (a) `display_layout` also installs one await-only EventCount key at the slot
-    after the interface keys;
-  - (b) a `LayoutChanged` record on the client's existing input io-channel;
-  - (c) clients poll `generation`.
+What waits on them:
+- slice 6, hotplug:
+  - providers telling the compositor that an output changed (D3);
+  - the arrival and removal policy (M9, M10). Its core is already built and
+    host-tested (`Layout::rehome`, `Layout::renormalize`,
+    `State::apply_layout`), but nothing triggers it yet;
+- the layout EventCount, which tells layout readers that the arrangement
+  changed (D5).
+
+Nothing in use needs them today:
+- No output changes by itself. The mailbox framebuffer has no hotplug
+  source: the firmware does not report HDMI plug events, so fb would have to
+  poll the firmware for them. The panel is fixed.
+- The only layout client, the shell's `layout` command, reads on demand.
+
+### D3: how a provider's change reaches the compositor
+
+When an output's presence or mode changes, its provider bumps the generation
+that `describe` returns. That much is settled (M9: EventCount + generation).
+The open part is how the compositor learns that it should call `describe`
+again.
+
+- **(a) A channel on `display_v1`.** Kickstart already gives each pair of an
+  interface that declares `channel N;` an io-channel, with an EventCount the
+  exporter advances and the client awaits. `input_v1` reaches the compositor
+  this way.
+  - For: no new mechanism. The channel could also carry a change record.
+  - Against:
+    - a control page per pair (plus data pages if records travel) out of
+      the 2 MiB data window that all pairs share;
+    - the compositor would have to wait on several EventCounts at once (one
+      per output, plus input), which means a WaitSet or a Thread per output.
+- **(b) The compositor polls `describe`** on a slow timer (say once a
+  second), from the frame Thread or a Thread of its own.
+  - For: nothing new in Kickstart, Meddle or the providers.
+  - Against:
+    - a wakeup and a call per output per period, even when nothing changes;
+    - arrival or removal seen up to a period late.
+- **(c) A `display_v1` call that installs an await-only key** to the
+  provider's EventCount in the caller's table, the way `display_layout`
+  installs Invocation keys.
+  - For: one EventCount per output, which a WaitSet can watch; no data
+    window cost.
+  - Against: a new pattern. `Masters` installs Invocation keys only, so
+    installing another kind of key (an EventCount with only the right to
+    await) needs a helper of its own. D5 (a) would use the same helper.
+
+Whichever is chosen, fb also needs its own source of change: polling the
+firmware for the display's presence and EDID.
+
+### D5: how layout readers learn of a change
+
+The compositor bumps `display_layout_v1.generation` on every move or turn,
+and will on every arrival and removal. The open part is how a reader such as
+a panel, a settings tool or a client that keeps its windows on one output
+knows that it should read the layout again.
+
+- **(a) `display_layout` also installs an await-only key** to a compositor
+  EventCount that is advanced on every change. It would go in the slot after
+  the interface's keys.
+  - For: readers wait without polling, and a WaitSet can combine it with
+    their other EventCounts.
+  - Against: the same new key-installing helper as D3 (c), and one more slot
+    and wire key in `display_layout`'s answer.
+- **(b) A `LayoutChanged` record on the client's input io-channel**, which
+  every compositor client already holds and reads.
+  - For: no new mechanism on the kernel side; one new record kind in
+    `vesper-input-event`.
+  - Against:
+    - layout news mixes with window events;
+    - a client that has no buffer posted loses the record. It would then
+      see `Dropped`, and must compare `generation` when it resynchronises;
+    - only clients with an event channel can learn of changes.
+- **(c) Readers poll `generation`.**
+  - For: nothing new.
+  - Against: wakeups and calls for nothing, and changes seen late.
+
+If D3 and D5 both pick "install an await-only key" ((c) and (a)), they share
+one helper.
