@@ -10,6 +10,50 @@
 
 use mailbox_impl::tag;
 
+pub mod edid;
+
+/// Words of the EDID request and of its answer: the header, the tag's three
+/// words, its value buffer of 136 bytes (the answer's block number, status and
+/// 128-byte block; the request's block number fits in it) and the end tag.
+pub const EDID_WORDS: usize = 2 + 3 + 34 + 1;
+
+/// The request for EDID block `block` (0 is the base block).
+pub fn edid_request(block: u32) -> [u32; EDID_WORDS] {
+    let mut words = [0; EDID_WORDS];
+    words[0] = byte_size(EDID_WORDS);
+    words[2..6].copy_from_slice(&[tag::GET_EDID_BLOCK, 136, 0, block]);
+    // Word 39 is the end tag.
+    words
+}
+
+/// Why the firmware gave no EDID block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoEdid {
+    /// The tag was not answered (a firmware or emulator that does not know
+    /// it): its code word.
+    NotAnswered(u32),
+    /// The firmware answered with a nonzero status: no such block (nothing
+    /// attached, or past the last block).
+    Status(u32),
+}
+
+/// The EDID block the firmware answered `answer` with. The block's bytes sit
+/// in the buffer in their own order, so the words are taken apart
+/// little-endian, the order the firmware and the CPU share.
+pub fn read_edid(answer: &[u32; EDID_WORDS]) -> Result<[u8; edid::BLOCK_BYTES], NoEdid> {
+    if answer[4] & TAG_ANSWERED == 0 {
+        return Err(NoEdid::NotAnswered(answer[4]));
+    }
+    if answer[6] != 0 {
+        return Err(NoEdid::Status(answer[6]));
+    }
+    let mut block = [0; edid::BLOCK_BYTES];
+    for (bytes, word) in block.as_chunks_mut::<4>().0.iter_mut().zip(&answer[7..39]) {
+        *bytes = word.to_le_bytes();
+    }
+    Ok(block)
+}
+
 /// Words of the configuring request and of its answer.
 pub const CONFIGURE_WORDS: usize = 22;
 

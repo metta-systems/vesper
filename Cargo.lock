@@ -1132,6 +1132,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "display-test"
+version = "0.0.1"
+dependencies = [
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "display-test-probe"
+version = "0.0.1"
+dependencies = [
+ "display",
+ "display-client",
+ "driver-protocol",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-log-client",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "dlib"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1488,6 +1523,7 @@ dependencies = [
 name = "fb-impl"
 version = "0.0.1"
 dependencies = [
+ "display",
  "fb",
  "mailbox-client",
  "mailbox-impl",
@@ -1495,6 +1531,7 @@ dependencies = [
  "vesper-device-driver",
  "vesper-objects",
  "vesper-print",
+ "vesper-serial-trace",
  "vesper-user-runtime",
 ]
 

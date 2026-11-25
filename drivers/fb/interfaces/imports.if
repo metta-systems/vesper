@@ -4,3 +4,7 @@
 #
 # The framebuffer node links to the firmware node, which links to the mailbox.
 uses mailbox_v1 via device firmware, mboxes { property }
+# In an image with the log server, the component's trace (its EDID and the mode
+# it configures at start) goes to it on the interface's io-channel; elsewhere
+# the import stays unlinked.
+uses log_v1 via component log_server { flush }

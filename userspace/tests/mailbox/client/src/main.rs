@@ -10,8 +10,8 @@
 
 use {
     driver_protocol::{
-        COPY_SLOT, FRAME_TABLE_BITS, FRAME_TABLE_GUARD, FRAME_TABLE_SLOT, lend_table_key,
-        plain_table_key, report_key,
+        COPY_SLOT, FRAME_TABLE_BITS, FRAME_TABLE_GUARD, FRAME_TABLE_SLOT, plain_table_key,
+        report_key,
     },
     fb_client::fb_v1::{
         Bindings as FbBindings, Client as FbClient, Error as FbError, Exception as FbException,
@@ -226,18 +226,17 @@ fn report_framebuffer(address: u64, bytes: u32, vc_base: u64, vc_size: u64) {
 #[cfg(not(feature = "qemu"))]
 fn report_framebuffer(_address: u64, _bytes: u32, _vc_base: u64, _vc_size: u64) {}
 
-/// The fb component: nothing is configured at first; configuring a 640 by 480
-/// display of 32 bits per pixel allocates a framebuffer.
+/// The fb component: it configured the display's first mode at start, so a
+/// framebuffer is there before any client asks; configuring a 640 by 480
+/// display of 32 bits per pixel allocates another.
 fn check_fb(init: &libdevice_driver::DriverInit, mailbox: &Client) {
     let fb = FbClient::new(FbBindings::from_imports(init.imports()));
-    assert_eq!(
-        fb.address(),
-        Err(FbError::Exception(FbException::NotConfigured))
-    );
-    // There is nothing to hand out before the display is configured.
-    assert_eq!(
-        fb.frames(&KeyTableKey::from_key(lend_table_key(init.table)), 0),
-        Err(FbError::Exception(FbException::NotConfigured))
+    let boot_address = fb
+        .address()
+        .unwrap_or_else(|error| panic!("fb configured no mode at start: {error:?}"));
+    assert_ne!(
+        boot_address, 0,
+        "the start mode's framebuffer has an address"
     );
     let pitch = fb
         .configure(640, 480, 32)

@@ -32,11 +32,14 @@ name = "power"
 binary = "power"
 interfaces = "../../drivers/power/interfaces"
 
-# The display: configures the framebuffer through the mailbox component.
+# The display: configures the framebuffer through the mailbox component, in
+# the preferred mode of the display's EDID, and serves it as fb_v1 and as a
+# scanout output of display_v1.
 [[driver]]
 name = "fb"
 binary = "fb"
 interfaces = "../../drivers/fb/interfaces"
+exports = ["../../drivers/display/interfaces"]
 video_memory = true
 
 # ─── Storage ─────────────────────────────────────────────────────────────
