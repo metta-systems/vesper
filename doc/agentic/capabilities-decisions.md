@@ -65,8 +65,6 @@ plan items.
   budgets; badge width, zero-badge meaning, and mint/rebadge policy.
 - **D4/bootstrap:** ownership of well-known `KeySlot` constants—shared object
   API versus bootstrap/libOS composition layout.
-- **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
-  that proposal should be rejected.
 - **IRQ follow-up:** whether a Thread may bind one Notification for both
   PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built
