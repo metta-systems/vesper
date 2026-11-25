@@ -40,6 +40,10 @@ pub enum Provider {
     Device(Vec<Link>),
     /// `via component name`: the loaded manifest component of that name
     Component(Name),
+    /// `via every max N`: every loaded instance that exports the interface,
+    /// in load order, at most `max` of them, each linked as an import of its
+    /// own; the only provider of its `uses`
+    Every { max: u64, span: Span },
 }
 
 /// `[local] interface name_vN { ... }`.

@@ -358,15 +358,33 @@ local interface display_layout_v1
   instead of in one driver's own directory. Those directories are also searched
   for imports.
 - Image-build: a `layout = true` manifest field (above).
-- Meddle and Kickstart: `via every` (D1).
-  - The parser takes `uses X via every [max N] { ... }`. The default maximum is
-    the client's own constant: the compositor's `MAX_OUTPUTS`, 2.
-  - The image summary marks the import as "every". Kickstart links one import
-    slot for each loaded instance that exports the interface, in load order. The
-    client sees N `ImportRecord`s, with the unlinked ones left unlinked, and
-    generated bindings expose them as an indexed list.
-  - How an instance found by `via every` is told apart from a device or
-    component link (node path, component name) is left to the Meddle slice.
+- Meddle and Kickstart: `via every` (D1, done in slice 3).
+  - The syntax is `uses X via every max N { ... }`, with `every` and `max`
+    contextual like `device` and `parent`. The maximum is written out, because
+    Meddle can't see the client's constants; the compositor will write
+    `every max 2`, matching `MAX_OUTPUTS` (D7).
+  - The checker requires `every` to be the use's only provider (there is
+    nothing to fall back to) and `N` to be 1 to `MAX_EVERY_INSTANCES` (4).
+  - It is `ProviderSummary::Every(N)` in the summary and `Provider::Every(N)`
+    in libimage.
+  - Kickstart links each function of the import once to each loaded instance
+    that exports the interface (the client itself excluded), in load order, up
+    to N. Each pair gets its own data area and placement window. If there are
+    more exporters than N, or none, it prints one line saying how many it
+    linked.
+  - The `ImportRecord` layout doesn't change. A function's *n*-th record
+    belongs to instance *n*, because every function is linked to the same
+    exporters in the same order. The generated client has
+    `Bindings::instances(imports)` and `Bindings::from_imports_nth(imports, n)`,
+    and `from_imports` is instance 0. The counting is
+    `meddle_runtime::{nth_instance, instance_count}`, host-tested in
+    `libs/meddle-runtime/tests/words.rs`.
+  - Telling the instances apart (a node path or component name per instance)
+    isn't needed yet: the compositor tells outputs apart by asking each one to
+    `describe` itself.
+  - every-test (QEMU) checks it: three programs export `echo_v1`, and a client
+    importing it `via every max 2` gets the first two, each with its own area
+    and its own call count. The third is left unlinked.
 - Nothing else changes in Kickstart.
 
 ## Slices

@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Every loaded instance that exports echo_v1, at most two: every-test loads
+# three, so the third is left out.
+uses echo_v1 via every max 2 { count }

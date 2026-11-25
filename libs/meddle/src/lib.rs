@@ -396,6 +396,8 @@ pub enum ProviderSummary {
     Device(Vec<LinkSummary>),
     /// The manifest component name
     Component(String),
+    /// Every loaded instance exporting the interface, at most this many
+    Every(u64),
 }
 
 /// The functions a component uses of one interface.
@@ -489,6 +491,7 @@ pub fn summarize_imports(
                         ast::Provider::Component(name) => {
                             ProviderSummary::Component(name.text.clone())
                         }
+                        ast::Provider::Every { max, .. } => ProviderSummary::Every(*max),
                     })
                     .collect(),
                 interface,

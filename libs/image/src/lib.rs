@@ -147,6 +147,10 @@ pub enum Provider {
     /// The manifest component of this name; the one loaded instance of it
     /// that exports the interface is the exporter
     Component(&'static str),
+    /// Every loaded instance that exports the interface, in load order, at
+    /// most this many: the function is linked once to each (`via every`), and
+    /// this is the import's only provider
+    Every(u64),
 }
 
 /// One function of another component's interface that a component calls,

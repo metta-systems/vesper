@@ -614,10 +614,24 @@ impl Emitter<'_, '_> {
                 impl Bindings {
                     /// The bindings `imports` grant for this interface
                     /// version, from the client's init record.
-                    #[allow(clippy::single_match, reason = "one arm per function, and an interface may have one")]
                     pub fn from_imports(imports: &[#runtime::ImportRecord]) -> Self {
+                        Self::from_imports_nth(imports, 0)
+                    }
+
+                    /// How many instances of this interface `imports` link: one
+                    /// for an import of one provider (zero when none was linked),
+                    /// each exporter for an import `via every`.
+                    pub fn instances(imports: &[#runtime::ImportRecord]) -> usize {
+                        #runtime::instance_count(imports, TYPE_CODE)
+                    }
+
+                    /// The bindings of instance `n` (below [`Self::instances`]) of an
+                    /// import `via every`: each exporter in the order Kickstart
+                    /// loaded them. Instance 0 is what [`Self::from_imports`] gives.
+                    #[allow(clippy::single_match, reason = "one arm per function, and an interface may have one")]
+                    pub fn from_imports_nth(imports: &[#runtime::ImportRecord], n: usize) -> Self {
                         let mut bindings = Self::default();
-                        for record in imports.iter().filter(|record| record.type_code == TYPE_CODE) {
+                        for record in #runtime::nth_instance(imports, TYPE_CODE, n) {
                             if record.area_len != 0 {
                                 bindings.data_area = record.data_area();
                             }

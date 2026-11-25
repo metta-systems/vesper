@@ -110,7 +110,7 @@ use {
         },
         phandle, primecell_periphid, reg, regions, write_path,
     },
-    libimage::{DriverImage, Extra, Link, Provider},
+    libimage::{DriverImage, Extra, Import, Link, Provider},
     libmeddle_runtime::ImportRecord,
     libobject::{
         CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType,
@@ -794,10 +794,98 @@ impl core::fmt::Display for Provided {
                     }
                 }
                 Provider::Component(name) => write!(formatter, "component {name}")?,
+                Provider::Every(max) => write!(formatter, "every max {max}")?,
             }
         }
         Ok(())
     }
+}
+
+/// Most instances one import `via every` is linked to: Meddle allows up to
+/// `MAX_EVERY_INSTANCES` (4) of them.
+const MAX_EVERY_EXPORTERS: usize = 4;
+
+/// The instance the providers of `import` (by device tree chain or component
+/// name) find for the client `instance`: the first provider that finds a
+/// loaded exporter names it, and one that finds several stops the search
+/// (`Err` with their count).
+fn single_exporter<'a, 'i, 'dt>(
+    tree: &'a DevTreeIndex<'i, 'dt>,
+    prepared: &[Option<Prepared<'_>>],
+    instance: &'a Instance,
+    import: &Import,
+) -> Result<Option<usize>, usize> {
+    let mut exporter = Ok(None);
+    for provider in import.providers {
+        exporter = match *provider {
+            Provider::Device(links) => {
+                let target = follow_links(tree, instance.node.as_ref(), links);
+                Ok(prepared.iter().position(|candidate| {
+                    candidate.as_ref().is_some_and(|candidate| {
+                        target.as_ref().is_some_and(|target| {
+                            candidate
+                                .instance
+                                .node
+                                .as_ref()
+                                .is_some_and(|node| same_node(node, target))
+                        }) && candidate
+                            .instance
+                            .driver
+                            .component
+                            .exports_interface(import.interface, import.type_code)
+                    })
+                }))
+            }
+            Provider::Component(name) => {
+                component_exporter(prepared, name, import.interface, import.type_code)
+            }
+            // Meddle allows `every` only as the one provider of an import,
+            // which [`every_exporter`] links instead.
+            Provider::Every(_) => Ok(None),
+        };
+        if !matches!(exporter, Ok(None)) {
+            break;
+        }
+    }
+    exporter
+}
+
+/// The instances an import `via every max max` links for the client at
+/// `client`: every loaded instance but the client that exports the
+/// interface, in load order, at most `max` (and [`MAX_EVERY_EXPORTERS`]) of
+/// them, written to `exporters`. Returns how many were written and how many
+/// more export it.
+fn every_exporter(
+    prepared: &[Option<Prepared<'_>>],
+    client: usize,
+    import: &Import,
+    max: u64,
+    exporters: &mut [usize; MAX_EVERY_EXPORTERS],
+) -> (usize, usize) {
+    let max = usize::try_from(max)
+        .unwrap_or(usize::MAX)
+        .min(MAX_EVERY_EXPORTERS);
+    let (mut found, mut beyond) = (0, 0);
+    for (index, candidate) in prepared.iter().enumerate() {
+        let exports = index != client
+            && candidate.as_ref().is_some_and(|candidate| {
+                candidate
+                    .instance
+                    .driver
+                    .component
+                    .exports_interface(import.interface, import.type_code)
+            });
+        if !exports {
+            continue;
+        }
+        if found < max {
+            exporters[found] = index;
+            found += 1;
+        } else {
+            beyond += 1;
+        }
+    }
+    (found, beyond)
 }
 
 /// The one loaded instance of the manifest component `name` that exports
@@ -1668,322 +1756,315 @@ pub fn load_drivers(
         // Imports of one interface are consecutive: report a missing link once.
         let mut unlinked: Option<&str> = None;
         for import in client_image.imports {
-            // The first provider that finds a loaded exporter names it; one
-            // that finds several stops the search.
-            let mut exporter = Ok(None);
-            for provider in import.providers {
-                exporter = match *provider {
-                    Provider::Device(links) => {
-                        let target = follow_links(tree, client_instance.node.as_ref(), links);
-                        Ok(prepared.iter().position(|candidate| {
-                            candidate.as_ref().is_some_and(|candidate| {
-                                target.as_ref().is_some_and(|target| {
-                                    candidate
-                                        .instance
-                                        .node
-                                        .as_ref()
-                                        .is_some_and(|node| same_node(node, target))
-                                }) && candidate
-                                    .instance
-                                    .driver
-                                    .component
-                                    .exports_interface(import.interface, import.type_code)
-                            })
-                        }))
-                    }
-                    Provider::Component(name) => {
-                        component_exporter(prepared, name, import.interface, import.type_code)
-                    }
-                };
-                if !matches!(exporter, Ok(None)) {
-                    break;
-                }
-            }
-            let exporter = match exporter {
-                Ok(Some(exporter)) => exporter,
-                Ok(None) => {
-                    if unlinked == Some(import.interface) {
-                        continue;
-                    }
+            // The exporters to link the function to: the one its providers
+            // find, or with `via every` each loaded instance exporting the
+            // interface, in load order.
+            let mut exporters = [0_usize; MAX_EVERY_EXPORTERS];
+            let found = if let [Provider::Every(max)] = import.providers {
+                let (found, beyond) =
+                    every_exporter(prepared, client, import, *max, &mut exporters);
+                if unlinked != Some(import.interface) && (found == 0 || beyond > 0) {
                     unlinked = Some(import.interface);
                     crate::early_println!(
-                        "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
+                        "🥾 Driver {}: {client_name} links {found} of {} instances exporting {} through `{}`",
                         client_image.name,
+                        found + beyond,
                         import.interface,
                         Provided(import.providers)
                     );
-                    continue;
                 }
-                Err(count) => {
-                    // Not granted: the client's call reports it, and naming a
-                    // different provider in the manifest is the fix.
-                    crate::early_println!(
-                        "🥾 Driver {}: {client_name} imports {} through `{}`, which {count} loaded instances export",
-                        client_image.name,
-                        import.interface,
-                        Provided(import.providers)
-                    );
-                    continue;
-                }
-            };
-            let export_pool = {
-                let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
-                match exporting.export_pool {
-                    Some(pool) => pool,
-                    None => {
-                        let pool = builder.stack_pool(
-                            &mut exporting.stacks,
-                            EXPORT_STACK_PAGES,
-                            EXPORT_STACKS,
-                            slots,
-                        );
-                        update_init(exporting.init_page, |init: &mut DriverInit| {
-                            init.export_pool = pool.to_wire();
-                        });
-                        exporting.export_pool = Some(pool);
-                        pool
-                    }
-                }
-            };
-            let area = if import.data_bytes == 0 && import.channel_pages == 0 {
-                None
-            } else if let Some(area) = call_areas[client][exporter] {
-                Some(area)
+                found
             } else {
-                // The data area first, then the io-channel: its control page and
-                // data pages.
-                let channel_bytes = if import.channel_pages == 0 {
-                    0
-                } else {
-                    (1 + import.channel_pages) * PAGE
-                };
-                let bytes = import.data_bytes + channel_bytes;
-                let base = data_cursor;
-                data_cursor += bytes;
-                assert!(
-                    data_cursor <= DATA_WINDOW_VA + DATA_WINDOW_BYTES,
-                    "🥾 the data window is full"
-                );
-                // A channel gets an EventCount the exporter advances after
-                // completing packets and the client waits on: one key for
-                // each, narrowed to what it does.
-                let (exporter_event, client_event) = if import.channel_pages == 0 {
-                    (0, 0)
-                } else {
-                    let event = builder
-                        .untyped
-                        .retype(
-                            ObjectType::EVENT_COUNT,
-                            0,
-                            0,
-                            1,
-                            builder.self_table,
-                            slots.take(1),
-                            Rights::all(),
-                        )
-                        .unwrap_or_else(|error| {
-                            panic!("🥾 channel EventCount Retype failed: {:?}", error.code())
-                        });
-                    let mut place = |index: usize, rights: u8| {
-                        let loaded = prepared[index].as_mut().expect("a loaded instance");
-                        let slot = loaded.next_slot;
-                        loaded.next_slot += 1;
-                        grant(
-                            &loaded.component,
-                            builder.entry(event).derive(Rights(rights)),
-                            slot,
-                        )
-                        .to_wire()
-                    };
-                    (place(exporter, Rights::SEND), place(client, Rights::RECV))
-                };
-                let calling = prepared[client].as_ref().expect("a loaded client");
-                let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
-                for (index, component) in [
-                    (exporter, &exporting.component),
-                    (client, &calling.component),
-                ] {
-                    if !window_installed[index] {
-                        Builder::map_table(
-                            builder.carve_tables(slots.take(1), 1),
-                            component.l2,
-                            DATA_WINDOW_VA,
+                exporters[0] = match single_exporter(tree, prepared, client_instance, import) {
+                    Ok(Some(exporter)) => exporter,
+                    Ok(None) => {
+                        if unlinked == Some(import.interface) {
+                            continue;
+                        }
+                        unlinked = Some(import.interface);
+                        crate::early_println!(
+                            "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
+                            client_image.name,
+                            import.interface,
+                            Provided(import.providers)
                         );
-                        window_installed[index] = true;
+                        continue;
                     }
-                }
-                share_data_area(
-                    builder,
-                    &self_table,
-                    slots,
-                    base,
-                    bytes,
-                    [&exporting.component, &calling.component],
-                );
-                update_init(exporting.init_page, |init: &mut DriverInit| {
-                    let index = usize::try_from(init.area_count).unwrap_or(MAX_AREAS);
-                    let record = init.areas.get_mut(index).unwrap_or_else(|| {
-                        panic!(
-                            "🥾 driver {} serves more than {MAX_AREAS} data areas",
-                            exporting.instance.driver.component.name
-                        )
-                    });
-                    *record = ExportedArea {
+                    Err(count) => {
+                        // Not granted: the client's call reports it, and naming a
+                        // different provider in the manifest is the fix.
+                        crate::early_println!(
+                            "🥾 Driver {}: {client_name} imports {} through `{}`, which {count} loaded instances export",
+                            client_image.name,
+                            import.interface,
+                            Provided(import.providers)
+                        );
+                        continue;
+                    }
+                };
+                1
+            };
+            for &exporter in &exporters[..found] {
+                let export_pool = {
+                    let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
+                    match exporting.export_pool {
+                        Some(pool) => pool,
+                        None => {
+                            let pool = builder.stack_pool(
+                                &mut exporting.stacks,
+                                EXPORT_STACK_PAGES,
+                                EXPORT_STACKS,
+                                slots,
+                            );
+                            update_init(exporting.init_page, |init: &mut DriverInit| {
+                                init.export_pool = pool.to_wire();
+                            });
+                            exporting.export_pool = Some(pool);
+                            pool
+                        }
+                    }
+                };
+                let area = if import.data_bytes == 0 && import.channel_pages == 0 {
+                    None
+                } else if let Some(area) = call_areas[client][exporter] {
+                    Some(area)
+                } else {
+                    // The data area first, then the io-channel: its control page and
+                    // data pages.
+                    let channel_bytes = if import.channel_pages == 0 {
+                        0
+                    } else {
+                        (1 + import.channel_pages) * PAGE
+                    };
+                    let bytes = import.data_bytes + channel_bytes;
+                    let base = data_cursor;
+                    data_cursor += bytes;
+                    assert!(
+                        data_cursor <= DATA_WINDOW_VA + DATA_WINDOW_BYTES,
+                        "🥾 the data window is full"
+                    );
+                    // A channel gets an EventCount the exporter advances after
+                    // completing packets and the client waits on: one key for
+                    // each, narrowed to what it does.
+                    let (exporter_event, client_event) = if import.channel_pages == 0 {
+                        (0, 0)
+                    } else {
+                        let event = builder
+                            .untyped
+                            .retype(
+                                ObjectType::EVENT_COUNT,
+                                0,
+                                0,
+                                1,
+                                builder.self_table,
+                                slots.take(1),
+                                Rights::all(),
+                            )
+                            .unwrap_or_else(|error| {
+                                panic!("🥾 channel EventCount Retype failed: {:?}", error.code())
+                            });
+                        let mut place = |index: usize, rights: u8| {
+                            let loaded = prepared[index].as_mut().expect("a loaded instance");
+                            let slot = loaded.next_slot;
+                            loaded.next_slot += 1;
+                            grant(
+                                &loaded.component,
+                                builder.entry(event).derive(Rights(rights)),
+                                slot,
+                            )
+                            .to_wire()
+                        };
+                        (place(exporter, Rights::SEND), place(client, Rights::RECV))
+                    };
+                    let calling = prepared[client].as_ref().expect("a loaded client");
+                    let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
+                    for (index, component) in [
+                        (exporter, &exporting.component),
+                        (client, &calling.component),
+                    ] {
+                        if !window_installed[index] {
+                            Builder::map_table(
+                                builder.carve_tables(slots.take(1), 1),
+                                component.l2,
+                                DATA_WINDOW_VA,
+                            );
+                            window_installed[index] = true;
+                        }
+                    }
+                    share_data_area(
+                        builder,
+                        &self_table,
+                        slots,
                         base,
-                        len: import.data_bytes,
+                        bytes,
+                        [&exporting.component, &calling.component],
+                    );
+                    update_init(exporting.init_page, |init: &mut DriverInit| {
+                        let index = usize::try_from(init.area_count).unwrap_or(MAX_AREAS);
+                        let record = init.areas.get_mut(index).unwrap_or_else(|| {
+                            panic!(
+                                "🥾 driver {} serves more than {MAX_AREAS} data areas",
+                                exporting.instance.driver.component.name
+                            )
+                        });
+                        *record = ExportedArea {
+                            base,
+                            len: import.data_bytes,
+                            channel_base: if import.channel_pages == 0 {
+                                0
+                            } else {
+                                base + import.data_bytes
+                            },
+                            channel_event: exporter_event,
+                        };
+                        init.area_count += 1;
+                    });
+                    let pair = PairArea {
+                        base,
+                        data_bytes: import.data_bytes,
                         channel_base: if import.channel_pages == 0 {
                             0
                         } else {
                             base + import.data_bytes
                         },
-                        channel_event: exporter_event,
+                        channel_event: client_event,
                     };
-                    init.area_count += 1;
-                });
-                let pair = PairArea {
-                    base,
-                    data_bytes: import.data_bytes,
-                    channel_base: if import.channel_pages == 0 {
-                        0
-                    } else {
-                        base + import.data_bytes
-                    },
-                    channel_event: client_event,
+                    call_areas[client][exporter] = Some(pair);
+                    Some(pair)
                 };
-                call_areas[client][exporter] = Some(pair);
-                Some(pair)
-            };
-            // A function that lends a key gets its pair's window: reserved once,
-            // never reused, so a lent key never lands on another of the
-            // exporter's keys. A function that lends nothing accepts no key.
-            let window = import.lends.then(|| match call_windows[client][exporter] {
-                Some(window) => window,
-                None => {
-                    let slots = u32::try_from(import.placement_slots)
-                        .ok()
-                        .filter(|&slots| slots > 0)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "🥾 `{}` lends a key without a placement window",
-                                import.export
-                            )
-                        });
-                    let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
-                    let window = PlacementWindow::new(exporting.next_slot, slots);
-                    exporting.next_slot += slots;
-                    call_windows[client][exporter] = Some(window);
-                    window
-                }
-            });
-            let PairArea {
-                base: area_base,
-                data_bytes: area_len,
-                channel_base,
-                channel_event,
-            } = area.unwrap_or_default();
-            let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
-            let exporter_space = AddressSpaceKey::from_key(exporting.component.address_space_key);
-            let entry = exporting
-                .instance
-                .driver
-                .component
-                .export(import.export)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "🥾 {} exports no `{}`",
-                        exporting.instance.driver.component.name, import.export
-                    )
+                // A function that lends a key gets its pair's window: reserved once,
+                // never reused, so a lent key never lands on another of the
+                // exporter's keys. A function that lends nothing accepts no key.
+                let window = import.lends.then(|| match call_windows[client][exporter] {
+                    Some(window) => window,
+                    None => {
+                        let slots = u32::try_from(import.placement_slots)
+                            .ok()
+                            .filter(|&slots| slots > 0)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "🥾 `{}` lends a key without a placement window",
+                                    import.export
+                                )
+                            });
+                        let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
+                        let window = PlacementWindow::new(exporting.next_slot, slots);
+                        exporting.next_slot += slots;
+                        call_windows[client][exporter] = Some(window);
+                        window
+                    }
                 });
-            // The key the client holds carries the identity of its pair as its
-            // badge (the base of the pair's shared memory, which is nonzero), so
-            // the exporter knows its caller from the key and not from where the
-            // call runs. An interface that says `badged by pins;` (gpio_v1)
-            // badges the key with the pins the client's node names on the
-            // exporter's controller instead, so the exporter serves a client
-            // its own pins only (`PinSet`); a client without a node owns none.
-            // A pair without shared memory and pins gets an unbadged key. The
-            // badge is set by deriving from a key Kickstart makes first in its
-            // own table; the client gets `CALL` only, and a badged key cannot be
-            // badged again whatever its rights.
-            let badge = if import.pin_badged {
-                let controller = exporting.instance.node.as_ref().and_then(phandle);
-                let pins = client_instance
-                    .node
-                    .as_ref()
-                    .zip(controller)
-                    .map_or(0, |(node, controller)| gpio_pins(tree, node, controller));
-                PinSet::from_mask(pins).badge()
-            } else {
-                area_base
-            };
-            let calling = prepared[client].as_mut().expect("a loaded client");
-            let slot = calling.next_slot;
-            calling.next_slot += 1;
-            let client_table = calling.component.table();
-            let created = exporter_space
-                .create_invocation_with_window(
-                    entry,
-                    if badge == 0 {
-                        &client_table
-                    } else {
-                        &self_table
-                    },
-                    KeySlot(if badge == 0 { slot } else { scratch_slot }),
-                    export_pool,
-                    window.unwrap_or(PlacementWindow::NONE),
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "🥾 CreateInvocation `{}` failed: {:?}",
-                        import.export,
-                        error.code()
-                    )
-                });
-            let invocation = if badge == 0 {
-                created
-            } else {
-                let badged = self_table
-                    .copy_derive_badged(
-                        created,
-                        &calling.component.table(),
-                        slot,
-                        Rights(Rights::CALL),
-                        badge,
+                let PairArea {
+                    base: area_base,
+                    data_bytes: area_len,
+                    channel_base,
+                    channel_event,
+                } = area.unwrap_or_default();
+                let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
+                let exporter_space =
+                    AddressSpaceKey::from_key(exporting.component.address_space_key);
+                let entry = exporting
+                    .instance
+                    .driver
+                    .component
+                    .export(import.export)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "🥾 {} exports no `{}`",
+                            exporting.instance.driver.component.name, import.export
+                        )
+                    });
+                // The key the client holds carries the identity of its pair as its
+                // badge (the base of the pair's shared memory, which is nonzero), so
+                // the exporter knows its caller from the key and not from where the
+                // call runs. An interface that says `badged by pins;` (gpio_v1)
+                // badges the key with the pins the client's node names on the
+                // exporter's controller instead, so the exporter serves a client
+                // its own pins only (`PinSet`); a client without a node owns none.
+                // A pair without shared memory and pins gets an unbadged key. The
+                // badge is set by deriving from a key Kickstart makes first in its
+                // own table; the client gets `CALL` only, and a badged key cannot be
+                // badged again whatever its rights.
+                let badge = if import.pin_badged {
+                    let controller = exporting.instance.node.as_ref().and_then(phandle);
+                    let pins = client_instance
+                        .node
+                        .as_ref()
+                        .zip(controller)
+                        .map_or(0, |(node, controller)| gpio_pins(tree, node, controller));
+                    PinSet::from_mask(pins).badge()
+                } else {
+                    area_base
+                };
+                let calling = prepared[client].as_mut().expect("a loaded client");
+                let slot = calling.next_slot;
+                calling.next_slot += 1;
+                let client_table = calling.component.table();
+                let created = exporter_space
+                    .create_invocation_with_window(
+                        entry,
+                        if badge == 0 {
+                            &client_table
+                        } else {
+                            &self_table
+                        },
+                        KeySlot(if badge == 0 { slot } else { scratch_slot }),
+                        export_pool,
+                        window.unwrap_or(PlacementWindow::NONE),
                     )
                     .unwrap_or_else(|error| {
                         panic!(
-                            "🥾 badging the import `{}` failed: {:?}",
+                            "🥾 CreateInvocation `{}` failed: {:?}",
                             import.export,
                             error.code()
                         )
                     });
-                self_table.delete(created).unwrap_or_else(|error| {
-                    panic!("🥾 deleting the unbadged import failed: {:?}", error.code())
-                });
-                badged
-            };
-            update_init(calling.init_page, |init: &mut DriverInit| {
-                let index = usize::try_from(init.import_count).unwrap_or(MAX_IMPORTS);
-                let record = init.imports.get_mut(index).unwrap_or_else(|| {
-                    panic!(
-                        "🥾 driver {} imports more than {MAX_IMPORTS} functions",
-                        client_image.name
-                    )
-                });
-                *record = ImportRecord {
-                    type_code: import.type_code,
-                    function: import.function,
-                    invocation: invocation.to_wire(),
-                    area_base,
-                    area_len,
-                    channel_base,
-                    channel_event,
+                let invocation = if badge == 0 {
+                    created
+                } else {
+                    let badged = self_table
+                        .copy_derive_badged(
+                            created,
+                            &calling.component.table(),
+                            slot,
+                            Rights(Rights::CALL),
+                            badge,
+                        )
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "🥾 badging the import `{}` failed: {:?}",
+                                import.export,
+                                error.code()
+                            )
+                        });
+                    self_table.delete(created).unwrap_or_else(|error| {
+                        panic!("🥾 deleting the unbadged import failed: {:?}", error.code())
+                    });
+                    badged
                 };
-                init.import_count += 1;
-            });
-            if import.interface == PCI_INTERFACE && !pci_children[client][exporter] {
-                pci_children[client][exporter] = true;
-                record_pci_child(prepared, client, exporter, area_base);
+                update_init(calling.init_page, |init: &mut DriverInit| {
+                    let index = usize::try_from(init.import_count).unwrap_or(MAX_IMPORTS);
+                    let record = init.imports.get_mut(index).unwrap_or_else(|| {
+                        panic!(
+                            "🥾 driver {} imports more than {MAX_IMPORTS} functions",
+                            client_image.name
+                        )
+                    });
+                    *record = ImportRecord {
+                        type_code: import.type_code,
+                        function: import.function,
+                        invocation: invocation.to_wire(),
+                        area_base,
+                        area_len,
+                        channel_base,
+                        channel_event,
+                    };
+                    init.import_count += 1;
+                });
+                if import.interface == PCI_INTERFACE && !pci_children[client][exporter] {
+                    pci_children[client][exporter] = true;
+                    record_pci_child(prepared, client, exporter, area_base);
+                }
             }
         }
     }
