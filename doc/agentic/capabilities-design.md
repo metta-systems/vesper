@@ -178,7 +178,7 @@ Granting direct management authority also entrusts the recipient with bookkeepin
 
 **`MappedSlice` ownership design:** create and own a private capability/mapping inside the guard, allow no further derivations or independently usable management aliases, and release the mapping on Drop.
 
-**CONFIRMED** ([contract](capabilities-contract.md#allocation-and-representation)): Drop cleanup uses an incarnation-bearing key, so a stale key is rejected rather than unmapping a replacement.
+**CONFIRMED** ([memory design](memory-design.md#shared-mappings-fbufs)): Drop cleanup uses an incarnation-bearing key, so a stale key is rejected rather than unmapping a replacement.
 
 There are two different exclusivity questions: ownership of the capability/mapping, and access to the physical bytes. No derivations from the guard-owned capability addresses the first. It does not prove that the physical frame has no aliases in other AddressSpaces, ancestor retirement authority, or device writers. D1 now prohibits multiple virtual aliases within one AddressSpace, but permits cross-AddressSpace writable sharing.
 
