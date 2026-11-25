@@ -109,12 +109,7 @@ Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memo
 - [ ] Implement mapping-local Unmap versus origin-capability Revoke of descendants: retain the origin, define partial completion, and prevent racing mapping installation.
 - [ ] Encode and enforce origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no-Frame-slot-reuse rule.
 - [ ] Implement the revocation/reclamation completion protocol: teardown bookkeeping retained across partial map/unmap failures, Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
-- [ ] Implement fbuf setup that agrees addresses for every participant before mapping, with reservation/conflict handling and rollback before pointers are published.
-- [ ] Implement exclusive, immutable-shared and mutable-shared modes with explicit transitions, and `MappedSlice` ownership of a private, non-derivable capability and mapping with incarnation-checked Drop cleanup.
-- [ ] Let RAM Frames map `WriteCombining` (Normal non-cacheable) for memory shared with non-coherent devices. Settle the mismatched-attribute alias with the kernel's cacheable direct map.
-- [ ] Decide and implement EL0 cache maintenance (`SCTLR_EL1.UCI`) for components that maintain shared buffers themselves.
 - [ ] Define per-target MMU/MPU/IOMMU, address-width and DMA restrictions, with a protected-context fallback that never downgrades hostile-code isolation.
-- [ ] Implement `ASIDControl` pool creation and partitioning of the 16-bit ASID space once its schema is selected.
 - [ ] Test rights denial for `Frame.Map`, `PageTable.Map` and `ASIDPool.Assign`; inject failures before and after Retype reservation and check ownership and accounting; test partial mapping failures, revocation races, cross-AddressSpace reuse without stale-data disclosure, and run target integration for retype → map → access → unmap/revoke → safe reuse, including failure paths.
 
 ## Phase 6 — Deferred completion and IPC
@@ -136,7 +131,7 @@ Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
 
 ### Components and interfaces
 
-Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts), [Frame cache maintenance](capabilities-contract.md#mapping-and-sharing).
+Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts), [Frame cache maintenance](memory-design.md#frame-cache-maintenance-maintainer-decision-2026-10-12).
 
 - [ ] Grow the `mailbox_v1.property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
 - [ ] Port the rest of the old `Power::off` into `power`: the GPIO pin power-down before the halt (requires a GPIO component).
@@ -156,6 +151,10 @@ All Time and userspace-scheduling work, including the scheduler-shared records (
 ## FP/SIMD per AddressSpace
 
 All FP/SIMD work, including the FP counters in the scheduler-shared records, is tracked in [`simd-implementation-plan.md`](simd-implementation-plan.md). Reference: [architectural state](capabilities-contract.md#architectural-state). No FP/SIMD decision is open; future work is at the end of the FP/SIMD plan.
+
+## Memory types and cache maintenance
+
+Memory-attribute and cache-maintenance work is tracked in [`memory-implementation-plan.md`](memory-implementation-plan.md).
 
 ## SMP
 

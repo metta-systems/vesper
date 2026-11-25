@@ -56,7 +56,7 @@ Authorized resource-state changes are not automatically capability replacement. 
 
 **Selected exhaustion behavior (3B=A):** a slot unable to issue a fresh 32-bit incarnation is permanently unavailable for further installation within that table lifetime; existing-capability deletion remains possible and other slots remain usable. No silent wrap or whole-table retirement is implied. The approved key package starts unused counters at 0, issues 1 on first installation, advances only at successful installation, retains counters on deletion, and reports exhaustion with `KeySlotExhausted`. Replacing/rebinding the table must not reset stale-key protection.
 
-**INTERIM** ([contract](capabilities-contract.md#mapping-and-sharing)): Frame deprovisioning fully revokes the capability and does not reuse that slot for Frames.
+**INTERIM** ([memory design](memory-design.md#frame-copy-unmap-and-revoke)): Frame deprovisioning fully revokes the capability and does not reuse that slot for Frames.
 
 Three distinct identity problems must be covered:
 
@@ -248,7 +248,7 @@ The shared-address-space protection decision matters here: capability checks on 
 
 ### CONFIRMED Frame mapping direction
 
-Recorded in the contract's [mapping and sharing](capabilities-contract.md#mapping-and-sharing): Copy is not Map, Unmap is mapping-local, origin Revoke withdraws descendants, remap is origin-authorized, and Frame slots are not reused after deprovisioning.
+Recorded in [memory-design.md](memory-design.md#frame-copy-unmap-and-revoke): Copy is not Map, Unmap is mapping-local, origin Revoke withdraws descendants, remap is origin-authorized, and Frame slots are not reused after deprovisioning.
 
 Open work for this section is tracked in [Phase 5](capabilities-implementation-plan.md#phase-5--memory-and-safe-reclamation); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
