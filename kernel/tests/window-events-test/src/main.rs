@@ -76,9 +76,9 @@ pub fn run() -> ! {
                     panic!("report grant failed: {:?}", failure.error.code())
                 });
         } else if name == components::WINDOW_EVENTS.name {
-            // window-events: three functions of compositor_v1 and its
+            // window-events: four functions of compositor_v1 and its
             // event channel.
-            assert_eq!(imports.len(), 3, "three functions of compositor_v1");
+            assert_eq!(imports.len(), 4, "four functions of compositor_v1");
             assert!(imports.iter().all(|record| record.channel_event != 0));
         }
         semi::println!(

@@ -43,10 +43,11 @@ device_test_rustflags := fixed_rustflags + ' -C link-arg=--script=' + test_link
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client panel-ili9341 pci-probe pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell spi-bcm2835 spi-test-probe uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid usb-test-client window-events'
+user_components := 'audio-pwm-bcm2835 audio-test-client cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client panel-ili9341 pci-probe pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell spi-bcm2835 spi-test-probe uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid usb-test-client window-events'
 # EL0 components built for the hard-float `fp_target`, loaded into an AddressSpace that allows
-# FP/SIMD (packages, built by `_build-components`).
-fp_components := 'fp-worker fp-bench-worker'
+# FP/SIMD (packages, built by `_build-components`). The compositor is one so that its
+# compositing loops can be vectorized; it is also a driver component (`fp_driver_components`).
+fp_components := 'compositor fp-worker fp-bench-worker'
 fp_target       := 'aarch64-metta-none-hardfloat'
 # Every FP component binary, the packages above and `midi-synth-fp` (the midi-synth package with
 # `fp-mode`, audio decision D9.7, built by `_build-midi-synth-fp`). image-build checks the list
@@ -55,11 +56,15 @@ fp_binaries := fp_components + ' midi-synth-fp'
 export VESPER_FP_COMPONENTS := fp_binaries
 # The profile overrides `midi-synth-fp` builds with: opt-level 3, where rustc's vectorizers run
 synth_fp_opt := '--config profile.release.package.vesper-synth.opt-level=3 --config profile.release.package.midi-synth.opt-level=3'
+# The profile overrides the FP components build with: opt-level 3 for the compositor and its
+# drawing code, where rustc's vectorizers run
+fp_opt := '--config profile.release.package.metta-compositor-core.opt-level=3 --config profile.release.package.compositor.opt-level=3'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml
-# and the platform.toml it includes)
-driver_components := 'compositor cprman-bcm2835 dma-bcm2835 fb-impl gpio-bcm2835 mailbox-impl panel-ili9341 pcie-brcmstb power-impl root-dispatcher sdhci shell spi-bcm2835 uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid'
+# and the platform.toml it includes), and those of them built for the hard-float `fp_target`
+driver_components := 'cprman-bcm2835 dma-bcm2835 fb-impl gpio-bcm2835 mailbox-impl panel-ili9341 pcie-brcmstb power-impl root-dispatcher sdhci shell spi-bcm2835 uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid'
+fp_driver_components := 'compositor'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -193,6 +198,7 @@ _build-privileged board=boards image_features='': (_cross-build privileged_compo
 # Build the EL0 driver components the kickstart image bundles (with semihosting output under 'qemu')
 _build-drivers board=boards features='' image_features=features:
     "{{ just_executable() }}" _cross-build '{{ driver_components }}' '{{ board }}' '{{ user_link }}' '{{ if features =~ "qemu" { "qemu" } else { "" } }}' '' '{{ image_features }}'
+    "{{ just_executable() }}" _cross-build '{{ fp_driver_components }}' '{{ board }}' '{{ user_link }}' '{{ if features =~ "qemu" { "qemu" } else { "" } }}' '' '{{ image_features }}' '{{ fp_target }}' '{{ fp_opt }}'
 
 # Build kernel for a board set (features: '' for hw, 'qemu' for emulation) into target/images/kernel-<config>.bin
 [group("build")]
@@ -208,7 +214,7 @@ _build-kernel board features config=(board + (if features == '' { '' } else { '-
 
 # Build the EL0 userspace components (linked with the userspace runtime's user.ld) for the
 # image configuration `board` + `image_features`
-_build-components board=boards features='qemu' image_features=features: (_cross-build user_components board user_link features '' image_features) (_cross-build fp_components board user_link features '' image_features fp_target)
+_build-components board=boards features='qemu' image_features=features: (_cross-build user_components board user_link features '' image_features) (_cross-build fp_components board user_link features '' image_features fp_target fp_opt)
 
 # === E2E test kernels (Kickstart images with test programs) ===
 
@@ -1176,9 +1182,12 @@ _test-wood board=boards seconds='90' features=test_kernel_features config=(board
     [ -n "$music" ] && [ $(( ${music#* } * 10 )) -ge $(( ${music% *} * 9 )) ] || { echo "wood-test: too few music periods with sound: $music"; exit 1; }
     [ $(( ${audible% *} * 10 )) -ge $(( ${audible#* } * 9 )) ] || { echo "wood-test: too few audible stream periods: $audible"; exit 1; }
     # The log server wrote every client's lines to the UART, each with its prefix.
+    # Wood's start is a burst its log channel may drop lines of (the log
+    # server marks them), so Wood's line here is its periodic music summary;
+    # "the engine started" is waited for on the semihosting console above.
     prefix='^\[ *[0-9]*\.[0-9]\{6\}\] I '
     grep -a "${prefix}wood: music: summary" "$serial" | tail -2
-    for expected in "log-server: 8 clients, serial output attached" "sdhci: 0x[0-9a-f]* up" "compositor: display [0-9]*x[0-9]* pitch" "compositor: device 1 added" "wood: the engine started" "wood: music: summary of [0-9]* periods" "midi-synth: ready" "audio: open for client 0" "usb-hcd-dwc2: core 0x[0-9a-f]* reset, host mode" "usb-hcd-dwc2: port reset: enabled" "usb-core: hub [0-9]* port [0-9]*: [a-z]* speed device at address [0-9]*" "usb-hid: serving a Keyboard as device"; do
+    for expected in "log-server: 9 clients, serial output attached" "sdhci: 0x[0-9a-f]* up" "compositor: output 0: instance [0-9]*, [0-9]*x[0-9]* [A-Za-z0-9]*, scanout" "compositor: device 1 added" "wood: music: summary of [0-9]* periods" "midi-synth: ready" "audio: open for client 0" "usb-hcd-dwc2: core 0x[0-9a-f]* reset, host mode" "usb-hcd-dwc2: port reset: enabled" "usb-core: hub [0-9]* port [0-9]*: [a-z]* speed device at address [0-9]*" "usb-hid: serving a Keyboard as device"; do
       grep -a -q "${prefix}\(([0-9]* dropped) \)\?${expected}" "$serial" || { echo "wood-test: the UART got no line \"$expected\" from the log server"; exit 1; }
     done
     dropped=0

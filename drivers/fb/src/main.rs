@@ -102,8 +102,8 @@ mod component {
         display::display_v1::{DisplayV1, Exception as DisplayException, Format, Rotation},
         fb::fb_v1::PixelOrder,
         fb_impl::{
-            ATTRIBUTE_WORDS, CONFIGURE_WORDS, EDID_WORDS, FramePlan, attributes_request,
-            configure_request, covered_by,
+            ATTRIBUTE_WORDS, CONFIGURE_WORDS, EDID_WORDS, FramePlan, PAGE_BYTES,
+            attributes_request, configure_request, covered_by,
             edid::{Edid, Modes, Timing},
             edid_request, page_range, physical_address, read_allocation, read_attributes,
             read_edid,
@@ -544,8 +544,8 @@ mod component {
             _badge: u64,
             into: &libmeddle_runtime::KeyTableKey,
             first_slot: u32,
-        ) -> Result<u32, DisplayException> {
-            frames(into, first_slot).map_err(|error| match error {
+        ) -> Result<(u32, u32), DisplayException> {
+            let installed = frames(into, first_slot).map_err(|error| match error {
                 Exception::NotConfigured => not_present(),
                 Exception::AlreadyHandedOut => DisplayException::AlreadyHandedOut,
                 Exception::InstallFailed { installed } => {
@@ -554,7 +554,13 @@ mod component {
                 Exception::FirmwareError { .. } | Exception::OutOfVideoMemory => {
                     DisplayException::Failed
                 }
-            })
+            })?;
+            // The Frames start at the page that holds the first pixel.
+            let address = configured()
+                .map_err(|_not_configured| not_present())?
+                .address;
+            let offset = u32::try_from(address % PAGE_BYTES).unwrap_or(0);
+            Ok((installed, offset))
         }
 
         fn rotate(_badge: u64, rotation: Rotation) -> Result<(u32, u32), DisplayException> {

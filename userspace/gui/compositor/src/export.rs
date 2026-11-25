@@ -54,7 +54,7 @@ impl CompositorV1 for Compositor {
 
     fn pixel_order(_badge: u64) -> WireOrder {
         let mut turn = shared::enter();
-        match shared::state(&mut turn).order {
+        match shared::state(&mut turn).order() {
             PixelOrder::Rgb => WireOrder::Rgb,
             PixelOrder::Bgr => WireOrder::Bgr,
         }
@@ -115,7 +115,12 @@ impl CompositorV1 for Compositor {
         }
 
         let id = u32::try_from(slot).unwrap_or(0) + 1;
+        // On the output under the pointer, each window a step further in (M10).
         let offset = FIRST_WINDOW + WINDOW_STEP * i32::try_from(slot).unwrap_or(0);
+        let (x, y) = state
+            .router
+            .layout()
+            .place(state.router.pointer(), width, height, offset);
         state.surfaces[slot] = Some(Surface {
             window: id,
             client,
@@ -129,8 +134,8 @@ impl CompositorV1 for Compositor {
             id,
             client,
             rect: Rect {
-                x: offset,
-                y: offset,
+                x,
+                y,
                 width,
                 height,
             },
@@ -175,7 +180,7 @@ impl CompositorV1 for Compositor {
             height: surface.height,
         };
         if let Some(inside) = changed.intersect(&bounds) {
-            state.damage.add(Rect {
+            state.add_damage(Rect {
                 x: origin.x.saturating_add(inside.x),
                 y: origin.y.saturating_add(inside.y),
                 ..inside
@@ -226,6 +231,15 @@ impl CompositorV1 for Compositor {
         state.damage_window(window);
         shared::wake();
         Ok(())
+    }
+
+    fn position(badge: u64, window: u32) -> Result<(i32, i32), Exception> {
+        let client = client_of(badge).ok_or(Exception::NoWindow)?;
+        let mut turn = shared::enter();
+        let state = shared::state(&mut turn);
+        owned(state, client, window)?;
+        let rect = state.rect_of(window).ok_or(Exception::NoWindow)?;
+        Ok((rect.x, rect.y))
     }
 
     fn raise(badge: u64, window: u32) -> Result<(), Exception> {

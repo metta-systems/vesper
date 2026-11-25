@@ -1,6 +1,7 @@
 # Multi-display design
 
-Status: design, no code yet. Decisions M1–M10 and the three follow-ups were
+Status: slices 1–4 built (see Slices); 5 and 6 wait for D3 and D5. Decisions
+M1–M10 and the three follow-ups were
 answered by the maintainer on 2026-11-24, as were D1, D2, D4, D6 and D7; all are
 recorded here. D3 and D5 (how EventCounts reach the compositor and its clients)
 are still open and will be discussed in more detail later.
@@ -138,8 +139,9 @@ local interface display_v1
 
     ## Scanout outputs: install the Frames of the output's own memory into the
     ## lent table, at consecutive slots from `first_slot`; once per generation.
+    ## Also returns where the first pixel is inside the first Frame, in bytes.
     frames(card32 first_slot) lends (key_table into)
-        returns (card32 installed)
+        returns (card32 installed, card32 offset)
         raises (not_present, already_handed_out, install_failed);
 
     ## Turn the output's own scan direction; returns the new width and height
@@ -226,30 +228,77 @@ exceptions there take precedence over this sketch.
 ## Compositor changes
 
 - **Discovery.** At start, the compositor calls `describe` and `get_mode` on every
-  `display_v1` import (`via every`, D1) and fills the output table. Outputs
-  whose `describe` raises `not_present` are skipped. The default layout places outputs left to right at y = 0, in import
+  `display_v1` import (`uses display_v1 via every max 2`, D1) and fills the
+  output table. An output is left out when `describe` raises `not_present`,
+  when its memory cannot be mapped, or when its mode does not fit its data
+  area; at least one output must remain. Each output keeps the mode it chose
+  for itself (D2): the fb component's EDID-preferred mode, or 1024×768 without
+  an EDID. The default layout places outputs left to right at y = 0, in import
   order, unrotated. The first output's top-left corner is the desktop origin.
-- **Frame Thread (scanout outputs).** As today, one frame composes every damaged
-  rectangle. Each desktop damage rectangle is clipped to each viewport. The
-  intersection is composed into that output's back buffer, in viewport
-  coordinates, with the windows bottom to top and the cursor last. It is then
-  converted (M2) and, when the compositor rotates (M5), rotated into the
-  write-combining frames. The conversion is a `PixelWrite` per format, in
-  `compositor-core::blit`:
+  Before the layout is made, the outputs are ordered scanout first, then by
+  pixel area, largest first, with import order breaking ties. So the biggest
+  scanout output is the primary one (maintainer, 2026-11-25). On the first
+  board run, Kickstart loaded the panel before fb, which made the panel
+  output 0.
+- **Canvas format.** Back buffers and surfaces use the format of the first
+  32-bit output, so that output shows them by copying. Clients learn it as
+  `compositor_v1.pixel_order`, as before. With no 32-bit output it is
+  `xrgb8888`.
+- **Scanout memory.** `libframebuffer` maps a scanout output's Frames
+  through `display_v1.frames` instead of `fb_v1`. `frames` also returns the
+  byte offset of the first pixel inside the first Frame, because `display_v1`
+  has no `address`. Kickstart gives the map window to `display_v1` importers
+  too, and the window has 6 spans, so a 1920×1200 framebuffer fits at any
+  alignment.
+- **Damage.** Each output keeps its own damage set, in desktop coordinates
+  clipped to its viewport. Damaging a desktop rectangle adds it to every
+  output that shows part of it.
+- **Drawing.** Each output's back buffer is drawn by exactly one Thread. That
+  Thread composes the damage in viewport coordinates, with the windows bottom
+  to top and the cursor last, then converts the finished rectangles (M2). The
+  code is in `compositor-core::blit`: `compose` and `present`, which calls
+  `convert_row` once per row.
   - `xrgb8888` is a copy, and `xbgr8888` a swap.
   - `rgb565_be` packs `r>>3, g>>2, b>>3` and stores the high byte first.
-- **Presenter Thread per flush output (M8).** A flush output's damage
-  accumulates in its own set. Its presenter Thread waits until there is damage
-  and no flush in flight. It then takes a turn to:
-  - take the damage, merged into at most a few rectangles;
-  - convert those rectangles from the back buffer into the provider's frames.
 
-  It then drops the turn and calls `flush` for each rectangle. Because `flush` is
-  a synchronous call, only the presenter blocks, for up to about 120 ms; the
-  frame Thread and the input Thread never wait for SPI. A window that changes
-  during a flush is caught by the next one. On the panel, the cost is some
-  tearing within a 40–120 ms window.
-- **Rotation (M5).** Setting a rotation calls the provider's `rotate` when that
+  The loops work a row at a time on slices, and blending has no branch on
+  alpha, only a final select, so the compiler vectorizes them. The compositor
+  is an FP/SIMD component, built for the hard-float target at opt-level 3. The
+  linked binary uses NEON for the blend's divide by 255 and for the
+  conversions.
+- **Frame Thread (scanout outputs).** It draws every scanout output that has
+  damage, then waits a frame time. It writes straight into the
+  write-combining memory.
+- **Presenter Thread per flush output (M8).** There is one presenter for each
+  output index (`presenter_0`, `presenter_1`); a presenter whose output is not
+  a flush output parks. A presenter takes its output's damage under a turn,
+  composes and converts it into the shared data area without the turn, then
+  calls `flush` for each rectangle and waits a frame time. New damage collects
+  in the output's set while a flush is in flight, so the next batch picks it
+  up. Because `flush` is a synchronous call, only the presenter blocks, for up
+  to about 120 ms; the frame Thread and the input Thread never wait for SPI.
+  The presenter composes for itself, instead of converting from a back buffer
+  that the frame Thread draws, so that each back buffer has one writer.
+  A rectangle whose `flush` fails goes back into the output's damage and is
+  sent with the next batch. The presenter counts failures, and the input
+  Thread traces the count each time it reaches a power of two, together with
+  the last exception.
+- **Moving windows (interim).** The compositor does not move windows itself
+  yet. A client moves its own window with an Alt + left drag, using
+  `compositor_core::drag::Mover`. The client feeds the Mover its window's
+  events, and the Mover answers with places to `move_window` to. It starts
+  from the new `compositor_v1.position`. Supporting changes:
+  - The router now sends a window that gains the focus a `Key` down for every
+    key already held, so a click made with Alt held starts a move.
+  - draw-demo and the shell use the Mover.
+  - window-events-test feeds every record to a Mover and checks that a drag
+    without Alt never moves its windows.
+  - Wood (a submodule) is not wired up yet.
+
+  The maintainer's words, 2026-11-25: "we will refactor this later into a
+  protocol".
+- **Rotation (M5).** Not in slice 4: nothing sets a rotation before
+  `display_layout_v1` (slice 5). Setting a rotation calls the provider's `rotate` when that
   rotation is in `rotations`; the viewport then simply takes the returned size.
   Otherwise the compositor rotates while converting, and the viewport takes
   width and height swapped.
@@ -259,7 +308,9 @@ exceptions there take precedence over this sketch.
   touch and stops where they don't. The cursor sprite is drawn into every
   viewport it overlaps.
 - **New windows (M10).** `create_window` places the window inside the output
-  under the pointer, using today's placement rule within that viewport.
+  under the pointer, using today's placement rule within that viewport. The
+  window is moved back left and up as far as needed to fit, but never past
+  the viewport's top-left corner (`Layout::place`).
 - **Removal (M10).** When `describe` starts raising `not_present`:
   - the viewport goes away;
   - each window entirely inside it moves to the pointer's output, or to the
@@ -271,12 +322,20 @@ exceptions there take precedence over this sketch.
 - **Arrival.** An output that becomes present is placed to the right of the
   rightmost viewport, unrotated.
 
-Host tests in `compositor-core` (no hardware):
-- format conversion, including RGB565 rounding and byte order;
+Host tests in `compositor-core` (no hardware; the `drawing` and `layout`
+modules of its test file):
+- format conversion, including RGB565 truncation and byte order, and the
+  output pitch;
+- a row of blends against the per-pixel blend;
 - clipping damage across two viewports;
-- pointer clamping over L-shaped and gapped layouts;
-- placing new windows and moving windows off a removed output;
-- the presenter's damage merge.
+- pointer clamping over L-shaped and gapped layouts, and the router crossing
+  outputs;
+- placing new windows and moving windows off a removed output
+  (`Layout::rehome`; used once hotplug lands);
+- renormalizing the origin (`Layout::renormalize`; used once the layout can
+  change).
+
+The presenter's damage merge is the existing `Damage` set.
 
 ## `display_layout_v1` (clients)
 

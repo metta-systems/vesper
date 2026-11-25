@@ -13,6 +13,8 @@
 //! available. The lamp animates only while the window has the keyboard focus:
 //! it follows the compositor's events on the client's event channel, and while
 //! another window has the focus it sleeps on that channel and draws nothing.
+//! Dragging the window with Alt held moves it (`compositor_core::drag`), from
+//! the place the compositor gave it (`compositor_v1.position`).
 
 use {
     compositor_client::compositor_v1::{
@@ -21,6 +23,7 @@ use {
     },
     core::sync::atomic::{AtomicU64, Ordering},
     libcompositor_core::{
+        drag::{Fed, Mover},
         events::{EventChannel, Receiver, data_area},
         surface::{FRAME_BYTES, frames, pitch_bytes},
     },
@@ -301,11 +304,15 @@ fn paint(screen: &mut Screen, order: PixelOrder, font: &Font<'_>) {
 
 /// Whether the window has the keyboard focus, followed from the events the
 /// compositor sends on the client's event channel (`compositor_v1`'s
-/// io-channel): the lamp animates only while it has.
+/// io-channel): the lamp animates only while it has. The same events drive the
+/// window's Alt-drag.
 struct Focus {
     /// The client end of the event channel, if the compositor gave one
     receiver: Option<Receiver<'static, EventCountKey>>,
     focused: bool,
+    /// Moves the window on an Alt-drag; none if the compositor would not say
+    /// where the window is.
+    mover: Option<Mover>,
 }
 
 impl Focus {
@@ -328,6 +335,7 @@ impl Focus {
         let mut focus = Self {
             receiver,
             focused: true,
+            mover: compositor.position(window_id()).ok().map(Mover::new),
         };
         if focus.receiver.is_some() {
             focus.resync(compositor);
@@ -371,6 +379,18 @@ impl Focus {
 
     /// Follow one record of the channel.
     fn handle(&mut self, event: &Event, compositor: &CompositorClient) {
+        if event.subject == window_id()
+            && let Some(mover) = self.mover.as_mut()
+            && let Fed::MoveTo(x, y) = mover.feed(event)
+        {
+            // A refused move leaves the window where it was; the mover
+            // follows the compositor's answer from the next press.
+            if compositor.move_window(window_id(), x, y).is_err()
+                && let Ok(place) = compositor.position(window_id())
+            {
+                mover.moved_to(place);
+            }
+        }
         match event.kind {
             Kind::Focus if event.subject == window_id() => self.focused = event.value != 0,
             Kind::Dropped => self.resync(compositor),

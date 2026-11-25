@@ -2,7 +2,8 @@
 //! windows.
 //!
 //! The producer's records are folded one frame at a time (a frame ends with a
-//! `Sync`). Pointer motion moves the pointer, which stays on the screen. The
+//! `Sync`). Pointer motion moves the pointer, which stays on the union of the
+//! outputs' viewports ([`Layout`]). The
 //! first button pressed focuses the window under the pointer (or none) and
 //! raises it, and that window holds an implicit grab: every pointer event goes
 //! to it until the last button is released. A new window gets the focus when
@@ -10,11 +11,12 @@
 //! focused window.
 //! What a window receives is rewritten for it: its id in `subject`, the pointer
 //! in its own coordinates, and `Enter`, `Leave` and `Focus` records when the
-//! pointer or the focus moves. Each window's events of a frame end with a
-//! `Sync` of their own.
+//! pointer or the focus moves; a window that gains the focus also receives a
+//! `Key` down for every key already held. Each window's events of a frame end
+//! with a `Sync` of their own.
 
 use {
-    crate::windows::Windows,
+    crate::{layout::Layout, windows::Windows},
     vesper_input_event::{
         record::{Event, KEY_DOWN, KEY_UP, Kind},
         state::State,
@@ -97,8 +99,7 @@ pub struct Counters {
 /// The router and the state it follows.
 #[derive(Clone, Copy, Debug)]
 pub struct Router {
-    width: u32,
-    height: u32,
+    layout: Layout,
     windows: Windows,
     x: i32,
     y: i32,
@@ -115,16 +116,27 @@ pub struct Router {
 }
 
 impl Router {
-    /// A router for a screen of `width` by `height` pixels, the pointer in its
-    /// middle.
+    /// A router for one screen of `width` by `height` pixels, the pointer in
+    /// its middle.
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
+        Self::with_layout(Layout::single(width, height))
+    }
+
+    /// A router for the outputs of `layout`, the pointer in the middle of the
+    /// first one.
+    #[must_use]
+    pub fn with_layout(layout: Layout) -> Self {
+        let (x, y) = layout
+            .viewports()
+            .next()
+            .and_then(|(index, _viewport)| layout.middle(index))
+            .unwrap_or((0, 0));
         Self {
-            width,
-            height,
+            layout,
             windows: Windows::new(),
-            x: i32::try_from(width / 2).unwrap_or(0),
-            y: i32::try_from(height / 2).unwrap_or(0),
+            x,
+            y,
             buttons: 0,
             focus: None,
             grab: None,
@@ -162,6 +174,12 @@ impl Router {
     #[must_use]
     pub const fn pointer(&self) -> (i32, i32) {
         (self.x, self.y)
+    }
+
+    /// The outputs the pointer roams.
+    #[must_use]
+    pub const fn layout(&self) -> &Layout {
+        &self.layout
     }
 
     /// The window with keyboard focus.
@@ -397,8 +415,7 @@ impl Router {
         let stamp = frame[..length].last().map_or(0, |event| event.timestamp);
         let moved = dx != 0 || dy != 0;
         if moved {
-            self.x = clamp(self.x, dx, self.width);
-            self.y = clamp(self.y, dy, self.height);
+            (self.x, self.y) = self.layout.step((self.x, self.y), dx, dy);
         }
         // Where the pointer's events go now, before any button changes it.
         self.update_hover(stamp, &mut sent, moved);
@@ -535,6 +552,15 @@ impl Router {
         }
         if let Some(new) = target {
             sent.push(new, Event::new(stamp, new, Kind::Focus, 0, 1));
+            // The keys already held, as a snapshot gives them: a window
+            // clicked with a modifier held (Alt to move it) learns of it.
+            for (_, state) in self.devices.iter().flatten() {
+                state.for_each_down(|held| {
+                    if page_of(held) != page::BUTTON {
+                        sent.push(new, Event::new(stamp, new, Kind::Key, held, KEY_DOWN));
+                    }
+                });
+            }
         }
         self.focus = target;
     }
@@ -572,12 +598,6 @@ fn group(sent: &Sent, stamp: u64, out: &mut Output) -> u32 {
         }
     }
     overflowed
-}
-
-/// `value + delta`, kept inside `0..size`.
-fn clamp(value: i32, delta: i32, size: u32) -> i32 {
-    let last = i32::try_from(size).unwrap_or(i32::MAX).saturating_sub(1);
-    value.saturating_add(delta).clamp(0, last.max(0))
 }
 
 /// What a frame sends, before it is grouped by window.

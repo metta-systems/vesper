@@ -62,8 +62,9 @@ fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, run as *const u8 as u64)
 }
 
-/// Guard of the receiver component's `KeyTable`.
-const RECEIVER_GUARD: u32 = 0x1A_0001;
+/// Guard of the receiver component's `KeyTable`: within the 20 guard bits of
+/// a 4096-entry table.
+const RECEIVER_GUARD: u32 = 0x0A_0001;
 
 /// Pages of the receiver's stack.
 const STACK_PAGES: u32 = 4;

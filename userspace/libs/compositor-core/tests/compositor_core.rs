@@ -200,6 +200,30 @@ mod tests {
     }
 
     #[test]
+    fn a_window_gaining_the_focus_hears_of_the_keys_already_held() {
+        const LEFT_ALT: u32 = 0x0007_00e2;
+        let mut router = router();
+        // The keyboard and mouse, device 1: the router follows what it holds.
+        frame(&mut router, &[Event::new(1, 1, Kind::DeviceAdded, 0, 0)]);
+        move_to(&mut router, 20, 20);
+        // Alt goes down with no window focused: nobody receives it.
+        let sent = frame(&mut router, &[key(LEFT_ALT, KEY_DOWN)]);
+        assert!(kinds(&sent, 1).is_empty());
+        // The click that focuses window 1 tells it Alt is held.
+        let sent = frame(&mut router, &[key(LEFT, KEY_DOWN)]);
+        assert_eq!(
+            kinds(&sent, 1),
+            [
+                (Kind::Focus, 0, 1),
+                (Kind::Key, LEFT_ALT, KEY_DOWN),
+                (Kind::Key, LEFT, KEY_DOWN),
+                (Kind::Sync, 0, 0)
+            ],
+            "held keys, not the buttons, follow the focus"
+        );
+    }
+
+    #[test]
     fn the_grab_keeps_pointer_events_with_the_window_pressed_on() {
         let mut router = router();
         move_to(&mut router, 20, 20);
@@ -437,7 +461,10 @@ mod tests {
 #[cfg(test)]
 mod drawing {
     use compositor_core::{
-        blit::{Canvas, Layer, Pixels, blend, compose, present},
+        blit::{
+            Canvas, Format, Layer, blend, blend_row, compose, convert_row, present, rgb565,
+            swap_red_blue,
+        },
         cursor,
         damage::{Damage, MAX_DAMAGE},
         windows::Rect,
@@ -534,12 +561,12 @@ mod drawing {
         let layers = [
             Layer {
                 rect: rect(2, 2, 8, 6),
-                pixels: &Pixels(&lower),
+                pixels: &lower,
                 pitch: 8,
             },
             Layer {
                 rect: rect(6, 4, 4, 4),
-                pixels: &Pixels(&upper),
+                pixels: &upper,
                 pitch: 4,
             },
         ];
@@ -561,7 +588,7 @@ mod drawing {
         let layer_pixels = [OPAQUE_RED; 6 * 6];
         let layers = [Layer {
             rect: rect(-3, -3, 6, 6),
-            pixels: &Pixels(&layer_pixels),
+            pixels: &layer_pixels,
             pitch: 6,
         }];
         compose(
@@ -608,7 +635,7 @@ mod drawing {
         let layer_pixels = [OPAQUE_RED; 30 * 30];
         let layers = [Layer {
             rect: rect(0, 0, 30, 30),
-            pixels: &Pixels(&layer_pixels),
+            pixels: &layer_pixels,
             pitch: 30,
         }];
         let everything = rect(0, 0, 30, 30);
@@ -667,13 +694,31 @@ mod drawing {
         assert_eq!(frames(u32::MAX, u32::MAX), None);
     }
 
+    /// The 32-bit words of `bytes`, as a little-endian output holds them.
+    fn words(bytes: &[u8]) -> Vec<u32> {
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_le_bytes(*word))
+            .collect()
+    }
+
     #[test]
     fn present_copies_only_the_area() {
         let mut pixels = [7_u32; 8 * 4];
         let canvas = canvas(&mut pixels, 8, 4);
-        // The display has a wider pitch than the canvas.
-        let mut display = [0_u32; 10 * 4];
-        present(&canvas, &mut display[..], 10, &rect(2, 1, 3, 2));
+        // The display has a wider pitch than the canvas: 10 pixels a row.
+        let mut display = [0_u8; 10 * 4 * 4];
+        present(
+            &canvas,
+            Format::Xrgb8888,
+            &mut display,
+            40,
+            Format::Xrgb8888,
+            &rect(2, 1, 3, 2),
+        );
+        let display = words(&display);
         let copied = display.iter().filter(|&&pixel| pixel == 7).count();
         assert_eq!(copied, 6);
         assert_eq!(display.len(), 40);
@@ -681,6 +726,122 @@ mod drawing {
         assert_eq!(display[2 * 10 + 4], 7);
         assert_eq!(display[10 + 5], 0);
         assert_eq!(display[0], 0);
+    }
+
+    #[test]
+    fn a_short_output_loses_only_the_rows_past_its_end() {
+        let mut pixels = [7_u32; 4 * 4];
+        let canvas = canvas(&mut pixels, 4, 4);
+        // Room for two rows and a half.
+        let mut display = [0_u8; 4 * 4 * 2 + 8];
+        present(
+            &canvas,
+            Format::Xrgb8888,
+            &mut display,
+            16,
+            Format::Xrgb8888,
+            &canvas.bounds(),
+        );
+        let display = words(&display);
+        assert!(display[..8].iter().all(|&pixel| pixel == 7));
+        assert_eq!(
+            &display[8..],
+            &[0, 0],
+            "a row that does not fit is left out"
+        );
+    }
+
+    #[test]
+    fn conversion_swaps_red_and_blue_between_32_bit_formats() {
+        assert_eq!(swap_red_blue(0xff11_2233), 0xff33_2211);
+        assert_eq!(swap_red_blue(swap_red_blue(0x8012_3456)), 0x8012_3456);
+        let row = [0xff11_2233_u32, 0x0000_00ff];
+        let mut same = [0_u8; 8];
+        convert_row(&row, Format::Xbgr8888, &mut same, Format::Xbgr8888);
+        assert_eq!(words(&same), row, "the same format is a copy");
+        let mut swapped = [0_u8; 8];
+        convert_row(&row, Format::Xrgb8888, &mut swapped, Format::Xbgr8888);
+        assert_eq!(words(&swapped), [0xff33_2211, 0x00ff_0000]);
+    }
+
+    #[test]
+    fn conversion_to_rgb565_keeps_the_top_bits_high_byte_first() {
+        // xrgb8888: red in bits 16..24.
+        assert_eq!(rgb565(0xffff_0000, Format::Xrgb8888), 0xf800, "red");
+        assert_eq!(rgb565(0xff00_ff00, Format::Xrgb8888), 0x07e0, "green");
+        assert_eq!(rgb565(0xff00_00ff, Format::Xrgb8888), 0x001f, "blue");
+        assert_eq!(rgb565(0xffff_ffff, Format::Xrgb8888), 0xffff, "white");
+        // xbgr8888: red in the lowest byte.
+        assert_eq!(rgb565(0xff00_00ff, Format::Xbgr8888), 0xf800, "red");
+        // The low bits are dropped: 7 of red and blue, 3 of green.
+        assert_eq!(rgb565(0xff07_0307, Format::Xrgb8888), 0);
+        assert_eq!(rgb565(0xff08_0408, Format::Xrgb8888), 0x0821);
+        let row = [0xffff_0000_u32, 0xff00_00ff];
+        let mut bytes = [0_u8; 4];
+        convert_row(&row, Format::Xrgb8888, &mut bytes, Format::Rgb565Be);
+        assert_eq!(bytes, [0xf8, 0x00, 0x00, 0x1f], "big-endian");
+    }
+
+    #[test]
+    fn present_to_rgb565_uses_the_output_pitch_in_bytes() {
+        let mut pixels = [0xffff_ffff_u32; 4 * 2];
+        let canvas = canvas(&mut pixels, 4, 2);
+        // Six pixels of two bytes a row.
+        let mut display = [0_u8; 12 * 2];
+        present(
+            &canvas,
+            Format::Xrgb8888,
+            &mut display,
+            12,
+            Format::Rgb565Be,
+            &rect(1, 1, 2, 1),
+        );
+        assert_eq!(&display[..14], &[0; 14]);
+        assert_eq!(&display[14..18], &[0xff; 4]);
+        assert_eq!(&display[18..], &[0; 6]);
+    }
+
+    #[test]
+    fn a_row_of_blends_is_the_blend_of_each_pixel() {
+        let sources = [
+            0xff12_3456_u32,
+            0,
+            0x8080_8080,
+            0x8000_0000,
+            0x4010_2030,
+            // Not premultiplied, but transparent: the destination stays.
+            0x00ff_ffff,
+        ];
+        let destinations = [
+            0xff00_0000_u32,
+            BACKGROUND,
+            0xff00_0000,
+            0xffff_ffff,
+            BACKGROUND,
+            BACKGROUND,
+        ];
+        let mut row = destinations;
+        blend_row(&mut row, &sources);
+        for ((&blended, &source), &destination) in row.iter().zip(&sources).zip(&destinations) {
+            assert_eq!(blended, blend(source, destination));
+        }
+        assert_eq!(row[5], BACKGROUND, "a transparent pixel adds nothing");
+    }
+
+    #[test]
+    fn a_layer_shorter_than_its_rectangle_draws_the_rows_it_has() {
+        let mut pixels = [0_u32; 4 * 4];
+        let mut canvas = canvas(&mut pixels, 4, 4);
+        // Two rows of a 4 by 4 window.
+        let layer_pixels = [OPAQUE_RED; 4 * 2];
+        let layers = [Layer {
+            rect: rect(0, 0, 4, 4),
+            pixels: &layer_pixels,
+            pitch: 4,
+        }];
+        compose(&mut canvas, &rect(0, 0, 4, 4), BACKGROUND, &layers, None);
+        assert!(canvas.pixels[..8].iter().all(|&pixel| pixel == OPAQUE_RED));
+        assert!(canvas.pixels[8..].iter().all(|&pixel| pixel == BACKGROUND));
     }
 }
 
@@ -999,5 +1160,289 @@ mod client_events {
             receiver.wait_event().map(|event| event.kind),
             Err(WaitError::Event(Unwaitable))
         );
+    }
+}
+
+/// Host tests of the outputs' arrangement: the default row, damage clipped to
+/// each viewport, the pointer on the union, where new windows go, windows
+/// leaving a removed output, and moving the origin.
+#[cfg(test)]
+mod layout {
+    use {
+        compositor_core::{
+            layout::{Layout, MAX_OUTPUTS},
+            router::{Output, Router},
+            windows::Rect,
+        },
+        vesper_input_event::{
+            record::{Event, Kind},
+            usage::{code, generic_desktop, page},
+        },
+    };
+
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// The board's pair: HDMI at 1024x600 and the panel at 240x320 to its
+    /// right, tops aligned, an L.
+    fn hdmi_and_panel() -> Layout {
+        Layout::row(&[Some((1024, 600)), Some((240, 320))])
+    }
+
+    #[test]
+    fn outputs_start_in_a_row_in_index_order() {
+        let layout = hdmi_and_panel();
+        assert_eq!(layout.viewport(0), Some(rect(0, 0, 1024, 600)));
+        assert_eq!(layout.viewport(1), Some(rect(1024, 0, 240, 320)));
+        // A missing output leaves no gap: the next starts where the last ended.
+        let missing = Layout::row(&[None, Some((240, 320))]);
+        assert_eq!(missing.viewport(0), None);
+        assert_eq!(missing.viewport(1), Some(rect(0, 0, 240, 320)));
+        let too_many = Layout::row(&[Some((10, 10)); MAX_OUTPUTS + 1]);
+        assert_eq!(too_many.viewports().count(), MAX_OUTPUTS);
+        assert!(Layout::new().is_empty());
+    }
+
+    #[test]
+    fn damage_is_clipped_to_each_viewport_in_its_own_coordinates() {
+        let layout = hdmi_and_panel();
+        // A window spanning the seam.
+        let damage = rect(1000, 100, 100, 50);
+        assert_eq!(layout.local(0, &damage), Some(rect(1000, 100, 24, 50)));
+        assert_eq!(layout.local(1, &damage), Some(rect(0, 100, 76, 50)));
+        // Below the panel only the HDMI output shows it.
+        assert_eq!(layout.local(1, &rect(1100, 400, 10, 10)), None);
+        assert_eq!(layout.local(0, &rect(1100, 400, 10, 10)), None);
+        assert_eq!(
+            layout.to_local(1, rect(1000, 100, 100, 50)),
+            Some(rect(-24, 100, 100, 50)),
+            "a window keeps its size, its origin moves"
+        );
+    }
+
+    #[test]
+    fn the_pointer_stays_on_the_union() {
+        let layout = hdmi_and_panel();
+        assert_eq!(layout.clamp(500, 300), (500, 300), "inside");
+        assert_eq!(layout.clamp(2000, 100), (1263, 100), "right of the panel");
+        assert_eq!(layout.clamp(1100, 340), (1100, 319), "just below the panel");
+        assert_eq!(
+            layout.clamp(1100, 500),
+            (1023, 500),
+            "far below the panel the HDMI edge is nearer"
+        );
+        assert_eq!(layout.clamp(-5, -5), (0, 0));
+        // Crossing the seam where the outputs touch.
+        assert_eq!(layout.step((1020, 100), 10, 0), (1030, 100));
+        // Moving right below the panel stops at the HDMI edge.
+        assert_eq!(layout.step((1020, 500), 10, 0), (1023, 500));
+        // A diagonal step slides along the edge.
+        assert_eq!(layout.step((1100, 310), 5, 20), (1105, 319));
+        // Gapped outputs: the pointer does not cross the gap.
+        let mut gapped = Layout::new();
+        gapped.set(0, Some(rect(0, 0, 100, 100)));
+        gapped.set(1, Some(rect(200, 0, 100, 100)));
+        assert_eq!(gapped.step((95, 50), 30, 0), (99, 50));
+        // Without outputs nothing is clamped.
+        assert_eq!(Layout::new().clamp(7, 8), (7, 8));
+    }
+
+    #[test]
+    fn the_router_moves_the_pointer_across_outputs() {
+        let mut router = Router::with_layout(hdmi_and_panel());
+        assert_eq!(
+            router.pointer(),
+            (512, 300),
+            "the middle of the first output"
+        );
+        let mut out = Output::new();
+        let dx = Event::new(
+            5,
+            1,
+            Kind::Rel,
+            code(page::GENERIC_DESKTOP, generic_desktop::X),
+            600,
+        );
+        router.feed(&dx, &mut out);
+        router.feed(&Event::sync(5, 1), &mut out);
+        assert_eq!(router.pointer(), (1112, 300), "on the panel");
+        router.feed(&dx, &mut out);
+        router.feed(&Event::sync(5, 1), &mut out);
+        assert_eq!(router.pointer(), (1263, 300), "at the panel's right edge");
+        assert_eq!(router.layout().output_at(1263, 300), Some(1));
+    }
+
+    #[test]
+    fn a_new_window_opens_on_the_output_under_the_pointer() {
+        let layout = hdmi_and_panel();
+        assert_eq!(layout.place((500, 300), 200, 100, 24), (24, 24));
+        // On the panel, moved left to fit its 240 pixels.
+        assert_eq!(layout.place((1100, 100), 200, 100, 60), (1064, 60));
+        // Wider than the panel: at its left edge, hanging off the right.
+        assert_eq!(layout.place((1100, 100), 400, 100, 60), (1024, 60));
+        // A pointer off every output: the first output.
+        assert_eq!(layout.place((1100, 500), 200, 100, 24), (24, 24));
+    }
+
+    #[test]
+    fn windows_wholly_on_a_removed_output_move_and_keep_their_size() {
+        let full = hdmi_and_panel();
+        let panel = full.viewport(1).expect("the panel");
+        let mut remaining = full;
+        remaining.set(1, None);
+        // Wholly on the panel: onto the HDMI output, at the same offset.
+        assert_eq!(
+            remaining.rehome(rect(1034, 20, 100, 50), panel, (500, 300)),
+            Some(rect(10, 20, 100, 50))
+        );
+        // Partly on the HDMI output: it stays.
+        assert_eq!(
+            remaining.rehome(rect(1000, 20, 100, 50), panel, (500, 300)),
+            None
+        );
+        // Nothing left: nowhere to go.
+        let mut none = remaining;
+        none.set(0, None);
+        assert_eq!(none.rehome(rect(1034, 20, 100, 50), panel, (0, 0)), None);
+    }
+
+    #[test]
+    fn renormalizing_moves_the_lowest_x_output_to_the_origin() {
+        let mut layout = Layout::new();
+        layout.set(0, Some(rect(240, 50, 1024, 600)));
+        layout.set(1, Some(rect(0, 100, 240, 320)));
+        assert_eq!(layout.renormalize(), (0, -100));
+        assert_eq!(layout.viewport(1), Some(rect(0, 0, 240, 320)));
+        assert_eq!(layout.viewport(0), Some(rect(240, -50, 1024, 600)));
+        assert_eq!(layout.renormalize(), (0, 0), "already normal");
+    }
+}
+
+/// Host tests of moving a window by dragging it with Alt held.
+#[cfg(test)]
+mod drag {
+    use {
+        compositor_core::drag::{Fed, Mover},
+        vesper_input_event::{
+            record::{Event, KEY_DOWN, KEY_UP, Kind},
+            usage::{code, generic_desktop, page},
+        },
+    };
+
+    const LEFT: u32 = 0x0009_0001;
+    const LEFT_ALT: u32 = 0x0007_00e2;
+    const RIGHT_ALT: u32 = 0x0007_00e6;
+
+    fn key(code: u32, value: i32) -> Event {
+        Event::new(5, 1, Kind::Key, code, value)
+    }
+
+    fn sync() -> Event {
+        Event::sync(5, 1)
+    }
+
+    /// The pointer at (`x`, `y`) in the window, as the router sends it.
+    fn at(x: i32, y: i32) -> [Event; 2] {
+        [
+            Event::new(
+                5,
+                1,
+                Kind::Abs,
+                code(page::GENERIC_DESKTOP, generic_desktop::X),
+                x,
+            ),
+            Event::new(
+                5,
+                1,
+                Kind::Abs,
+                code(page::GENERIC_DESKTOP, generic_desktop::Y),
+                y,
+            ),
+        ]
+    }
+
+    /// Feed a frame: `events` and its `Sync`; what each meant.
+    fn frame(mover: &mut Mover, events: &[Event]) -> Vec<Fed> {
+        events
+            .iter()
+            .chain(core::iter::once(&sync()))
+            .map(|event| mover.feed(event))
+            .collect()
+    }
+
+    #[test]
+    fn a_plain_drag_is_the_clients() {
+        let mut mover = Mover::new((100, 50));
+        assert!(
+            frame(&mut mover, &at(10, 10))
+                .iter()
+                .all(|&fed| fed == Fed::Pass)
+        );
+        assert_eq!(frame(&mut mover, &[key(LEFT, KEY_DOWN)])[0], Fed::Pass);
+        assert!(
+            frame(&mut mover, &at(40, 30))
+                .iter()
+                .all(|&fed| fed == Fed::Pass)
+        );
+        assert!(!mover.is_moving());
+        assert_eq!(mover.place(), (100, 50));
+    }
+
+    #[test]
+    fn alt_and_a_left_drag_move_the_window_with_the_pointer() {
+        let mut mover = Mover::new((100, 50));
+        frame(&mut mover, &at(10, 10));
+        assert_eq!(frame(&mut mover, &[key(LEFT_ALT, KEY_DOWN)])[0], Fed::Pass);
+        assert_eq!(
+            frame(&mut mover, &[key(LEFT, KEY_DOWN)]),
+            [Fed::Moving, Fed::Moving],
+            "the press starts a move, and nothing moved yet"
+        );
+        assert!(mover.is_moving());
+        // The pointer 30 right and 20 down of the grabbed point.
+        assert_eq!(
+            frame(&mut mover, &at(40, 30)),
+            [Fed::Moving, Fed::Moving, Fed::MoveTo(130, 70)]
+        );
+        // After the move the router measures from the new place: the
+        // pointer 5 left of the grabbed point.
+        assert_eq!(
+            frame(&mut mover, &at(5, 10)),
+            [Fed::Moving, Fed::Moving, Fed::MoveTo(125, 70)]
+        );
+        // Releasing Alt does not end the move; releasing the button does.
+        assert_eq!(frame(&mut mover, &[key(LEFT_ALT, KEY_UP)])[1], Fed::Moving);
+        assert_eq!(frame(&mut mover, &[key(LEFT, KEY_UP)])[0], Fed::Moving);
+        assert!(!mover.is_moving());
+        assert_eq!(frame(&mut mover, &at(50, 50))[2], Fed::Pass);
+        assert_eq!(mover.place(), (125, 70));
+    }
+
+    #[test]
+    fn either_alt_starts_a_move_and_losing_the_focus_forgets_them() {
+        let mut mover = Mover::new((0, 0));
+        frame(&mut mover, &[key(RIGHT_ALT, KEY_DOWN)]);
+        assert_eq!(frame(&mut mover, &[key(LEFT, KEY_DOWN)])[0], Fed::Moving);
+        frame(&mut mover, &[key(LEFT, KEY_UP)]);
+        // Alt is released while another window has the focus: this window
+        // never hears it, so losing the focus forgets it.
+        frame(&mut mover, &[Event::new(5, 1, Kind::Focus, 0, 0)]);
+        assert_eq!(frame(&mut mover, &[key(LEFT, KEY_DOWN)])[0], Fed::Pass);
+        assert!(!mover.is_moving());
+    }
+
+    #[test]
+    fn a_window_the_client_moved_moves_from_there() {
+        let mut mover = Mover::new((0, 0));
+        mover.moved_to((300, 200));
+        frame(&mut mover, &at(10, 10));
+        frame(&mut mover, &[key(LEFT_ALT, KEY_DOWN), key(LEFT, KEY_DOWN)]);
+        assert_eq!(frame(&mut mover, &at(11, 12))[2], Fed::MoveTo(301, 202));
     }
 }

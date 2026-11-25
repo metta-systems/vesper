@@ -1,7 +1,7 @@
 [package]
 name = "vesper-framebuffer"
 
-description = "Maps the display's framebuffer through the fb component: configures the mode, receives the Frames and maps them write-combining in the window Kickstart provisioned."
+description = "Maps a display_v1 scanout output's memory (the mailbox framebuffer): reads its mode, receives the Frames and maps them write-combining in the window Kickstart provisioned."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -15,9 +15,9 @@ version = { workspace = true }
 publish = false
 
 [dependencies]
-fb-client = { workspace = true }
+display = { workspace = true }
+display-client = { workspace = true }
 libdevice-driver = { workspace = true }
-libgraphics = { workspace = true }
 libobject = { workspace = true }
 
 [lib]

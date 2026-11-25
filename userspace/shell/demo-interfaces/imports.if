@@ -4,5 +4,6 @@
 #
 # `draw-demo`: the functions of the compositor the shell's `draw` calls. The
 # lava lamp follows the window's focus on the interface's io-channel, and asks
-# `snapshot` for it when it starts and after records were dropped.
-uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, raise, destroy, snapshot }
+# `snapshot` for it when it starts and after records were dropped. An Alt-drag
+# moves the window: `position` says where it starts, `move_window` moves it.
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, position, raise, destroy, snapshot }
