@@ -10,7 +10,7 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 - Load the `ponytail` skill (`.agents/skills/ponytail`) together with this one and follow it for the whole slice: the smallest change that fully solves the task, and a short reply that ends with what was skipped or not checked. It does not relax anything below: the contract, the decision gates, the tests and the documentation updates still apply in full.
 - Resolve every repository-relative path below against the **Vesper repository root**, not this skill's directory (`.agents/skills/capability-refactor`).
 - Always read **both** `doc/agentic/capabilities-contract.md` (canonical contract for capabilities) and `doc/agentic/capabilities-implementation-plan.md` (checkbox plan) first, before analysis or edits. For work in an area that has its own documents (see [Area documents](#area-documents)), also read that area's design and plan. If a document is unavailable, ask the user rather than inventing its contents.
-- **Time and userspace-scheduling work follows the scheduling documents:** `doc/agentic/scheduling-design.md` (the rules), `scheduling-decisions.md` (open questions), `scheduling-implementation-plan.md` (every Time, scheduler-shared-record and scheduling task) and `scheduling-completed.md`. For any such slice, read the design and plan in addition to the two documents above; `doc/agentic/capability-scheduler-design.md` is the design discussion behind them (the nucleus has no priorities, periods or deadlines; policy is userspace scheduler code).
+- **Find every area a slice touches in the [document index](#document-index) and read that area's design and plan too.** The contract holds only capability semantics; many rules a capability slice depends on live in area designs (Frame, PageTable, ASID and Activate rules in `memory-design.md`, Time and Scheduler rules in `scheduling-design.md`, Meddle and Kickstart wiring in `components-design.md`). Not finding a rule in the contract does not mean it is undecided: check the index before treating anything as open.
 - For lifetime, ownership, authority, delegation, revocation, or reclamation work, also read the relevant sections of `doc/agentic/capabilities-design.md` (why each rule exists, alternatives weighed) and `doc/agentic/capabilities-research.md` (prior-art evidence: seL4, Composite, Fluke, KeyKOS, NOVA and others). Neither holds tasks, decisions or status; they supplement the contract.
 - Preserve user and concurrent-agent edits to these documents; coordinate overlapping changes and make focused updates rather than replacing either document wholesale.
 - `doc/agentic/capabilities-decisions.md` is exclusively a parking lot for **unanswered architectural/contract decisions**. Do not keep resolved directions, settled decision recaps, implementation TODOs, code-audit tasks, or optional refactoring chores there. When a decision is resolved, record it in the canonical contract if it concerns capabilities themselves, or in the area's design document otherwise (and relevant lifetime/authority analysis), then remove the resolved item from `capabilities-decisions.md`. Put implementation, testing, and integration work in `doc/agentic/capabilities-implementation-plan.md`. The one exception is the **Future work** section at the end of `capabilities-decisions.md`: ideas the project might or might not pursue later (for example extended `x1..x7` IPC outputs). Future work needs no near-term decision. Do not present it as a decision blocker, do not let it constrain current contracts or tests, and do not plan around it. Describe each future-work idea only in that section. Elsewhere, at most leave a one-line link to it where the idea is relevant. Do not restate or paraphrase it across documents.
@@ -31,10 +31,30 @@ Work that is not about capabilities themselves (SMP, FP/SIMD, USB, input, audio,
 | `<area>-implementation-plan.md` | Only open tasks, in order, as checkboxes | `capabilities-implementation-plan.md` |
 | `<area>-completed.md` | One-line markers of finished tasks | `capabilities-completed.md` |
 
-- Some areas use other names or extra background files for historical reasons (scheduling keeps `capability-scheduler-design.md`, `capabilities-scheduling.md` and `capabilities-time.md` as background). Follow what an area already has; do not rename its files unprompted.
+- Some areas use other names or extra background files for historical reasons (see the index). Follow what an area already has; do not rename its files unprompted.
 - A new area gets the files it needs when the maintainer starts it, and the capabilities plan gets a one-line pointer to its plan.
 - Each fact has one home. An area document links to the capabilities contract for capability semantics (kinds, keys, rights, badges, invocation ABI, lifecycle) and does not restate them. The capabilities contract keeps no pointer sections or summaries of an area; a capability rule that refers to an area rule links to the area design inline.
 - **The capabilities contract is shrinking, aggressively.** Material in it that is not about capabilities themselves moves to the matching area design, one section at a time as the maintainer selects it, each move its own change: move the text without loss of rules, leave no stub heading or pointer behind, point every inbound link (in all documents) at the new home, drop the topic's row from the decision register, and move the related open questions (with their Future work ideas) and completed markers into the area's decisions and completed files. Do not move sections the maintainer has not selected, and never add new non-capability sections to the contract.
+
+### Document index
+
+Every document in `doc/agentic/` belongs to one row. **Keep this table current:** a change that adds, renames, splits, merges or removes a document or an area in `doc/agentic/`, or moves a topic from one area to another, updates this table (and the "Covers" column) in the same change. A file in `doc/agentic/` that no row names is a defect; add it to its row before continuing.
+
+| Area (prefix) | Covers | Files |
+|---|---|---|
+| `capabilities` | Capability semantics: kinds and IDs, keys, rights, badges, invocation ABI, Retype, lifecycle, IPC and PPC, IRQ delivery, Thread and AddressSpace | `-contract`, `-decisions`, `-implementation-plan`, `-completed`; background `-design` (rationale), `-research` (prior art) |
+| `memory` | Mapping identity, PageTable and Frame installation, rights and W^X, memory attributes, cache maintenance, physical aliases, ASIDs, Activate, translation installation, fbufs and MappedSlice | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
+| `scheduling` | Time, the root and child Schedulers, Thread configuration and start, scheduler-shared records, userspace scheduling policy | `-design`, `-decisions`, `-implementation-plan`, `-completed`; background `capability-scheduler-design.md`, `capabilities-scheduling.md`, `capabilities-time.md` |
+| `components` | Meddle interfaces and imports, Kickstart's wiring (device memory, mailbox, PCI, data areas, channels), the shell, component loading, driver components | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
+| `smp` | Secondary cores, the kernel lock, per-core state, IPIs | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
+| `simd` | FP/SIMD per AddressSpace (the architectural-state rules are still in the capabilities contract) | `-design`, `-implementation-plan`, `-completed` |
+| `usb` | USB host controllers and the USB stack | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
+| `input` | Input devices and events | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
+| `audio` | Audio output (PWM jack, DMA, `cprman` clocks), mixing and synthesis | `-design`, `-implementation-plan`, `-completed`; background `audio-profiling.md` |
+| `logging` | The log server: several components sharing one PL011 | `-design`, `-implementation-plan`, `-completed` |
+| `ui-compositor` | The compositor, windows and surfaces | `-design`, `-implementation-plan`, `-completed`; `multi-display-design.md` (several outputs) |
+| Background only | Prior art and shelved designs; no rules, tasks or decisions | `irq-controller-placement.md`, `future-libmmio-design.md`, `brands-history.md` |
+| Maintainer notes | `questions.md`: the maintainer's scratch notes; read, never edit unprompted | `questions.md` |
 
 ## Standing practices
 
@@ -84,7 +104,7 @@ Check the documents' decision status and dependencies for the selected item:
 - **D3:** ownership and lifetime.
 - **D4:** authority, badges, and bootstrap.
 - **D5:** scheduler-shared records (rules in `scheduling-design.md`, open questions in `scheduling-decisions.md`).
-- **D6:** memory and ASID management.
+- **D6:** memory and ASID management (mapping, ASID and fbuf rules in `memory-design.md`, open questions in `memory-decisions.md`).
 - **D7:** IPC and blocking.
 - **D8:** time (rules in `scheduling-design.md`, open questions in `scheduling-decisions.md`).
 - **D9:** ABI evolution.
@@ -115,7 +135,7 @@ Respect the plan's ordering and explicit prerequisites:
 2. Shared ABI and host-testability.
 3. Active console/syscall boundary.
 4. Guarded capability storage and thread lifetime.
-5. Memory vertical slice.
+5. Memory vertical slice (rules in `memory-design.md`, tasks split between Phase 5 and `memory-implementation-plan.md`).
 6. Deferred completion first, then notifications/event counts and PPC Invocation.
 7. Time and userspace scheduling (tracked in `doc/agentic/scheduling-implementation-plan.md`, rules in `scheduling-design.md`).
 8. Final integration and documentation audit.

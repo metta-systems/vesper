@@ -1,3 +1,32 @@
+- Image size per board set: an rpi4+rpi5 image still carries every driver, including the RPi3 interrupt controller.
+- Devicetree pointer: the kernel entry still takes it as a 32-bit value. That's fine while the firmware puts the tree below 4 GB.
+
+---
+
+Still needed for sound on the Pi 4:
+- gpio needs brcm,bcm2711-gpio.
+- cprman needs brcm,bcm2711-cprman.
++ The jack needs a pwm1 overlay.
+
+write meddle format document, updated vs the old one
+
+stop doing this:
+# The spi component imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked and its trace goes to semihosting.
+interfaces = ["../../../userspace/log-server/interfaces"]
+that's what include paths are for...
+
+Still open from SPI work:
+- Chip-select ownership: any spi_v1 client can address any chip select on the bus.
+- DMA for pixels: each 4 KiB chunk is one polled call, and a full frame takes 47–120 ms.
+- Programs owning GPIO pins: should a program without a node be able to own pins, for example through its manifest entry?
+
+---
+
+- add `cargo mutants` support for kernel tests??
+
+---
+
 Next is the read-only filesystem over `block_v1`: should it be exFAT or ext4?
 (Can fit entire WAD into the bootimage for now as `[[resource]]`)
 
