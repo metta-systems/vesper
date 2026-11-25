@@ -6,6 +6,10 @@
 # mailbox link, and power_v1 and fb_v1 through the nodes found by their
 # compatible strings, all starting from a `compatible` step.
 
+# The fb component imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked and its trace goes to semihosting.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
 [[driver]]
 name = "mailbox"
 binary = "mailbox"

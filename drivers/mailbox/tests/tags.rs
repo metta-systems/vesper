@@ -20,6 +20,9 @@ mod tests {
         assert_eq!(check_request(&request(tag::GET_ARM_MEMORY, 2)), Ok(()));
         assert_eq!(check_request(&request(tag::SET_PHYSICAL_SIZE, 2)), Ok(()));
         assert_eq!(check_request(&request(tag::NOTIFY_XHCI_RESET, 1)), Ok(()));
+        // The display's EDID, which the fb component reads for its modes.
+        assert_eq!(tag::GET_EDID_BLOCK, 0x0003_0020);
+        assert_eq!(check_request(&request(tag::GET_EDID_BLOCK, 34)), Ok(()));
         // No tags at all: header, end tag, padding.
         assert_eq!(check_request(&[12, 0, 0]), Ok(()));
     }

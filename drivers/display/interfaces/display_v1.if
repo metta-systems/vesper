@@ -74,7 +74,10 @@ local interface display_v1
         raises (not_present);
 
     ## Mode `index`: its size in pixels, format and refresh rate in millihertz
-    ## (0 when unknown).
+    ## (0 when unknown). The mailbox framebuffer's modes are the sizes its
+    ## display's EDID names, at the refresh the EDID gives each; switching
+    ## sets the framebuffer's size only, and the display's signal timing stays
+    ## the firmware's.
     mode(card32 index)
         returns (card32 width, card32 height, format format, card32 refresh_mhz)
         raises (not_present, no_mode);
@@ -86,10 +89,12 @@ local interface display_v1
         raises (not_present);
 
     ## Switch to mode `index` and return it as `get_mode` does; advances the
-    ## generation when the mode changes.
+    ## generation when the mode changes. A scanout output whose memory was
+    ## handed out already keeps its mode (`already_handed_out`): the new mode
+    ## would need memory the holder's Frames do not cover.
     set_mode(card32 index)
         returns (card32 width, card32 height, card32 pitch, format format)
-        raises (not_present, no_mode, failed);
+        raises (not_present, no_mode, already_handed_out, failed);
 
     ## A scanout output: install the Frames of its memory in the lent table,
     ## at consecutive slots from `first_slot` in address order, and return how

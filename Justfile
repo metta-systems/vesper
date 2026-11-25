@@ -292,6 +292,12 @@ _build-sdhci-test board=boards: (_build-components board 'qemu' test_kernel_feat
 # Build the spi-test e2e kernel (the spi component on SPI0 and a probe driver for the panel node on it)
 _build-spi-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'spi-test' board)
 
+# Build display-test's programs: its display_v1 probe and the log server, for the image configuration `board` + `image_features`; only display-test bundles the probe, so it is not in `user_components`
+_build-display-probe board=boards features='qemu' image_features=features: (_cross-build 'display-test-probe log-server' board user_link features '' image_features)
+
+# Build the display-test e2e kernel (the PL011, the log server, the mailbox and fb components, and a probe program calling fb through display_v1)
+_build-display-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-display-probe board 'qemu' test_kernel_features) (_build-test-kernel 'display-test' board)
+
 # Build the compositor-test e2e kernel (the DWC2 component, the PL011 driver, the USB core, the HID component and the compositor)
 _build-compositor-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'compositor-test' board)
 
@@ -410,6 +416,14 @@ _build-panel-test-hw board=boards features='': (_build-components board '' featu
 [group("hw")]
 boot-panel-test features='': (_build-panel-test-hw boards features) chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'panel-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
+
+# Build display-test for the boards (no QEMU, no semihosting): the mailbox and fb components and the display_v1 probe, its lines on the UART through the log server
+_build-display-test-hw board=boards features='': (_build-components board '' features) (_build-display-probe board '' features) (_build-test-kernel 'display-test' board features)
+
+# Build display-test and boot it via chainofcommand on a Raspberry Pi with an HDMI display attached; `just boot-display-test debug_kernel` builds a debug kernel. The UART shows `display-probe:` lines: the display's size in millimetres and every mode its EDID names (the fb component configures mode 0 at start), then the checks; a display with no usable EDID shows the one fallback mode, 1024x768, at 0x0 mm
+[group("hw")]
+boot-display-test features='': (_build-display-test-hw boards features) chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'display-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
 
 # Build fp-bench and boot it via chainofcommand on a Raspberry Pi 4 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-fp-bench`); `just boot-fp-bench fp_entry_trap` builds the second profile, with the nucleus's kernel-entry FP guard. The UART shows, for Doom's vertex projection over E1M1 with nothing, a Signal, a Call into an integer-only component and a Call into an FP component per 16-vertex chunk, the fastest and slowest of five runs and what one call adds, then the benchmark Thread's FP counters and the nucleus's FP totals
 [group("hw")]
@@ -718,7 +732,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-spi _test-board _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-display _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-spi _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -782,6 +796,9 @@ _test-mailbox: (_run-test-kernel 'mailbox-test' '_build-mailbox-test')
 
 # Boot mailbox-test on the Raspberry Pi 4 machine: the mailbox page is an ordinary device page there
 _test-mailbox-rpi4: (_run-test-kernel 'mailbox-test' '_build-mailbox-test' 'rpi4')
+
+# Boot display-test: the fb component reads the display's EDID (QEMU gives none: its one fallback mode), configures its first mode at start and serves display_v1 as a scanout output to a probe that checks its description, modes and refusals
+_test-display: (_run-test-kernel 'display-test' '_build-display-test')
 
 # Boot uart-test: the PL011 driver component's two Threads serve a client's transmit and receive IO channels in loopback by interrupts
 _test-uart: (_run-test-kernel 'uart-test' '_build-uart-test')
@@ -1211,7 +1228,7 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'vesper-pci' 'pci') (_host-test 'pcie-brcmstb' 'pcie') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'vesper-device-driver' 'carving') (_host-test 'vesper-device-driver' 'pins') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'spi-bcm2835' 'spi') (_host-test 'panel-ili9341' 'panel') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics') (_host-test 'vesper-stacktrace' 'stacktrace') (_host-test 'vesper-cpu' 'cache')
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'vesper-pci' 'pci') (_host-test 'pcie-brcmstb' 'pcie') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'vesper-device-driver' 'carving') (_host-test 'vesper-device-driver' 'pins') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'spi-bcm2835' 'spi') (_host-test 'panel-ili9341' 'panel') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'fb-impl' 'edid') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics') (_host-test 'vesper-stacktrace' 'stacktrace') (_host-test 'vesper-cpu' 'cache')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
@@ -1264,8 +1281,8 @@ _cross-clippy board=boards features='':
       --workspace --exclude=chainofcommand --exclude=makesd --exclude=fp-scan --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim --exclude=wad-music \
       -- --deny warnings --allow deprecated
 
-# The images the workspace clippy's build scripts embed (the kernel, the components, log-test's, panel-test's and midi-test's programs, Wood)
-_clippy-artifacts: (build boards 'qemu') (_build-components boards 'qemu') (_build-log-probe boards 'qemu') (_build-panel-probe boards 'qemu') (_build-midi-player boards 'qemu') (_build-wood boards 'qemu')
+# The images the workspace clippy's build scripts embed (the kernel, the components, log-test's, panel-test's, display-test's and midi-test's programs, Wood)
+_clippy-artifacts: (build boards 'qemu') (_build-components boards 'qemu') (_build-log-probe boards 'qemu') (_build-panel-probe boards 'qemu') (_build-display-probe boards 'qemu') (_build-midi-player boards 'qemu') (_build-wood boards 'qemu')
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]
@@ -1295,7 +1312,7 @@ _host-clippy package test features='host-tests': _firmware
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'vesper-device-driver' 'carving') (_host-clippy 'vesper-device-driver' 'pins') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'spi-bcm2835' 'spi') (_host-clippy 'panel-ili9341' 'panel') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics') (_host-clippy 'vesper-stacktrace' 'stacktrace') (_host-clippy 'vesper-cpu' 'cache')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'vesper-device-driver' 'carving') (_host-clippy 'vesper-device-driver' 'pins') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'spi-bcm2835' 'spi') (_host-clippy 'panel-ili9341' 'panel') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'fb-impl' 'edid') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics') (_host-clippy 'vesper-stacktrace' 'stacktrace') (_host-clippy 'vesper-cpu' 'cache')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')

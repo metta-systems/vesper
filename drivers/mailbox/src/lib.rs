@@ -37,6 +37,12 @@ pub mod tag {
     pub const GET_TEMPERATURE: u32 = 0x0003_0006;
     pub const GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
     pub const GET_MAX_TEMPERATURE: u32 = 0x0003_000a;
+    /// One 128-byte EDID block of the attached HDMI/DVI display (request: the
+    /// block number; answer: the block number, a status and the block; "keep
+    /// requesting blocks (starting from 0) until the status returned is
+    /// non-zero", the firmware wiki's Mailbox property interface, "Get EDID
+    /// block").
+    pub const GET_EDID_BLOCK: u32 = 0x0003_0020;
 
     /// Display configuration: allocating and releasing the framebuffer (in
     /// `VideoCore` memory the firmware owns), and its geometry.
@@ -111,6 +117,7 @@ const ALLOWED: &[u32] = &[
     tag::GET_TEMPERATURE,
     tag::GET_MIN_CLOCK_RATE,
     tag::GET_MAX_TEMPERATURE,
+    tag::GET_EDID_BLOCK,
     tag::ALLOCATE_BUFFER,
     tag::RELEASE_BUFFER,
     tag::BLANK_SCREEN,

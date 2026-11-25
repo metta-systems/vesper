@@ -190,16 +190,33 @@ exceptions there take precedence over this sketch.
 - **The fb driver** exports `display_v1` next to `fb_v1`, over the same
   framebuffer.
   - `scanout` is true, `rotations` is only `r0`, and `flush` returns at once.
-  - Modes come from the EDID (D2), read through the mailbox's EDID block tag
-    (0x00030020): the preferred detailed timing first, then the other timings
-    the firmware can set. The EDID's image size also gives `width_mm` and
-    `height_mm`. Without an EDID, the list is one default mode, 1024×768, with
-    0 mm.
-  - At start, the fb driver configures its preferred mode itself, so the
-    compositor no longer calls `fb_v1.configure`. `set_mode` reconfigures the
-    framebuffer through the firmware, and the compositor takes the new `frames`.
-  - A source for the EDID layout (VESA E-EDID, the detailed timing descriptor
-    and its image size bytes) is cited before that code is written.
+  - Modes come from the EDID (D2), read through the mailbox's `Get EDID block`
+    tag (0x00030020, firmware wiki "Mailbox property interface"). The parser
+    is `drivers/fb/src/edid.rs`, after Wikipedia's summary of VESA E-EDID 1.4,
+    since the standard itself isn't public. It lists the progressive detailed
+    timings (the first is the preferred one), then the standard timings, each
+    size once.
+    - The established timings aren't read: the source doesn't give their table.
+    - The image size comes from the preferred timing's millimetres, else the
+      screen's centimetres. A timing size of exactly 255×255 mm counts as "no
+      size" (maintainer decision, 2026-11-25): the board's 1024×600 panel,
+      about 165×95 mm, says 255×255 mm there and 18×13 cm in its screen size
+      bytes.
+    - Without a valid EDID there is one mode, 1024×768, with 0 mm. QEMU answers
+      the tag with a block that isn't valid, so display-test runs on this
+      fallback.
+  - At start, the fb driver configures the first mode the firmware accepts.
+    `set_mode` reconfigures the framebuffer only while its memory has not been
+    handed out; after that it raises `already_handed_out`, because a new mode
+    would need memory the holder's Frames don't cover. Giving the memory back
+    (revoking the old Frames) would lift this, and is out of scope here.
+  - Only the framebuffer's size changes. The HDMI signal's timing stays
+    whatever the firmware set it to (config.txt).
+  - `fb_v1` remains, and the compositor still calls `fb_v1.configure(1024, 768,
+    32)` until slice 4 moves it to `display_v1`.
+  - The fb driver's calls wait until it has configured its first mode at
+    start: a client's call can arrive before that (display-test hit this
+    race).
 - **Generation and EventCount.** A provider advances an EventCount whenever the
   generation changes. How that EventCount reaches the compositor is D3. Neither
   provider changes on its own today: there's no HDMI plug source and the panel
