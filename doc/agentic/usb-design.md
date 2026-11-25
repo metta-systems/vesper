@@ -167,7 +167,7 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   the caller lends and returns their values in the data area. Holding a key is the right
   to use the pipe, so `usb-core` can hand a pipe to `hid` by installing a narrowed copy in
   `hid`'s table. The mechanism is in the
-  [contract](capabilities-contract.md#component-interfaces-and-imports).
+  [components design](components-design.md#component-interfaces-and-imports).
 - `drivers/usb-hcd-dwc2/interfaces/usb_hcd_v1.if`: `reset_port`, `port_status`,
   `address_device`, `release_device`, `mark_hub`, `open_pipe`, `trace`. Parameters
   are controller-neutral. The controller assigns addresses (X2a, interface answered
@@ -317,6 +317,6 @@ No candidate found covers DWC2 host mode and the HID host class in no_std Rust.
 
 ## Related
 
-- `doc/agentic/capabilities-contract.md`: PPC, xbufs and EventCounts.
+- `doc/agentic/capabilities-contract.md`: PPC and EventCounts; `doc/agentic/components-design.md`: xbufs.
 - `drivers/mailbox/interfaces/mailbox_v1.if`: the reference for `data`, `octet&`
   and prototype interfaces.
