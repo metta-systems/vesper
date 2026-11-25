@@ -91,13 +91,13 @@ use {
     libdevice_driver::{
         DATA_WINDOW_VA, DEVICE_TREE_VA, DEVICE_WINDOW_VA, DeviceBlock, DevicePage, DispatchInit,
         DriverInit, ExportedArea, FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_PAGES, INIT_VA,
-        Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_DEVICE_TREE_BYTES, MAX_DISPATCHED_THREADS,
-        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PCI_CHILDREN, MAX_PINS, MAX_REGIONS,
-        MAX_RESETS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN,
-        MapWindow, NO_BUS_ADDRESS, NO_PULL, NODE_PATH_BYTES, NONE_INDEX, PAGE_FRAME, PAGE_UNTYPED,
-        PCI_SPACE_IO, PCI_SPACE_MEMORY32, PCI_SPACE_MEMORY64, PciChild, PciHost, PciWindow, PinSet,
-        PinSetting, Priority, RESET_NAME_BYTES, Region, Reset, ResourceRecord, STACK_REGION,
-        StackSpan,
+        Interrupt, LAYOUT_BADGE, MAX_AREAS, MAX_DEVICE_PAGES, MAX_DEVICE_TREE_BYTES,
+        MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PCI_CHILDREN,
+        MAX_PINS, MAX_REGIONS, MAX_RESETS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, MAX_WINDOW_BLOCKS,
+        MSI_CONTROLLER, MSI_OWN, MapWindow, NO_BUS_ADDRESS, NO_PULL, NODE_PATH_BYTES, NONE_INDEX,
+        PAGE_FRAME, PAGE_UNTYPED, PCI_SPACE_IO, PCI_SPACE_MEMORY32, PCI_SPACE_MEMORY64, PciChild,
+        PciHost, PciWindow, PinSet, PinSetting, Priority, RESET_NAME_BYTES, Region, Reset,
+        ResourceRecord, STACK_REGION, StackSpan,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
@@ -1994,6 +1994,13 @@ pub fn load_drivers(
                         .zip(controller)
                         .map_or(0, |(node, controller)| gpio_pins(tree, node, controller));
                     PinSet::from_mask(pins).badge()
+                } else if area_base != 0
+                    && client_instance.driver.layout
+                    && import.interface == SURFACE_INTERFACE
+                {
+                    // A client with `layout = true` may arrange the
+                    // compositor's outputs: its compositor_v1 keys say so.
+                    area_base | LAYOUT_BADGE
                 } else {
                     area_base
                 };

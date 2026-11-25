@@ -1,0 +1,8 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The compositor's layout: `display_layout` installs the keys of
+# display_layout_v1 in the client's table; `pixel_order` says the compositor
+# is serving.
+uses compositor_v1 via component compositor { pixel_order, display_layout }

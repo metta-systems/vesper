@@ -122,4 +122,15 @@ local interface compositor_v1
     snapshot(octet& stage)
         returns (card32 length)
         raises (not_permitted);
+
+    ## Install the keys of `display_layout_v1`, one per function in declaration
+    ## order, in the lent table `into` at `first_slot` and the slots after it,
+    ## badged as the caller's own key. Their wire keys are written to the data
+    ## area as 64-bit values from offset 0, because a slot's incarnation is not
+    ## predictable. The slots must be vacant, else the call raises
+    ## `not_permitted`. Through them any client reads the layout; only one whose
+    ## manifest entry says `layout = true` arranges it.
+    display_layout(card32 first_slot) lends (key_table into)
+        installs (display_layout_v1)
+        raises (not_permitted);
 }

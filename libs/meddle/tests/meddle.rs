@@ -1029,10 +1029,6 @@ mod tests {
                 "they share one area",
             ),
             (
-                "local interface b_v1 { badged; f(); }",
-                "they share one area",
-            ),
-            (
                 "local interface b_v1 { data 4096; badged; }",
                 "has no functions to install",
             ),
@@ -1043,6 +1039,15 @@ mod tests {
                 "{installed}: expected {expected:?}, got {messages:?}"
             );
         }
+        // An installed interface without a data area references nothing, so
+        // it needs none of its own (`display_layout_v1`).
+        let arealess = check_messages_with(INSTALLING, &["local interface b_v1 { badged; f(); }"]);
+        assert!(
+            !arealess
+                .iter()
+                .any(|message| message.contains("they share one area")),
+            "{arealess:?}"
+        );
     }
 
     #[test]

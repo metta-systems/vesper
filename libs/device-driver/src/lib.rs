@@ -180,6 +180,13 @@ pub const DATA_WINDOW_VA: u64 = 0x3a00_0000;
 /// Most data areas an exporting driver serves: one per client instance.
 pub const MAX_AREAS: usize = 16;
 
+/// The badge bit of a client allowed to arrange the compositor's outputs
+/// (`layout = true` on its manifest entry): Kickstart sets it on that client's
+/// `compositor_v1` keys, above the base of the client's area. The base is
+/// page-aligned, so the bit never collides with it, and
+/// [`DriverInit::area_for_badge`] ignores it.
+pub const LAYOUT_BADGE: u64 = 1;
+
 /// The 2 MiB span where Kickstart maps a read-only copy of the device tree
 /// into a component whose manifest entry says `device_tree = true`
 /// (`DriverInit::device_tree`): the component reads its own node's
@@ -1009,14 +1016,16 @@ impl DriverInit {
     /// The client whose Invocation key carries `badge`, with the position of its
     /// area in [`areas`](Self::areas): Kickstart badges each client's keys with the
     /// base of the area it shares with the exporter, so a function that receives
-    /// the badge of the key it was called through knows its caller.
+    /// the badge of the key it was called through knows its caller. The
+    /// [`LAYOUT_BADGE`] bit, which says what the caller may do, is ignored.
     pub fn area_for_badge(&self, badge: u64) -> Option<(usize, ExportedArea)> {
-        if badge == 0 {
+        let base = badge & !LAYOUT_BADGE;
+        if base == 0 {
             return None;
         }
         self.areas()
             .iter()
-            .position(|area| area.base == badge)
+            .position(|area| area.base == base)
             .map(|index| (index, self.areas[index]))
     }
 

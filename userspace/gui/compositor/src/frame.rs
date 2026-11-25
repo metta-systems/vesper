@@ -23,9 +23,9 @@ use {
         Bindings as DisplayBindings, Client as DisplayClient, Error as DisplayError,
     },
     libcompositor_core::{
-        blit::{Canvas, Format, Layer, compose, present},
+        blit::{Canvas, Format, Layer, compose, present_turned},
         damage::Damage,
-        layout::MAX_OUTPUTS,
+        layout::{MAX_OUTPUTS, native_rect},
         windows::Rect,
     },
     libdevice_driver::SURFACE_SLOTS,
@@ -186,13 +186,17 @@ fn draw(snapshot: &Snapshot) {
             &layers[..snapshot.layer_count],
             Some(snapshot.cursor),
         );
-        present(
+        // An output that cannot turn itself stands upright: the compositor
+        // turns the pixels on their way (M5).
+        present_turned(
             &canvas,
             snapshot.canvas,
             output,
             pitch,
             display.format,
             rect,
+            display.software_turns,
+            display.native,
         );
     }
 }
@@ -321,10 +325,16 @@ fn presenter(index: usize) -> ! {
             continue;
         };
         for rect in snapshot.damage.rects() {
-            let (Ok(x), Ok(y)) = (u32::try_from(rect.x), u32::try_from(rect.y)) else {
+            // The output's own rectangle, where the compositor turns it.
+            let sent = native_rect(
+                *rect,
+                snapshot.display.software_turns,
+                snapshot.display.native,
+            );
+            let (Ok(x), Ok(y)) = (u32::try_from(sent.x), u32::try_from(sent.y)) else {
                 continue;
             };
-            if let Err(error) = client.flush(x, y, rect.width, rect.height, screen) {
+            if let Err(error) = client.flush(x, y, sent.width, sent.height, screen) {
                 // The glass is as it was there: count the failure for the
                 // input Thread to report, and send the rectangle again with
                 // the next batch.

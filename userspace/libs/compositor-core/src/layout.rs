@@ -10,6 +10,64 @@ use crate::windows::Rect;
 /// Outputs the compositor drives at once.
 pub const MAX_OUTPUTS: usize = 2;
 
+/// The size of an output of `width` by `height` after `turns` clockwise
+/// quarter turns: an odd number swaps them.
+#[must_use]
+pub const fn turned_size((width, height): (u32, u32), turns: u8) -> (u32, u32) {
+    if turns % 2 == 1 {
+        (height, width)
+    } else {
+        (width, height)
+    }
+}
+
+/// Where the pixel (`x`, `y`) of a viewport turned by `turns` clockwise
+/// quarter turns lies in the output's own memory, `native` pixels wide and
+/// high as the output stands unturned. A clockwise turn puts the viewport's
+/// top edge on the output's right edge, so its top left pixel at the top right.
+#[must_use]
+pub const fn native_point(
+    (x, y): (u32, u32),
+    turns: u8,
+    (native_width, native_height): (u32, u32),
+) -> (u32, u32) {
+    match turns % 4 {
+        1 => (native_width - 1 - y, x),
+        2 => (native_width - 1 - x, native_height - 1 - y),
+        3 => (y, native_height - 1 - x),
+        _ => (x, y),
+    }
+}
+
+/// The rectangle of the output's own memory that `rect`, a rectangle of a
+/// viewport turned by `turns` (see [`native_point`]), covers. `rect` lies
+/// inside the viewport.
+#[must_use]
+pub const fn native_rect(rect: Rect, turns: u8, (native_width, native_height): (u32, u32)) -> Rect {
+    let (x, y) = (rect.x.unsigned_abs(), rect.y.unsigned_abs());
+    let (left, top, width, height) = match turns % 4 {
+        1 => (native_width - y - rect.height, x, rect.height, rect.width),
+        2 => (
+            native_width - x - rect.width,
+            native_height - y - rect.height,
+            rect.width,
+            rect.height,
+        ),
+        3 => (y, native_height - x - rect.width, rect.height, rect.width),
+        _ => (x, y, rect.width, rect.height),
+    };
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "inside an output, far below i32::MAX"
+    )]
+    Rect {
+        x: left as i32,
+        y: top as i32,
+        width,
+        height,
+    }
+}
+
 /// The viewport of each output, by the output's index; `None` where there is
 /// no output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +154,31 @@ impl Layout {
         self.viewports()
             .find(|(_index, viewport)| viewport.contains(x, y))
             .map(|(index, _viewport)| index)
+    }
+
+    /// Whether `viewport`, as output `index`'s, would overlap another output's
+    /// viewport. Touching edges do not overlap.
+    #[must_use]
+    pub fn overlaps(&self, index: usize, viewport: &Rect) -> bool {
+        self.viewports()
+            .any(|(other, rect)| other != index && rect.intersect(viewport).is_some())
+    }
+
+    /// The output that shows most of the desktop rectangle `rect`; the first
+    /// of equals. None when no output shows any of it.
+    #[must_use]
+    pub fn output_of(&self, rect: &Rect) -> Option<usize> {
+        let mut best: Option<(usize, u64)> = None;
+        for (index, viewport) in self.viewports() {
+            let Some(shown) = viewport.intersect(rect) else {
+                continue;
+            };
+            let area = u64::from(shown.width) * u64::from(shown.height);
+            if best.is_none_or(|(_index, most)| area > most) {
+                best = Some((index, area));
+            }
+        }
+        best.map(|(index, _area)| index)
     }
 
     /// The part of the desktop rectangle `rect` that output `index` shows, in

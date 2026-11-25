@@ -11,6 +11,7 @@
 //! has one producer at a time.
 
 use {
+    compositor_server::display_layout_v1,
     core::cell::UnsafeCell,
     libcompositor_core::{
         blit::Format,
@@ -22,7 +23,7 @@ use {
         windows::{Rect, Window},
     },
     libdevice_driver::{
-        DriverInit, INIT_VA, MAX_AREAS, SURFACE_SLOTS, Turn, Turnstile, driver_init,
+        DriverInit, INIT_VA, MAX_AREAS, Masters, SURFACE_SLOTS, Turn, Turnstile, driver_init,
     },
     libframebuffer::Framebuffer,
     libgraphics::PixelOrder,
@@ -44,10 +45,12 @@ pub enum Memory {
     Flush { base: u64, len: u64, pitch: usize },
 }
 
-/// One output the compositor drives: `display_v1` import instance `instance`.
+/// One output the compositor drives: `display_v1` import instance `instance`,
+/// which is also the output's id in `display_layout_v1`.
 #[derive(Clone, Copy, Debug)]
 pub struct Display {
     pub instance: usize,
+    /// The viewport's size: the output's, turned.
     pub width: u32,
     pub height: u32,
     pub format: Format,
@@ -55,6 +58,28 @@ pub struct Display {
     /// Where the output's back buffer is mapped: `width * height` pixels in
     /// the canvas format, in the compositor's own memory.
     pub back_buffer: u64,
+    /// The output's size standing upright, before any turn.
+    pub upright: (u32, u32),
+    /// The size of the output's memory as the output itself is turned now:
+    /// what `present` converts into.
+    pub native: (u32, u32),
+    /// Clockwise quarter turns the output applies itself (`display_v1.rotate`).
+    pub hardware_turns: u8,
+    /// Quarter turns the compositor applies while drawing, on top of those.
+    pub software_turns: u8,
+    /// The turns the output can apply itself: bit `n` for `n` quarter turns.
+    pub rotations: u32,
+    /// Its physical size upright, in millimetres (0 when unknown).
+    pub width_mm: u32,
+    pub height_mm: u32,
+}
+
+impl Display {
+    /// The output's turn, whoever applies it, in quarter turns clockwise.
+    #[must_use]
+    pub const fn turns(&self) -> u8 {
+        (self.hardware_turns + self.software_turns) % 4
+    }
 }
 
 /// A window's surface: memory the compositor owns and has mapped.
@@ -104,7 +129,15 @@ pub struct State {
     /// What each client's event channel lost, by the client's position among
     /// the areas.
     pub outboxes: [Outbox; MAX_AREAS],
+    /// The layout's generation: it changes whenever an output moves or turns.
+    pub layout_generation: u32,
+    /// The masters of the `display_layout_v1` keys `display_layout` installs;
+    /// none in an image where the compositor has no export pool.
+    pub layout_masters: Option<LayoutMasters>,
 }
+
+/// The masters of the `display_layout_v1` keys.
+pub type LayoutMasters = Masters<{ display_layout_v1::FUNCTION_COUNT }>;
 
 impl State {
     /// The state for `displays`, arranged by `layout`, drawing in `canvas`
@@ -114,6 +147,7 @@ impl State {
         layout: Layout,
         canvas: Format,
         next_table_slot: u32,
+        layout_masters: Option<LayoutMasters>,
     ) -> Self {
         let router = Router::with_layout(layout);
         let cursor = router.pointer();
@@ -127,6 +161,8 @@ impl State {
             canvas,
             cursor,
             outboxes: [Outbox::new(); MAX_AREAS],
+            layout_generation: 0,
+            layout_masters,
         };
         for (_index, viewport) in layout.viewports() {
             state.add_damage(viewport);
@@ -142,6 +178,23 @@ impl State {
             Format::Xbgr8888 => PixelOrder::Rgb,
             Format::Xrgb8888 | Format::Rgb565Be => PixelOrder::Bgr,
         }
+    }
+
+    /// Take `layout`, a change of the outputs' viewports: the desktop origin
+    /// moves to the output with the lowest x, then the lowest y (D6), the
+    /// windows and the pointer move with it, every output is drawn again and
+    /// the layout's generation changes.
+    pub fn apply_layout(&mut self, mut layout: Layout) {
+        let shift = layout.renormalize();
+        self.router.set_layout(layout, shift);
+        for damage in &mut self.damage {
+            damage.clear();
+        }
+        for (_index, viewport) in layout.viewports() {
+            self.add_damage(viewport);
+        }
+        self.cursor = self.router.pointer();
+        self.layout_generation = self.layout_generation.wrapping_add(1);
     }
 
     /// Damage `rect` of the desktop on every output that shows some of it.

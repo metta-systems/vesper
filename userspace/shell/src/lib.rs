@@ -4,13 +4,17 @@
 //! commands themselves, independent of the hardware so they run on the host
 //! as well.
 //!
-//! The commands (see [`HELP`]) are `help`, `led on`, `led off`, `draw` and
-//! `end`. They act through a [`Board`], which the EL0 program implements with
-//! calls into the mailbox and power components and the compositor, and print through a
+//! The commands (see [`HELP`]) are `help`, `led on`, `led off`, `draw`,
+//! `layout` (list, turn and move the compositor's outputs) and `end`. They act
+//! through a [`Board`], which the EL0 program implements with calls into the
+//! mailbox and power components and the compositor, and print through a
 //! [`Console`], which it implements on the serial channel.
 
 /// Longest command line, in bytes; more are ignored until the line ends.
 pub const LINE_BYTES: usize = 64;
+
+/// Outputs `layout` lists at most.
+pub const MAX_OUTPUTS: usize = 4;
 
 /// One parsed command line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,10 +25,60 @@ pub enum Command<'line> {
     LedOn,
     LedOff,
     Draw,
+    /// List the compositor's outputs
+    Layout,
+    /// Turn output `id` to `turns` clockwise quarter turns
+    LayoutTurn {
+        id: u32,
+        turns: u8,
+    },
+    /// Put output `id`'s top left corner at (`x`, `y`) of the desktop
+    LayoutMove {
+        id: u32,
+        x: i32,
+        y: i32,
+    },
     /// Leave the shell and reset the board
     End,
     /// A line that is no command, as typed (trimmed)
     Unknown(&'line [u8]),
+}
+
+/// One of the compositor's outputs, as `layout` lists it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Output {
+    pub id: u32,
+    /// Its viewport: the desktop rectangle it shows.
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    /// Clockwise quarter turns.
+    pub turns: u8,
+    /// Its physical size upright, in millimetres (0 when unknown).
+    pub width_mm: u32,
+    pub height_mm: u32,
+}
+
+/// The decimal number `word`, if it is one.
+fn number(word: &[u8]) -> Option<u32> {
+    core::str::from_utf8(word).ok()?.parse().ok()
+}
+
+/// The decimal number `word`, perhaps negative, if it is one.
+fn signed(word: &[u8]) -> Option<i32> {
+    core::str::from_utf8(word).ok()?.parse().ok()
+}
+
+/// The quarter turns of a turn in degrees: 0, 90, 180 or 270.
+fn quarter_turns(word: &[u8]) -> Option<u8> {
+    match word {
+        b"0" => Some(0),
+        b"90" => Some(1),
+        b"180" => Some(2),
+        b"270" => Some(3),
+        _ => None,
+    }
 }
 
 fn is_space(byte: u8) -> bool {
@@ -40,17 +94,36 @@ fn words(line: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// The command `line` names. Words are separated by any whitespace.
 pub fn parse(line: &[u8]) -> Command<'_> {
     let mut parts = words(line);
-    let (Some(first), second, third) = (parts.next(), parts.next(), parts.next()) else {
-        return Command::Empty;
-    };
-    match (first, second, third) {
-        (b"help", None, None) => Command::Help,
-        (b"led", Some(b"on"), None) => Command::LedOn,
-        (b"led", Some(b"off"), None) => Command::LedOff,
-        (b"draw", None, None) => Command::Draw,
-        (b"end", None, None) => Command::End,
-        _ => Command::Unknown(trim(line)),
+    let mut word = [&[][..]; 6];
+    let mut count = 0;
+    for (slot, part) in word.iter_mut().zip(&mut parts) {
+        *slot = part;
+        count += 1;
     }
+    if count == 0 {
+        return Command::Empty;
+    }
+    let unknown = Command::Unknown(trim(line));
+    if parts.next().is_some() {
+        return unknown;
+    }
+    let parsed = match &word[..count] {
+        [b"help"] => Some(Command::Help),
+        [b"led", b"on"] => Some(Command::LedOn),
+        [b"led", b"off"] => Some(Command::LedOff),
+        [b"draw"] => Some(Command::Draw),
+        [b"layout"] => Some(Command::Layout),
+        [b"layout", b"turn", id, degrees] => number(id)
+            .zip(quarter_turns(degrees))
+            .map(|(id, turns)| Command::LayoutTurn { id, turns }),
+        [b"layout", b"move", id, x, y] => match (number(id), signed(x), signed(y)) {
+            (Some(id), Some(x), Some(y)) => Some(Command::LayoutMove { id, x, y }),
+            _ => None,
+        },
+        [b"end"] => Some(Command::End),
+        _ => None,
+    };
+    parsed.unwrap_or(unknown)
 }
 
 /// `line` without leading and trailing whitespace.
@@ -165,6 +238,15 @@ pub trait Board {
 
     /// Paint the static graphics and start the lava blobs.
     fn draw(&mut self) -> Result<(), Failure>;
+
+    /// The compositor's outputs, into `into`; how many there are.
+    fn outputs(&mut self, into: &mut [Output; MAX_OUTPUTS]) -> Result<usize, Failure>;
+
+    /// Turn output `id` to `turns` clockwise quarter turns.
+    fn turn_output(&mut self, id: u32, turns: u8) -> Result<(), Failure>;
+
+    /// Put output `id`'s top left corner at (`x`, `y`) of the desktop.
+    fn move_output(&mut self, id: u32, x: i32, y: i32) -> Result<(), Failure>;
 }
 
 /// What a command asks of the shell loop.
@@ -181,6 +263,9 @@ pub const HELP: &[&str] = &[
     "  help          - print this help",
     "  led [on|off]  - change RPi LED status",
     "  draw          - draw some graphics and lava blobs on the display",
+    "  layout        - list the displays: id, place on the desktop, turn, size",
+    "  layout turn <id> <0|90|180|270> - turn display <id> clockwise",
+    "  layout move <id> <x> <y>        - put display <id>'s corner at <x>,<y>",
     "  end           - leave console and reset board",
 ];
 
@@ -203,6 +288,15 @@ pub fn execute(command: Command<'_>, console: &mut dyn Console, board: &mut dyn 
         Command::LedOn => report(console, "led on", board.set_led(true)),
         Command::LedOff => report(console, "led off", board.set_led(false)),
         Command::Draw => report(console, "draw", board.draw()),
+        Command::Layout => list_outputs(console, board),
+        Command::LayoutTurn { id, turns } => {
+            report(console, "layout turn", board.turn_output(id, turns));
+            list_outputs(console, board);
+        }
+        Command::LayoutMove { id, x, y } => {
+            report(console, "layout move", board.move_output(id, x, y));
+            list_outputs(console, board);
+        }
         Command::End => return Outcome::End,
         Command::Unknown(text) => {
             console.print("[!] Unknown command ");
@@ -214,6 +308,46 @@ pub fn execute(command: Command<'_>, console: &mut dyn Console, board: &mut dyn 
         }
     }
     Outcome::Continue
+}
+
+/// Print the compositor's outputs, a line each:
+/// `display 1: 240x320 at 1024,0, turned 90, 34x45 mm`.
+fn list_outputs(console: &mut dyn Console, board: &mut dyn Board) {
+    let mut outputs = [Output::default(); MAX_OUTPUTS];
+    let count = match board.outputs(&mut outputs) {
+        Ok(count) => count,
+        Err(failure) => {
+            report(console, "layout", Err(failure));
+            return;
+        }
+    };
+    for output in outputs.iter().take(count) {
+        console.print("display ");
+        print_number(console, u64::from(output.id));
+        console.print(": ");
+        print_number(console, u64::from(output.width));
+        console.print("x");
+        print_number(console, u64::from(output.height));
+        console.print(" at ");
+        print_signed(console, output.x);
+        console.print(",");
+        print_signed(console, output.y);
+        console.print(", turned ");
+        print_number(console, u64::from(output.turns) * 90);
+        console.print(", ");
+        print_number(console, u64::from(output.width_mm));
+        console.print("x");
+        print_number(console, u64::from(output.height_mm));
+        console.print(" mm\r\n");
+    }
+}
+
+/// Print `value` in decimal, with a minus sign when it is negative.
+fn print_signed(console: &mut dyn Console, value: i32) {
+    if value < 0 {
+        console.print("-");
+    }
+    print_number(console, u64::from(value.unsigned_abs()));
 }
 
 /// Print a failure of `what`; silent on success.

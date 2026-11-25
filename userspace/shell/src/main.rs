@@ -20,20 +20,44 @@ mod display;
 #[cfg(target_os = "vesper")]
 mod program {
     use {
-        compositor_client::compositor_v1::{
-            Bindings as CompositorBindings, Client as CompositorClient,
+        compositor_client::{
+            compositor_v1::{Bindings as CompositorBindings, Client as CompositorClient},
+            display_layout_v1::{
+                Bindings as LayoutBindings, Client as LayoutClient, Error as LayoutError,
+                Exception as LayoutException, Rotation,
+            },
         },
         libdevice_driver::{DriverInit, driver_init},
         libio_channel::{Consumer, IoRec, NoEvent, Packet, Producer},
-        libobject::{EventCountKey, RawKey},
+        libobject::{EventCountKey, KeyTableKey, RawKey},
         libserial_channel::{CONTROL_VA, DATA_AREA_VA, DATA_PAGES, SLOTS, SerialChannel},
         mailbox_client::mailbox_v1::{
             Bindings as MailboxBindings, Client as MailboxClient, Error as MailboxError,
             Exception as MailboxException,
         },
         power_client::power_v1::{Bindings as PowerBindings, Client as PowerClient},
-        shell::{Board, Console, Edit, Failure, LineEditor, Outcome, PROMPT, execute, parse},
+        shell::{
+            Board, Console, Edit, Failure, LineEditor, MAX_OUTPUTS, Outcome, Output, PROMPT,
+            execute, parse,
+        },
     };
+
+    /// Keys of `display_layout_v1`: one per function.
+    const LAYOUT_KEYS: usize = 7;
+
+    /// Where in the shell's table the layout keys go: past the table and the
+    /// copy slot `draw` takes from the first free slot.
+    const LAYOUT_SLOT_OFFSET: u32 = 2;
+
+    /// `Failure::status` of the layout's own refusals; `detail` says which.
+    const LAYOUT_REFUSED: u64 = 0x4000;
+    /// `detail` of a layout refusal: no such display, not allowed (the
+    /// shell's manifest entry lacks `layout = true`), it would overlap
+    /// another, or the display failed to turn.
+    const NO_OUTPUT: u64 = 1;
+    const LAYOUT_NOT_PERMITTED: u64 = 2;
+    const OVERLAPS: u64 = 3;
+    const TURN_FAILED: u64 = 4;
 
     libuser::entry!(main);
 
@@ -196,6 +220,8 @@ mod program {
     struct Services {
         mailbox: MailboxClient,
         compositor: CompositorClient,
+        /// The compositor's layout, once a `layout` command asked for it.
+        layout: Option<LayoutClient>,
         init: &'static DriverInit,
         /// Resets the board; under QEMU `end` exits it instead.
         #[cfg_attr(feature = "qemu", allow(dead_code))]
@@ -231,6 +257,80 @@ mod program {
         }
     }
 
+    fn layout_failure(error: LayoutError) -> Failure {
+        let refused = |detail| Failure {
+            status: LAYOUT_REFUSED,
+            detail,
+        };
+        match error {
+            LayoutError::Exception(LayoutException::NoOutput) => refused(NO_OUTPUT),
+            LayoutError::Exception(LayoutException::NotPermitted) => refused(LAYOUT_NOT_PERMITTED),
+            LayoutError::Exception(LayoutException::Overlaps) => refused(OVERLAPS),
+            LayoutError::Exception(LayoutException::Failed) => refused(TURN_FAILED),
+            LayoutError::Call { status, detail } => Failure {
+                status: CALL_REFUSED,
+                detail: status << 32 | detail[0] & 0xffff_ffff,
+            },
+            LayoutError::NotGranted => Failure {
+                status: NOT_GRANTED,
+                detail: 0,
+            },
+            LayoutError::Malformed | LayoutError::UnexpectedAnswer { .. } => Failure {
+                status: UNEXPECTED,
+                detail: 0,
+            },
+        }
+    }
+
+    const fn rotation(turns: u8) -> Rotation {
+        match turns % 4 {
+            1 => Rotation::R90,
+            2 => Rotation::R180,
+            3 => Rotation::R270,
+            _ => Rotation::R0,
+        }
+    }
+
+    const fn turns(rotation: Rotation) -> u8 {
+        match rotation {
+            Rotation::R0 => 0,
+            Rotation::R90 => 1,
+            Rotation::R180 => 2,
+            Rotation::R270 => 3,
+        }
+    }
+
+    impl Services {
+        /// The compositor's layout: the first time, ask the compositor to
+        /// install its keys in the shell's table, and read their wire keys
+        /// back from the data area.
+        fn layout(&mut self) -> Result<&LayoutClient, Failure> {
+            if self.layout.is_none() {
+                let not_granted = Failure {
+                    status: NOT_GRANTED,
+                    detail: 0,
+                };
+                let own = KeyTableKey::from_key(RawKey::from_wire(self.init.table));
+                let first_slot = u32::try_from(self.init.first_free_slot)
+                    .map_err(|_overflow| not_granted)?
+                    + LAYOUT_SLOT_OFFSET;
+                self.compositor
+                    .display_layout(&own, first_slot)
+                    .map_err(|_error| not_granted)?;
+                let area = self.compositor.data_area().ok_or(not_granted)?;
+                let mut keys = [0_u64; LAYOUT_KEYS];
+                if !area.read_u64s(0, &mut keys) {
+                    return Err(not_granted);
+                }
+                self.layout = LayoutBindings::from_installed(&keys, None).map(LayoutClient::new);
+            }
+            self.layout.as_ref().ok_or(Failure {
+                status: NOT_GRANTED,
+                detail: 0,
+            })
+        }
+    }
+
     impl Board for Services {
         fn set_led(&mut self, on: bool) -> Result<(), Failure> {
             self.mailbox.set_led(on).map_err(mailbox_failure)
@@ -238,6 +338,41 @@ mod program {
 
         fn draw(&mut self) -> Result<(), Failure> {
             crate::display::draw(self.init, &self.compositor)
+        }
+
+        fn outputs(&mut self, into: &mut [Output; MAX_OUTPUTS]) -> Result<usize, Failure> {
+            let layout = self.layout()?;
+            let count = usize::try_from(layout.count().map_err(layout_failure)?)
+                .unwrap_or(0)
+                .min(MAX_OUTPUTS);
+            for (index, slot) in (0_u32..).zip(into.iter_mut().take(count)) {
+                let (id, x, y, width, height) = layout.output(index).map_err(layout_failure)?;
+                let (rotation, width_mm, height_mm) =
+                    layout.output_details(index).map_err(layout_failure)?;
+                *slot = Output {
+                    id,
+                    x,
+                    y,
+                    width,
+                    height,
+                    turns: turns(rotation),
+                    width_mm,
+                    height_mm,
+                };
+            }
+            Ok(count)
+        }
+
+        fn turn_output(&mut self, id: u32, turns: u8) -> Result<(), Failure> {
+            self.layout()?
+                .set_rotation(id, rotation(turns))
+                .map_err(layout_failure)
+        }
+
+        fn move_output(&mut self, id: u32, x: i32, y: i32) -> Result<(), Failure> {
+            self.layout()?
+                .set_position(id, x, y)
+                .map_err(layout_failure)
         }
     }
 
@@ -262,6 +397,7 @@ mod program {
         let mut console = SerialConsole::new(init);
         let mut services = Services {
             compositor: CompositorClient::new(CompositorBindings::from_imports(init.imports())),
+            layout: None,
             init,
             mailbox: MailboxClient::new(MailboxBindings::from_imports(init.imports())),
             power: PowerClient::new(PowerBindings::from_imports(init.imports())),

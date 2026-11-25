@@ -1,6 +1,7 @@
 # Multi-display design
 
-Status: slices 1–4 built (see Slices); 5 and 6 wait for D3 and D5. Decisions
+Status: slices 1–5 built (see Slices). The layout EventCount and slice 6 wait
+for D3 and D5. Decisions
 M1–M10 and the three follow-ups were
 answered by the maintainer on 2026-11-24, as were D1, D2, D4, D6 and D7; all are
 recorded here. D3 and D5 (how EventCounts reach the compositor and its clients)
@@ -386,17 +387,53 @@ local interface display_layout_v1
 }
 ```
 
+- **As built (slice 5).** The interface lives at
+  `userspace/gui/compositor/interfaces/display_layout_v1.if`. It differs from
+  the sketch above in these ways:
+  - A result holds at most 5 words, so `output` returns the id and the
+    viewport, and a separate `output_details` returns the rotation and the
+    millimetres.
+  - `set_rotation` also raises `overlaps`, when the turned viewport would
+    cover another one, and `failed`, when the output's `rotate` failed.
+  - `display_layout` writes the installed wire keys to the data area, as
+    `open_pipe` does.
+  - The interface has no data area. Meddle used to require an installed
+    interface to declare its installer's area; it now allows one with no area
+    at all, because its calls reference nothing.
+  - Ids are the output's `display_v1` import instance.
 - **The write gate.** Kickstart badges `compositor_v1` keys with the base of the
-  client's shared area, which is page-aligned. It would set bit 0 of that badge
-  for a client whose manifest entry has `layout = true`:
+  client's shared area, which is page-aligned. It sets bit 0 of that badge
+  (`libdevice_driver::LAYOUT_BADGE`) for a client whose manifest entry has
+  `layout = true`:
   - in image-build, a new field `layout` on `[[component]]` and `[[driver]]`;
   - in libimage, `DriverImage.layout`;
-  - in Kickstart, `badge | 1` for that client's `compositor_v1` imports only.
+  - in Kickstart, `badge | LAYOUT_BADGE` for that client's `compositor_v1`
+    imports only.
 
-  The compositor masks the bit off to find the client's area, and the
-  `display_layout_v1` keys it installs carry the same badge, so the set
-  functions check bit 0. No new kernel kind or operation is needed (minimal
-  kernel API).
+  `DriverInit::area_for_badge` ignores the bit, so every exporter still finds
+  the client's area. The `display_layout_v1` keys the compositor installs
+  carry the same badge, so the set functions check bit 0. No new kernel kind
+  or operation is needed (minimal kernel API).
+- **Rotation.** `set_rotation` asks the output to turn itself when
+  `describe` listed that turn (the panel can do all four). Otherwise the
+  output stays upright and the compositor turns the pixels while presenting
+  (`compositor_core::blit::present_turned`, the framebuffer). The output entry
+  keeps the following:
+  - the output's upright size;
+  - the turn the output applies itself;
+  - the turn the compositor applies in software;
+  - the size of the output's memory as it is turned now.
+
+  A presenter flushes the rectangle of the output's own memory that a
+  viewport rectangle maps to (`layout::native_rect`). The turn call to the
+  output holds the compositor's turn while it runs: drawing waits for the few
+  commands a turn takes, and nothing draws for the old orientation in the
+  meantime.
+- **Clients.** The shell's prompt has `layout`, `layout turn <id>
+  <0|90|180|270>` and `layout move <id> <x> <y>`, and the production image
+  gives the shell `layout = true`. layout-test (QEMU) loads one client twice:
+  - the arranger turns and moves the framebuffer, through the software turn;
+  - the reader is refused every change.
 - **Layout EventCount.** When the compositor changes the layout, it advances an
   EventCount. Readers wait on it, then reread `generation` and the list. How a
   client gets an await-only key to it is D5.
@@ -470,7 +507,9 @@ local interface display_layout_v1
    QEMU covers the scanout output; the board covers HDMI and the panel together.
 5. **`display_layout_v1`**, the `compositor_v1.display_layout` function, and the
    manifest flag and badge bit. A small `layout` test client arranges the
-   outputs and reads them back. The layout EventCount waits for D5.
+   outputs and reads them back. The layout EventCount waits for D5. Built on
+   2026-11-25: layout-test passes under QEMU, and the shell's `layout`
+   commands are for the board.
 6. **Hotplug plumbing**: provider EventCounts and the generation path, plus the
    removal and arrival policy (after D3), tested with a fake provider that
    comes and goes (`not_present`).

@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use vesper_device_driver::{DATA_WINDOW_VA, DriverInit, ExportedArea, MAX_AREAS};
+    use vesper_device_driver::{DATA_WINDOW_VA, DriverInit, ExportedArea, LAYOUT_BADGE, MAX_AREAS};
 
     fn area(index: u64) -> ExportedArea {
         // Areas one page each in the window.
@@ -38,12 +38,26 @@ mod tests {
     }
 
     #[test]
+    fn the_layout_bit_does_not_change_whose_area_a_badge_names() {
+        let init = init_with_areas(3);
+        let expected = area(1);
+        assert_eq!(expected.base & LAYOUT_BADGE, 0, "areas are page-aligned");
+        assert_eq!(
+            init.area_for_badge(expected.base | LAYOUT_BADGE),
+            Some((1, expected))
+        );
+        // The bit alone names no area.
+        assert_eq!(init.area_for_badge(LAYOUT_BADGE), None);
+    }
+
+    #[test]
     fn badges_that_name_no_area_select_nothing() {
         let init = init_with_areas(2);
         // Zero is an unbadged key; the others are not the base of any area,
         // including the base of an area the exporter does not serve and an
-        // address inside a served area.
-        for badge in [0, 1, area(0).base + 1, area(2).base, u64::MAX] {
+        // address inside a served area (past the layout bit, which a badge
+        // may carry).
+        for badge in [0, 1, area(0).base + 2, area(2).base, u64::MAX] {
             assert_eq!(init.area_for_badge(badge), None, "{badge:#x}");
         }
         assert_eq!(DriverInit::EMPTY.area_for_badge(area(0).base), None);

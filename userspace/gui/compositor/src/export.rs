@@ -292,6 +292,32 @@ impl CompositorV1 for Compositor {
         }
         Ok(u32::try_from(length).unwrap_or(u32::MAX))
     }
+
+    fn display_layout(badge: u64, into: &KeyTableKey, first_slot: u32) -> Result<(), Exception> {
+        client_of(badge).ok_or(Exception::NotPermitted)?;
+        let (_, exported) = shared::init()
+            .area_for_badge(badge)
+            .ok_or(Exception::NotPermitted)?;
+        let area = DataArea {
+            base: exported.base,
+            len: exported.len,
+        };
+        // The keys carry the caller's badge, layout bit and all, so the
+        // set functions know whether the caller may arrange.
+        let keys = {
+            let mut turn = shared::enter();
+            shared::state(&mut turn)
+                .layout_masters
+                .as_mut()
+                .ok_or(Exception::NotPermitted)?
+                .install(into, first_slot, badge)
+                .map_err(|_error| Exception::NotPermitted)?
+        };
+        if !area.write_u64s(0, &keys) {
+            return Err(Exception::NotPermitted);
+        }
+        Ok(())
+    }
 }
 
 compositor_server::compositor_v1_export!(Compositor);

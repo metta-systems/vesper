@@ -1,0 +1,73 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The arrangement of the compositor's outputs on its desktop. The desktop is
+## one coordinate space, and each output shows a rectangle of it, its viewport;
+## the pointer roams their union. `compositor_v1.display_layout` installs these
+## keys in a client's table, badged as the client's `compositor_v1` keys are.
+##
+## Any client reads the layout. Only a client whose manifest entry says
+## `layout = true` arranges it: the set functions refuse any other with
+## `not_permitted`. The layout is not kept: every boot starts from a row of the
+## outputs, the largest scanout output first, none turned.
+##
+## After each change the desktop origin moves to the top left corner of the
+## output with the lowest x, then the lowest y, and every window and the
+## pointer move with it, so nothing moves on the glass; `generation` changes.
+## Prototype: edited in place.
+local interface display_layout_v1
+{
+    ## Every function receives the badge of the key it was called through.
+    badged;
+
+    ## A clockwise turn of an output: what was its top edge is then its right
+    ## edge for `r90`, its bottom edge for `r180`, its left edge for `r270`.
+    enum rotation { r0, r90, r180, r270 }
+
+    ## There is no output `index` or `id`, or no window `window` of the caller.
+    exception no_output {}
+    ## The caller may read the layout but not arrange it (`layout = true`).
+    exception not_permitted {}
+    ## The output's viewport would overlap another output's.
+    exception overlaps {}
+    ## The output could not turn.
+    exception failed {}
+
+    ## The layout's generation: it changes whenever an output moves or turns.
+    generation()
+        returns (card32 generation);
+
+    ## How many outputs there are.
+    count()
+        returns (card32 outputs);
+
+    ## Output `index` (0 to `count` - 1): its id, stable while the output is
+    ## present, and its viewport, the desktop rectangle it shows, after its
+    ## rotation.
+    output(card32 index)
+        returns (card32 id, int32 x, int32 y, card32 width, card32 height)
+        raises (no_output);
+
+    ## Output `index`'s rotation and its physical size in millimetres, as it
+    ## stands upright (0 when unknown); with the viewport's size, its DPI.
+    output_details(card32 index)
+        returns (rotation rotation, card32 width_mm, card32 height_mm)
+        raises (no_output);
+
+    ## Put output `id`'s viewport's top left corner at (`x`, `y`) of the
+    ## desktop. Gaps are allowed: the pointer does not cross them.
+    set_position(card32 id, int32 x, int32 y)
+        raises (no_output, not_permitted, overlaps);
+
+    ## Turn output `id` to `rotation`: by the output itself where it can, else
+    ## by the compositor while it draws. The viewport keeps its top left corner
+    ## and takes the turned size.
+    set_rotation(card32 id, rotation rotation)
+        raises (no_output, not_permitted, overlaps, failed);
+
+    ## The output the caller's window `window` is mostly on.
+    window_output(card32 window)
+        returns (card32 id)
+        raises (no_output);
+}

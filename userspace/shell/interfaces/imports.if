@@ -8,7 +8,8 @@
 # resets the board through the power component. It draws in a window of the
 # compositor, a program in the same image; the lava lamp follows the window's
 # focus on the interface's io-channel, and asks `snapshot` for it when it
-# starts and after records were dropped.
+# starts and after records were dropped. Its `layout` commands read, turn and
+# move the compositor's displays through the keys `display_layout` installs.
 uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { set_led }
 uses power_v1 via device compatible "brcm,bcm2835-pm" { reset }
-uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, position, raise, destroy, snapshot }
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, position, raise, destroy, snapshot, display_layout }

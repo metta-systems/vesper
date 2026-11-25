@@ -1008,6 +1008,10 @@ fn read_resources(path: &Path, table: &toml::Table) -> Vec<ResourceEntry> {
 
 /// What Kickstart gives each instance of a driver or program.
 #[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag mirrors an independent manifest key"
+)]
 struct Settings {
     /// Budget the Time receives: infinite unless the entry names a finite one
     budget_ns: u64,
@@ -1020,6 +1024,9 @@ struct Settings {
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`)
     serial: bool,
+    /// Whether the instance may arrange the compositor's outputs
+    /// (`layout = true`)
+    layout: bool,
     /// Whether the instance gets a read-only copy of the device tree and the
     /// path of its node (`device_tree = true`)
     device_tree: bool,
@@ -1080,6 +1087,10 @@ fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Sett
         extra,
         serial: entry
             .get("serial")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false),
+        layout: entry
+            .get("layout")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false),
         device_tree: entry
@@ -1515,6 +1526,7 @@ fn driver_context(settings: &Settings, image: &ElfImage, what: &str) -> Value {
         memory_bits => settings.memory_bits,
         extra => settings.extra,
         serial => settings.serial,
+        layout => settings.layout,
         device_tree => settings.device_tree,
         dispatcher => settings.dispatcher,
         priority => image.entry_priority,
