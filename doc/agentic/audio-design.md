@@ -54,7 +54,7 @@ options that were weighed are summarised after each answer.
       levels should be enough for now, keep room for extending in the future, no
       starvation guard for this round". Wood's playback Thread is declared high
       priority (`driver_threads!(playback => Priority::HIGH)`); the rule is in the
-      [Time contract](capabilities-contract.md#time-and-userspace-scheduling). Still
+      [scheduling design](scheduling-design.md#decisions). Still
       no isochronous scheduler and no special Time budget.
     - *Input between the program and audio* (same day, after keys felt sluggish and
       some were lost on the board): "the usb is probably in need of priority between
@@ -475,7 +475,7 @@ The decided options are drawn; each box below names the decision it rests on.
   playback Thread at high priority, so a buffer coming back wakes it ahead of the
   engine, the compositor and the lava lamp instead of after their 10 ms slices. The
   isochronous scheduler in the Future work of
-  [capabilities-decisions.md](capabilities-decisions.md) is still not needed.
+  [scheduling-decisions.md](scheduling-decisions.md) is still not needed.
 
 ### `audio_v1` (written in A3)
 

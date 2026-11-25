@@ -32,7 +32,7 @@ All by the maintainer, 2026-11-25.
 - **Schedulers and cores (C4(c)).** Each core has its own root Scheduler, root dispatcher
   and boot Time. A Thread runs only on the core of its Scheduler and moves to another
   core's Scheduler by a cross-core Thread move. `Scheduler.replace` and non-blocking
-  dispatch stay parked under D5/D8 in [capabilities-decisions.md](capabilities-decisions.md).
+  dispatch stay parked in [scheduling-decisions.md](scheduling-decisions.md).
 - **Scheduler core (C4.1(a)).** A Scheduler has a core field set once: Kickstart sets it
   for the root Schedulers, and a child Scheduler takes its parent's core at `Adopt`.
 - **Bound Time on a move (C4.2(a)).** A cross-core move requires the Thread's bound Time
@@ -79,7 +79,7 @@ All by the maintainer, 2026-11-25.
 | Interrupt controller ABI | `IrqChipOps`: `init`, `claim` (on the calling CPU), `complete`, `mask`, `unmask`, `set_trigger`, `xlate`. No per-CPU init, no IPI, no routing | `libs/irqchip/src/lib.rs` |
 | BCM2836 component | Drives core 0's local registers only; core 1–3 timer, mailbox and source registers are reserved fields | `drivers/irqchip-bcm2836/src/lib.rs` |
 | GIC-400 component | Routes every SPI to the CPU interface of the core running `init` (from banked `GICD_ITARGETSR0-7`) | `drivers/irqchip-gicv2/src/lib.rs` |
-| Scheduling ABI | `Scheduler.Dispatch` `x6` is the CPU and must be 0; the Thread record has a `cpu` field (`0` or `NO_CPU`); a Time "belongs to one core" and Transfer/Merge already carry per-core checks | contract, [Time](capabilities-contract.md#time-and-userspace-scheduling); `objects/time.rs` |
+| Scheduling ABI | `Scheduler.Dispatch` `x6` is the CPU and must be 0; the Thread record has a `cpu` field (`0` or `NO_CPU`); a Time "belongs to one core" and Transfer/Merge already carry per-core checks | [scheduling design](scheduling-design.md#decisions); `objects/time.rs` |
 | Payload ordering | The contract states that multicore needs real Acquire/Release kernel atomics for Signal/Advance publication | [contract, Notification and EventCount](capabilities-contract.md#notification-and-eventcount) |
 | Reserved memory | Kickstart removes `/memreserve/` entries from the Untypeds; it does not read `/reserved-memory` child nodes | `kernel/kickstart/src/lib.rs:206-242` |
 | QEMU | `raspi3b` and `raspi4b` always model four cores | `Justfile` |

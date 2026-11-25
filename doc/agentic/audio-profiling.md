@@ -501,7 +501,7 @@ Done 2026-10-29, after the maintainer's answers (recorded with D8 in
   slice stays 10 ms. The guard was added later the same day ("add starvation
   guard too"): a raised Thread that runs a whole slice without blocking is
   dispatched as a normal one until it blocks. The rule is in the
-  [Time contract](capabilities-contract.md#time-and-userspace-scheduling).
+  [scheduling design](scheduling-design.md#decisions).
 - **Proposal 2.** "yep": Wood queues its first buffers, with the music, before
   `open`, then answers the game Thread.
 - **Proposal 3.** "8 buffers might be good": Wood and midi-test's player keep 8

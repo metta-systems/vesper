@@ -1,6 +1,6 @@
 # Time: research notes
 
-Evidence behind the [Time contract](capabilities-contract.md#time-and-userspace-scheduling); not a specification. Open work is in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md). The comparison below describes Composite's priority-carrying budgets; Vesper's Time carries no priority (the contract's maintainer decision removes it), so the priority and per-dispatch-versus-per-thread discussion is background only.
+Evidence behind the [Time rules](scheduling-design.md#decisions); not a specification. Open work is in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md). The comparison below describes Composite's priority-carrying budgets; Vesper's Time carries no priority (the maintainer decision in the scheduling design removes it), so the priority and per-dispatch-versus-per-thread discussion is background only.
 
 # Research: Time vs Composite tcap
 
