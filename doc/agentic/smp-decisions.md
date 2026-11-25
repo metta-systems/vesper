@@ -6,7 +6,7 @@ decisions are in [smp-design.md](smp-design.md#decisions); their tasks are in
 [smp-implementation-plan.md](smp-implementation-plan.md).
 
 `Scheduler.replace`, non-blocking dispatch and the activation invariant across cores stay
-parked under D5/D8 in [capabilities-decisions.md](capabilities-decisions.md); per-core
+parked in [scheduling-decisions.md](scheduling-decisions.md); per-core
 dispatchers do not need them.
 
 No SMP decision is open.

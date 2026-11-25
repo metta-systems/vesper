@@ -12,21 +12,6 @@ or might not pursue depending on how the project develops. They need no
 near-term decision, do not constrain current contracts or tests, and are not
 plan items.
 
-## D5: scheduler-shared thread records
-
-The record ABI and the Phase 5 single-CPU dispatcher design are selected (see
-the contract); the record numbers and `AssignRecord` are trial choices to
-revisit after use. Unanswered questions:
-
-- What is the scheduler donation schema (Phase 9)? Strict-tree ownership is
-  decided: `Adopt` succeeds only on a fresh, parentless, non-root Scheduler.
-  The other hierarchy rules (parent-granted allowance, exhaustion flag,
-  `SCHED_DOMAIN_FAILED` crash handling) are selected: see the plan.
-- Multicore (`Scheduler.replace`, a non-blocking dispatch, and an activation
-  invariant of one outstanding request per dispatcher across cores) is gated
-  behind future kernel multicore work (Phase 11) and not addressed now.
-
-
 ## D7: Protected Procedure Call (`Invocation`)
 
 
@@ -54,8 +39,6 @@ revisit after use. Unanswered questions:
   AddressSpace is still live but its root/ASID is missing or unencodable,
   is that a third Return fault, a `ReturnTargetRetired` fault, or an ordinary
   error? It currently surfaces as the preparation error without a pop.
-- **Scheduling attribution:** how should hierarchical schedulers observe and
-  attribute migrated work beyond the source Thread's own time accounting?
 - **Freezing the provisional PPC convention (D9):** the maintainer decides
   when it becomes frozen ABI. It works end-to-end through real Call/Return;
   no validation or plan item gates the freeze, and work should not be
@@ -84,10 +67,6 @@ revisit after use. Unanswered questions:
   API versus bootstrap/libOS composition layout.
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
-- **D8:** what happens to remaining budget when a Time is deleted; the
-  `replace` register schema, rights and generation encoding (multicore). The
-  `Dispatch` and `ArmTimer` schemas and the clock are selected: see the
-  contract.
 - **IRQ follow-up:** whether a Thread may bind one Notification for both
   PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built
@@ -141,12 +120,6 @@ needs them.
   re-carved at a different offset or as a different kind, and a check that it
   adds protection beyond the retire-time bump and completed cleanup that the
   contract already relies on.
-- **Budget from a scheduler's own bound Time:** a Time bound to a live Thread
-  can't give budget away, so a scheduler gives its children budget only from
-  Times not bound to a Thread (contract, bound Times). Revisit whether this
-  can be relaxed or reworked, for example letting the bound Thread itself (or
-  its scheduler) transfer out while still refusing other key holders, without
-  reopening the risk of an interrupt Thread's Time being drained.
 - **Kernel-published identity in `TPIDRRO_EL0`:** using the EL0 read-only,
   EL1-writable register to publish per-Thread identity to userspace, as Linux
   does for per-CPU data. Today it is always zero.
@@ -160,25 +133,12 @@ needs them.
   and summary would carry the resource names (their order stays the index in
   `DriverInit::resources`), and image-build would read them from the imports
   file. Today the manifest list does the job.
-- **Per-Thread scheduler event subscriptions:** investigate moving from the
-  scheduler-level activation mask towards per-Thread subscriptions, so a
-  scheduler can request activation for chosen events of chosen Threads (for
-  example a latency-critical Thread's wakeup) without a hardcoded
-  `activate_on_wake` flag. The mask stays the base mechanism and a
-  subscription would act as a finer filter on it. Weigh the extra per-Thread
-  state and the risk of a scheduler's data structures and the kernel's
-  per-Thread configuration drifting apart.
 - **Universal channel provisioning:** a general way to set up shared control
   pages and data areas between components, instead of per-interface wiring (the
   per-pair data areas Kickstart builds for Meddle `data` declarations, the
   interrupt-IN channel of the USB stack and the hand-wired serial channel are
   three cases of it). Would need its own design, for example a Meddle `channel`
   declaration shared by all of them, or client-lent Frames with a mapping window.
-- **Isochronous scheduler:** a nested userspace Scheduler that reserves a
-  period and budget (a SCHED_ISO-like class) for Threads with periodic CPU needs.
-  Policy lives in a scheduler component, as the nucleus has no periods or
-  deadlines. Audio is the first user that needs it; USB isochronous pipes, and
-  display, would use it too. HID interrupt pipes do not need it.
 - **Releasing the stacks of a faulted Thread:** a Thread that faults inside a
   pooled call keeps its stack until its continuations are dropped. The
   resource manager is meant to clean up Threads stuck in the faulted state,

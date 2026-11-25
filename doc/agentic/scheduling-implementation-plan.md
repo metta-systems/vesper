@@ -1,10 +1,8 @@
 # Scheduling implementation plan
 
-The checklist for Time and userspace scheduling. [`capabilities-implementation-plan.md`](capabilities-implementation-plan.md) points here for these items; no scheduling task lives in both files. The design authority is the [Time contract](capabilities-contract.md#time-and-userspace-scheduling). Inputs: [`capability-scheduler-design.md`](capability-scheduler-design.md) (design discussion), [`capabilities-scheduling.md`](capabilities-scheduling.md) (survey of existing systems), [`capabilities-time.md`](capabilities-time.md) (Composite comparison). Open questions are only in [`capabilities-decisions.md`](capabilities-decisions.md) (D5, D8). The working rules, validation commands and `just` recipes of the main plan apply unchanged.
+The checklist for Time and userspace scheduling; no scheduling task lives anywhere else. The rules are in [`scheduling-design.md`](scheduling-design.md#decisions), open questions only in [`scheduling-decisions.md`](scheduling-decisions.md). The working rules, validation commands and `just` recipes of the [main plan](capabilities-implementation-plan.md) apply unchanged.
 
-Mark an item `- [x]` only after implementation and validation have passed. A finished item leaves a one-line marker in [`capabilities-completed.md`](capabilities-completed.md), and moves to [`scheduling-completed.md`](scheduling-completed.md).
-
-**Model in one paragraph.** Time is a transferable, accounted budget with no priority. The nucleus charges the running Time, enforces limits with a one-shot timer and reports block, expiry and wakeup events to the responsible scheduler. A Thread whose Time is exhausted is ineligible to run until more budget is Transferred in. Every policy (order, priorities, renewal, fairness) is userspace scheduler code.
+Mark an item `- [x]` only after implementation and validation have passed. A finished item leaves a one-line marker in [`scheduling-completed.md`](scheduling-completed.md).
 
 Phases 1 to 8 and 10 are finished, as are the hierarchy items of Phase 9: see [`scheduling-completed.md`](scheduling-completed.md).
 
@@ -23,7 +21,7 @@ Finished: see [`scheduling-completed.md`](scheduling-completed.md#phase-10--reti
 
 ## Root dispatcher priorities (done)
 
-Thread priority in the root dispatcher, the input level between normal and high, and the starvation guard (maintainer decisions, 2026-10-29; the rule is in the [contract](capabilities-contract.md#time-and-userspace-scheduling)). Finished: see [`scheduling-completed.md`](scheduling-completed.md#root-dispatcher-priorities).
+Thread priority in the root dispatcher, the input level between normal and high, and the starvation guard (maintainer decisions, 2026-10-29; the rule is in the [scheduling design](scheduling-design.md#decisions)). Finished: see [`scheduling-completed.md`](scheduling-completed.md#root-dispatcher-priorities).
 
 ## Phase 11 — Multicore
 
@@ -37,7 +35,7 @@ The scheduling part of SMP4 in [`smp-implementation-plan.md`](smp-implementation
 - [ ] A per-core root dispatcher in `userspace/dispatcher`, placing unpinned Threads at run time.
 - [ ] Tests: two Threads on two cores in parallel with exact per-core accounting; a cross-core Signal waking a waiter; Transfer to another core's Time rejected; a cross-core move; the existing preempt, sync and ppc suites run on core 1.
 
-Still parked (D5/D8, not needed by per-core dispatchers):
+Still parked ([`scheduling-decisions.md`](scheduling-decisions.md), not needed by per-core dispatchers):
 
 - [ ] `Scheduler.replace`: a dispatcher replaces a Thread running on another CPU.
 - [ ] Non-blocking dispatch, and the activation invariant of one outstanding request per dispatcher across cores, including a dispatcher already running on another core.

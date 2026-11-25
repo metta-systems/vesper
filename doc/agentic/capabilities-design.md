@@ -226,9 +226,9 @@ Open work for this section is tracked in [Phase 5](capabilities-implementation-p
 
 ## 6. Thread identity and scheduler records
 
-The selected direction — scheduler-owned record pages shared through `Scheduler.ShareRegion`, the root scheduler established by Kickstart, root-only Thread creation and donation — is in the contract's [Thread and AddressSpace contracts](capabilities-contract.md#thread-and-addressspace-contracts). Composite's upcall-based scheduling and scheduler-owned thread structures (Parmer, TECS 2013) are design evidence, not a wire-contract source.
+The selected direction — scheduler-owned record pages shared through `Scheduler.ShareRegion`, the root scheduler established by Kickstart, root-only Thread creation and donation — is in [`scheduling-design.md`](scheduling-design.md#decisions). Composite's upcall-based scheduling and scheduler-owned thread structures (Parmer, TECS 2013) are design evidence, not a wire-contract source.
 
-Open work for this section is tracked in [Phase 4](capabilities-implementation-plan.md#phase-4--capability-storage-and-thread-lifetime) (scheduler-shared records) and [Phase 7](capabilities-implementation-plan.md#phase-7--time-and-userspace-scheduling); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+Open work for this section is tracked in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md); open decisions are in [`scheduling-decisions.md`](scheduling-decisions.md).
 
 ## 7. Pending operations, PPC Invocation, and Time
 

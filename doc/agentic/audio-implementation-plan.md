@@ -347,6 +347,6 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
 - [audio-completed.md](audio-completed.md): answered decisions.
 - [audio-design.md](audio-design.md): hardware facts with sources, architecture, QEMU
   support.
-- [capabilities-decisions.md](capabilities-decisions.md): the isochronous scheduler in
+- [scheduling-decisions.md](scheduling-decisions.md): the isochronous scheduler in
   Future work.
 - `userspace/wood/README.md`: Phase 3.

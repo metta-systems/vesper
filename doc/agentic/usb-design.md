@@ -149,7 +149,8 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   [capabilities-decisions.md](capabilities-decisions.md)).
 - CPU time for the Threads that serve data pipes needs no scheduler of its own for HID
   (an 8 ms interval). A guaranteed share for isochronous pipes belongs to a separate
-  isochronous scheduler, parked until audio needs it (same Future work section).
+  isochronous scheduler, parked until audio needs it (Future work of
+  [scheduling-decisions.md](scheduling-decisions.md)).
 - Data areas: control transfers stage the setup packet and data stage in the
   client's `data` area (`octet&`), following the mailbox convention.
 

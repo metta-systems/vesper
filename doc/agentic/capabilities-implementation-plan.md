@@ -151,7 +151,7 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
 
 ## Phase 7 — Time and userspace scheduling
 
-All Time and userspace-scheduling work, including the scheduler-shared records (D5), is tracked in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md). Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduling). Prerequisites: D2/D4/D5/D8/D9 (open questions in [`capabilities-decisions.md`](capabilities-decisions.md)).
+All Time and userspace-scheduling work, including the scheduler-shared records (D5), is tracked in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md).
 
 ## FP/SIMD per AddressSpace
 

@@ -83,7 +83,7 @@ Check the documents' decision status and dependencies for the selected item:
 - **D2:** management-authority/bookkeeping split; remaining revocation, completion, and reuse mechanisms.
 - **D3:** ownership and lifetime.
 - **D4:** authority, badges, and bootstrap.
-- **D5:** scheduler-shared records (record ABI in the contract; hierarchy and multicore questions in `scheduling-decisions.md`).
+- **D5:** scheduler-shared records (rules in `scheduling-design.md`, open questions in `scheduling-decisions.md`).
 - **D6:** memory and ASID management.
 - **D7:** IPC and blocking.
 - **D8:** time (rules in `scheduling-design.md`, open questions in `scheduling-decisions.md`).
