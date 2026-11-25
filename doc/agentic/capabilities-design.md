@@ -103,7 +103,7 @@ Open work for this section is tracked in [Phase 4](capabilities-implementation-p
 
 ### Selected guarded-access direction and remaining representation work
 
-**CONFIRMED** ([contract](capabilities-contract.md#selected-local-key-and-storage-foundation)): single-core kernel execution with SMP deferred, short-lived guarded references from an owning access context, and all managed storage from accounted Untypeds.
+**CONFIRMED** ([contract](capabilities-contract.md#selected-local-key-and-storage-foundation)): serialized kernel execution under one kernel lock on every core ([SMP design](smp-design.md#decisions); the kernel still runs on one core today), short-lived guarded references from an owning access context, and all managed storage from accounted Untypeds.
 
 Typed pools remain a useful starting point, with representation free to change under the correctness-first rule:
 

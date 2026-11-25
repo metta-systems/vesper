@@ -27,9 +27,18 @@ Thread priority in the root dispatcher, the input level between normal and high,
 
 ## Phase 11 — Multicore
 
-**Gated behind future kernel multicore work (maintainer decision, 2026-10-18). Nothing here is addressed now:** the kernel runs on one CPU, secondary-core bring-up is in no phase of this plan, and the questions below stay open in D5 until that work is scheduled.
+The scheduling part of SMP4 in [`smp-implementation-plan.md`](smp-implementation-plan.md); it starts after SMP3 there (inter-processor interrupts). The rules are in the [SMP design's decisions](smp-design.md#decisions) (C4, C4.1–C4.3, C5, C7, C9).
 
-- [ ] Multicore Times (a Time belongs to one core; Transfer, Merge and dispatch reject another core's Time) and per-CPU schedulers.
+- [ ] Multicore Times: a Time belongs to one core; Transfer, Merge and dispatch reject another core's Time.
+- [ ] A root Scheduler, root dispatcher and boot Time per core, created by Kickstart; a Scheduler's core field set once (Kickstart for the roots, `Adopt` copies the parent's).
+- [ ] `Scheduler.Dispatch` `x6` checked against the Scheduler's core; the Thread record's `cpu` reports the real core.
+- [ ] Each core's one-shot timer for its dispatch limit and budget, and a per-core deadline queue for the wait timeouts and `ArmTimer` deadlines of its Schedulers.
+- [ ] The cross-core Thread move: the Thread's bound Time must be empty, and the Thread is rebound to a Time of the destination core in the same call. `Scheduler.MoveThread` also moves between Schedulers of different cores, taking the destination Time key, with `WRITE` on both Schedulers, the Thread and that Time.
+- [ ] A per-core root dispatcher in `userspace/dispatcher`, placing unpinned Threads at run time.
+- [ ] Tests: two Threads on two cores in parallel with exact per-core accounting; a cross-core Signal waking a waiter; Transfer to another core's Time rejected; a cross-core move; the existing preempt, sync and ppc suites run on core 1.
+
+Still parked (D5/D8, not needed by per-core dispatchers):
+
 - [ ] `Scheduler.replace`: a dispatcher replaces a Thread running on another CPU.
 - [ ] Non-blocking dispatch, and the activation invariant of one outstanding request per dispatcher across cores, including a dispatcher already running on another core.
 - [ ] Batched remote dispatch.

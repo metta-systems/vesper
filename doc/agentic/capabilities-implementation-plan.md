@@ -157,6 +157,10 @@ All Time and userspace-scheduling work, including the scheduler-shared records (
 
 All FP/SIMD work, including the FP counters in the scheduler-shared records, is tracked in [`simd-implementation-plan.md`](simd-implementation-plan.md). Reference: [architectural state](capabilities-contract.md#architectural-state). No FP/SIMD decision is open; future work is at the end of the FP/SIMD plan.
 
+## SMP
+
+Secondary-core bring-up, the kernel lock, IPIs and Threads on several cores are tracked in [`smp-implementation-plan.md`](smp-implementation-plan.md), design in [`smp-design.md`](smp-design.md). The decisions are in the design; no SMP decision is open.
+
 ## Final integration
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
