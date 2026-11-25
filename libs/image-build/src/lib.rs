@@ -1359,6 +1359,11 @@ fn interface_contexts(
                         component => Some(name.clone()),
                         links => Vec::<Value>::new(),
                     },
+                    libmeddle::ProviderSummary::Every(max) => context! {
+                        component => None::<String>,
+                        every => Some(*max),
+                        links => Vec::<Value>::new(),
+                    },
                 })
                 .collect();
             for index in summary.functions {

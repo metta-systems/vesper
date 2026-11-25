@@ -1,0 +1,27 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## every-test's interface: several programs export it, and a client imports
+## it `via every`, from each of them. Each instance counts the calls it
+## serves, so the client can tell its instances apart. Prototype: edited in
+## place.
+local interface echo_v1
+{
+    ## Each client shares one page with each instance.
+    data 4096;
+
+    ## Every function receives the badge of the key it was called through: the
+    ## instance knows its caller's data area from the key.
+    badged;
+
+    ## `note` is not inside the caller's data area with this instance.
+    exception not_permitted {}
+
+    ## Count this call and return how many calls this instance has served,
+    ## this one included. `note` must lie in the caller's data area with this
+    ## instance.
+    count(octet& note)
+        returns (card32 calls)
+        raises (not_permitted);
+}

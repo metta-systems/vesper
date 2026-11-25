@@ -424,6 +424,57 @@ impl ImportRecord {
     }
 }
 
+/// Most function declaration indices [`nth_instance`] and [`instance_count`]
+/// tell apart; records of functions past them are left out.
+pub const MAX_COUNTED_FUNCTIONS: usize = 64;
+
+/// The records of `imports` for the interface `type_code` that belong to
+/// instance `n` of an import `via every`.
+///
+/// Kickstart links each function of such an import to every exporting
+/// instance in the same (load) order, one record each, so a function's `n`-th
+/// record is the `n`-th instance's. An import of one provider has one record
+/// per function: instance 0.
+pub fn nth_instance(
+    imports: &[ImportRecord],
+    type_code: u64,
+    n: usize,
+) -> impl Iterator<Item = &ImportRecord> {
+    let mut seen = [0_usize; MAX_COUNTED_FUNCTIONS];
+    imports.iter().filter(move |record| {
+        if record.type_code != type_code {
+            return false;
+        }
+        let Some(count) = usize::try_from(record.function)
+            .ok()
+            .and_then(|function| seen.get_mut(function))
+        else {
+            return false;
+        };
+        let instance = *count;
+        *count += 1;
+        instance == n
+    })
+}
+
+/// How many instances `imports` link for the interface `type_code`: the most
+/// records any one of its functions has (see [`nth_instance`]).
+pub fn instance_count(imports: &[ImportRecord], type_code: u64) -> usize {
+    let mut seen = [0_usize; MAX_COUNTED_FUNCTIONS];
+    for record in imports
+        .iter()
+        .filter(|record| record.type_code == type_code)
+    {
+        if let Some(count) = usize::try_from(record.function)
+            .ok()
+            .and_then(|function| seen.get_mut(function))
+        {
+            *count += 1;
+        }
+    }
+    seen.into_iter().max().unwrap_or(0)
+}
+
 /// Export one interface function as a PPC entry named `$entry`, whose decoder
 /// is the function `$body` (both defined where the macro is used).
 ///

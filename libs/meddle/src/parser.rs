@@ -338,6 +338,17 @@ where
     let component = select! { Token::Identifier("component") => () }
         .ignore_then(name)
         .map(Provider::Component);
+    // `every` and `max` are contextual as well.
+    let every = select! { Token::Identifier("every") => () }
+        .ignore_then(select! { Token::Identifier("max") => () })
+        .ignore_then(select! { Token::Number(max) => max })
+        .map_with(|max: u64, extra| {
+            let span: SimpleSpan = extra.span();
+            Provider::Every {
+                max,
+                span: span.into_range(),
+            }
+        });
 
     // `or` is contextual too: it separates the providers a use tries in turn.
     let or = select! { Token::Identifier("or") => () };
@@ -347,7 +358,8 @@ where
         .then(
             device
                 .or(component)
-                .labelled("`device` or `component`")
+                .or(every)
+                .labelled("`device`, `component` or `every max <count>`")
                 .separated_by(or)
                 .at_least(1)
                 .collect::<Vec<_>>(),

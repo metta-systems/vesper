@@ -29,6 +29,10 @@ pub const MAX_DATA_BYTES: u64 = 256 * 1024;
 /// exporter's table reserved for each client.
 pub const MAX_PLACEMENT_SLOTS: u64 = 8;
 
+/// Most instances a `uses ... via every max N` may link: each takes an import
+/// record per function, and a component has few of those.
+pub const MAX_EVERY_INSTANCES: u64 = 4;
+
 /// Most data pages of the io-channel an interface may declare, besides its
 /// control page: both are mapped in the client and the exporter for every pair,
 /// in the same window as the data area.
@@ -316,12 +320,31 @@ pub fn check_uses(uses: &[Uses], interfaces: &[&Interface]) -> Vec<Diagnostic> {
             continue;
         };
         duplicates(&declaration.functions, "function", &mut diagnostics);
+        for provider in &declaration.providers {
+            let ast::Provider::Every { max, span } = provider else {
+                continue;
+            };
+            // Every exporter is linked, so there is nothing to fall back to,
+            // and a further provider could only name one of them again.
+            if declaration.providers.len() > 1 {
+                diagnostics.push(Diagnostic::error(
+                    span.clone(),
+                    "`every` links every exporter: it cannot be combined with other providers",
+                ));
+            }
+            if !(1..=MAX_EVERY_INSTANCES).contains(max) {
+                diagnostics.push(Diagnostic::error(
+                    span.clone(),
+                    format!("`every` links from 1 to {MAX_EVERY_INSTANCES} instances"),
+                ));
+            }
+        }
         for links in declaration
             .providers
             .iter()
             .filter_map(|provider| match provider {
                 ast::Provider::Device(links) => Some(links),
-                ast::Provider::Component(_) => None,
+                ast::Provider::Component(_) | ast::Provider::Every { .. } => None,
             })
         {
             for link in links.iter().skip(1) {

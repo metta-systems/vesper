@@ -416,7 +416,7 @@ mod tests {
                 Provider::Device(links) => {
                     links.iter().map(|link| link.name().text.as_str()).collect()
                 }
-                Provider::Component(name) => panic!("a device chain, not `{}`", name.text),
+                other => panic!("a device chain, not {other:?}"),
             })
             .collect();
         assert_eq!(
@@ -604,7 +604,9 @@ mod tests {
         ] {
             let (_, diagnostics) = parse(old);
             assert!(
-                diagnostics[0].message.contains("`device` or `component`"),
+                diagnostics[0]
+                    .message
+                    .contains("`device`, `component` or `every max <count>`"),
                 "{old}: {diagnostics:?}"
             );
         }
@@ -625,6 +627,79 @@ mod tests {
         assert!(file.is_some());
     }
 
+    /// `via every max N` links every exporter of the interface (the
+    /// compositor's displays): its own provider, at most N of them.
+    #[test]
+    fn every_links_each_exporter_up_to_a_maximum() {
+        let (file, diagnostics) = parse("uses mailbox_v1 via every max 2 { property }");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(matches!(
+            file.expect("parsed uses").uses[0].providers.as_slice(),
+            [Provider::Every { max: 2, .. }]
+        ));
+        // `max` and its count are part of the provider.
+        for incomplete in [
+            "uses mailbox_v1 via every { property }",
+            "uses mailbox_v1 via every 2 { property }",
+            "uses mailbox_v1 via every max { property }",
+        ] {
+            let (_, diagnostics) = parse(incomplete);
+            assert!(!diagnostics.is_empty(), "{incomplete}");
+        }
+
+        let directory = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"));
+        let directories = [directory.clone()];
+        let scratch = std::env::temp_dir().join(format!("meddle-every-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).expect("a scratch directory");
+        let imports_file = scratch.join("imports.if");
+        std::fs::write(
+            &imports_file,
+            "uses mailbox_v1 via every max 2 { property }",
+        )
+        .expect("the imports file");
+        let summaries =
+            libmeddle::summarize_imports(&imports_file, &directories).expect("valid imports");
+        std::fs::remove_dir_all(&scratch).ok();
+        assert_eq!(summaries[0].providers, [ProviderSummary::Every(2)]);
+
+        // Nothing to fall back to: `every` stands alone.
+        for (text, expected) in [
+            (
+                "uses mailbox_v1 via every max 2 or component fb { property }",
+                "cannot be combined with other providers",
+            ),
+            (
+                "uses mailbox_v1 via component fb or every max 2 { property }",
+                "cannot be combined with other providers",
+            ),
+            (
+                "uses mailbox_v1 via every max 0 { property }",
+                "from 1 to 4 instances",
+            ),
+            (
+                "uses mailbox_v1 via every max 5 { property }",
+                "from 1 to 4 instances",
+            ),
+        ] {
+            let failure = source("imports.if", text)
+                .imports(&directories)
+                .expect_err(text);
+            assert!(
+                failure
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(expected)),
+                "{text}: {:?}",
+                failure.diagnostics
+            );
+        }
+
+        // `every` and `max` stay ordinary identifiers elsewhere.
+        let (file, diagnostics) = parse("interface every_v1 { max(card32 every); }");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(file.is_some());
+    }
+
     /// `parent` is the bus the client's node sits on (a panel's SPI
     /// controller); a property named `parent` is written quoted.
     #[test]
@@ -635,7 +710,7 @@ mod tests {
             let mut file = file.expect("a parsed file");
             match file.uses.remove(0).providers.remove(0) {
                 Provider::Device(links) => links,
-                Provider::Component(_) => panic!("a device chain"),
+                other => panic!("a device chain, not {other:?}"),
             }
         };
         assert!(matches!(

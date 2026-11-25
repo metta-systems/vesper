@@ -4,8 +4,9 @@
 #[cfg(test)]
 mod tests {
     use metta_meddle_runtime::{
-        ARGUMENT_WORDS, ChannelArea, DataArea, ImportRecord, IoRec, OUTCOME_MALFORMED, OUTCOME_OK,
-        RESULT_WORDS, Words, exception, malformed, ok, unused_words_are_zero,
+        ARGUMENT_WORDS, ChannelArea, DataArea, ImportRecord, IoRec, MAX_COUNTED_FUNCTIONS,
+        OUTCOME_MALFORMED, OUTCOME_OK, RESULT_WORDS, Words, exception, instance_count, malformed,
+        nth_instance, ok, unused_words_are_zero,
     };
 
     fn round_trip<T: Words + PartialEq + core::fmt::Debug>(value: &T) {
@@ -219,5 +220,67 @@ mod tests {
             })
         );
         assert_eq!(ImportRecord::default().channel(2), None);
+    }
+
+    /// A record of `function` of interface `type_code`, its Invocation
+    /// `invocation` and its data area at `area_base`.
+    const fn record(
+        type_code: u64,
+        function: u64,
+        invocation: u64,
+        area_base: u64,
+    ) -> ImportRecord {
+        ImportRecord {
+            type_code,
+            function,
+            invocation,
+            area_base,
+            area_len: 4096,
+            channel_base: 0,
+            channel_event: 0,
+        }
+    }
+
+    /// Kickstart links an import `via every` function by function, each to
+    /// every exporter in load order: the records of two exporters interleave,
+    /// with another interface's in between.
+    #[test]
+    fn every_instance_has_the_nth_record_of_each_function() {
+        const DISPLAY: u64 = 0xd15;
+        const LOG: u64 = 0x109;
+        let imports = [
+            record(DISPLAY, 0, 0x10, 0xa000),
+            record(DISPLAY, 0, 0x20, 0xb000),
+            record(LOG, 0, 0x30, 0),
+            record(DISPLAY, 3, 0x11, 0xa000),
+            record(DISPLAY, 3, 0x21, 0xb000),
+        ];
+        assert_eq!(instance_count(&imports, DISPLAY), 2);
+        assert_eq!(instance_count(&imports, LOG), 1, "a single provider");
+        assert_eq!(instance_count(&imports, 0x5ad), 0, "not imported");
+        let invocations = |n| {
+            nth_instance(&imports, DISPLAY, n)
+                .map(|record| (record.function, record.invocation, record.area_base))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(invocations(0), [(0, 0x10, 0xa000), (3, 0x11, 0xa000)]);
+        assert_eq!(invocations(1), [(0, 0x20, 0xb000), (3, 0x21, 0xb000)]);
+        assert!(invocations(2).is_empty(), "no third instance");
+        // A single provider's records are instance 0.
+        assert_eq!(
+            nth_instance(&imports, LOG, 0)
+                .map(|record| record.invocation)
+                .collect::<Vec<_>>(),
+            [0x30]
+        );
+        // Function indices past the counted ones are left out, not misplaced.
+        let far = [record(
+            DISPLAY,
+            u64::try_from(MAX_COUNTED_FUNCTIONS).unwrap(),
+            0x40,
+            0,
+        )];
+        assert_eq!(nth_instance(&far, DISPLAY, 0).count(), 0);
+        assert_eq!(instance_count(&far, DISPLAY), 0);
     }
 }

@@ -1295,6 +1295,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "echo"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "echo-client"
+version = "0.0.1"
+dependencies = [
+ "echo",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
 name = "embedded-graphics-core"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1427,6 +1444,52 @@ checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "every-client"
+version = "0.0.1"
+dependencies = [
+ "driver-protocol",
+ "echo",
+ "echo-client",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "every-echo"
+version = "0.0.1"
+dependencies = [
+ "echo",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "every-test"
+version = "0.0.1"
+dependencies = [
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
 ]
 
 [[package]]

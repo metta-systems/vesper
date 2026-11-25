@@ -94,6 +94,7 @@ members = [
   "kernel/tests/spi-test",
   "kernel/tests/panel-test",
   "kernel/tests/display-test",
+  "kernel/tests/every-test",
   "kernel/tests/board-test",
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
@@ -160,6 +161,11 @@ members = [
   "userspace/tests/spi/probe",
   "userspace/tests/panel/probe",
   "userspace/tests/display/probe",
+  # every-test: echo_v1, its exporting program and a client importing it via every
+  "userspace/tests/every/echo",
+  "userspace/tests/every/echo-client",
+  "userspace/tests/every/echo-server",
+  "userspace/tests/every/client",
   "userspace/tests/fault/bare",
   "userspace/tests/fault/faulter",
   "userspace/tests/fault/protocol",
@@ -295,6 +301,8 @@ spi = { path = "drivers/spi-bcm2835/server" }
 spi-client = { path = "drivers/spi-bcm2835/client" }
 display = { path = "drivers/display/server" }
 display-client = { path = "drivers/display/client" }
+echo = { path = "userspace/tests/every/echo" }
+echo-client = { path = "userspace/tests/every/echo-client" }
 dma = { path = "drivers/dma-bcm2835/server" }
 dma-client = { path = "drivers/dma-bcm2835/client" }
 audio = { path = "drivers/audio-pwm-bcm2835/server" }
