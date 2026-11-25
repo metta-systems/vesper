@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     use shell::{
-        Board, Command, Console, Edit, Failure, HELP, LINE_BYTES, LineEditor, Outcome, execute,
-        parse, print_number,
+        Board, Command, Console, Edit, Failure, HELP, LINE_BYTES, LineEditor, MAX_OUTPUTS, Outcome,
+        Output, execute, parse, print_number,
     };
 
     #[derive(Default)]
@@ -21,6 +21,48 @@ mod tests {
         led: Option<bool>,
         drawn: usize,
         fail: Option<Failure>,
+        outputs: Vec<Output>,
+    }
+
+    impl FakeBoard {
+        /// The board's pair: HDMI, and the panel to its right.
+        fn with_outputs() -> Self {
+            Self {
+                outputs: vec![
+                    Output {
+                        id: 1,
+                        x: 0,
+                        y: 0,
+                        width: 1024,
+                        height: 600,
+                        turns: 0,
+                        width_mm: 180,
+                        height_mm: 130,
+                    },
+                    Output {
+                        id: 0,
+                        x: 1024,
+                        y: 0,
+                        width: 240,
+                        height: 320,
+                        turns: 0,
+                        width_mm: 34,
+                        height_mm: 45,
+                    },
+                ],
+                ..Self::default()
+            }
+        }
+
+        fn output(&mut self, id: u32) -> Result<&mut Output, Failure> {
+            self.outputs
+                .iter_mut()
+                .find(|output| output.id == id)
+                .ok_or(Failure {
+                    status: 9,
+                    detail: u64::from(id),
+                })
+        }
     }
 
     impl Board for FakeBoard {
@@ -43,6 +85,32 @@ mod tests {
                 }
             }
         }
+
+        fn outputs(&mut self, into: &mut [Output; MAX_OUTPUTS]) -> Result<usize, Failure> {
+            if let Some(failure) = self.fail {
+                return Err(failure);
+            }
+            for (slot, output) in into.iter_mut().zip(&self.outputs) {
+                *slot = *output;
+            }
+            Ok(self.outputs.len().min(MAX_OUTPUTS))
+        }
+
+        fn turn_output(&mut self, id: u32, turns: u8) -> Result<(), Failure> {
+            let output = self.output(id)?;
+            if (output.turns + turns) % 2 == 1 {
+                core::mem::swap(&mut output.width, &mut output.height);
+            }
+            output.turns = turns;
+            Ok(())
+        }
+
+        fn move_output(&mut self, id: u32, x: i32, y: i32) -> Result<(), Failure> {
+            let output = self.output(id)?;
+            output.x = x;
+            output.y = y;
+            Ok(())
+        }
     }
 
     fn run(line: &str, board: &mut FakeBoard) -> (Outcome, String) {
@@ -62,6 +130,65 @@ mod tests {
         assert_eq!(parse(b"\tled\ton "), Command::LedOn);
         assert_eq!(parse(b"draw"), Command::Draw);
         assert_eq!(parse(b"end"), Command::End);
+        assert_eq!(parse(b"layout"), Command::Layout);
+        assert_eq!(
+            parse(b"layout turn 0 90"),
+            Command::LayoutTurn { id: 0, turns: 1 }
+        );
+        assert_eq!(
+            parse(b"layout turn 1 270"),
+            Command::LayoutTurn { id: 1, turns: 3 }
+        );
+        assert_eq!(
+            parse(b"layout move 0 -240 16"),
+            Command::LayoutMove {
+                id: 0,
+                x: -240,
+                y: 16
+            }
+        );
+    }
+
+    #[test]
+    fn layout_commands_with_bad_numbers_are_unknown() {
+        for text in [
+            &b"layout turn 0 45"[..],
+            b"layout turn 0",
+            b"layout turn x 90",
+            b"layout turn -1 90",
+            b"layout move 0 1",
+            b"layout move 0 a 1",
+            b"layout move 0 1 2 3",
+            b"layout spin",
+        ] {
+            assert_eq!(parse(text), Command::Unknown(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn layout_lists_turns_and_moves_the_displays() {
+        let mut board = FakeBoard::with_outputs();
+        let (outcome, output) = run("layout", &mut board);
+        assert_eq!(outcome, Outcome::Continue);
+        assert_eq!(
+            output,
+            "display 1: 1024x600 at 0,0, turned 0, 180x130 mm\r\n\
+             display 0: 240x320 at 1024,0, turned 0, 34x45 mm\r\n"
+        );
+        // A turn or a move lists the displays as they are afterwards.
+        let (_, output) = run("layout turn 0 90", &mut board);
+        assert!(
+            output.contains("display 0: 320x240 at 1024,0, turned 90"),
+            "{output}"
+        );
+        let (_, output) = run("layout move 0 -320 0", &mut board);
+        assert!(output.contains("display 0: 320x240 at -320,0"), "{output}");
+        // A refused one says so, and lists them still.
+        let (_, output) = run("layout turn 5 180", &mut board);
+        assert!(
+            output.starts_with("[!] layout turn failed: status 9, detail 5\r\ndisplay 1"),
+            "{output}"
+        );
     }
 
     #[test]

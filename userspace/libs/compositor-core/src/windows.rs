@@ -185,6 +185,14 @@ impl Windows {
         true
     }
 
+    /// Move every window by (`dx`, `dy`): the desktop origin moved.
+    pub fn shift(&mut self, dx: i32, dy: i32) {
+        for window in self.stack[..self.len].iter_mut().flatten() {
+            window.rect.x = window.rect.x.saturating_add(dx);
+            window.rect.y = window.rect.y.saturating_add(dy);
+        }
+    }
+
     /// The id of the topmost window under the pixel `(x, y)`.
     #[must_use]
     pub fn top_at(&self, x: i32, y: i32) -> Option<u32> {

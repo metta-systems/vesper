@@ -10,7 +10,7 @@
 # component serves, and the events arrive on the interface's io-channel. An
 # image without the HID component leaves the input import not granted and the
 # compositor runs without input.
-uses display_v1 via every max 2 { describe, get_mode, frames, flush }
+uses display_v1 via every max 2 { describe, get_mode, frames, flush, rotate }
 uses input_v1 via component usb_hid { descriptor, snapshot }
 # In an image with the log server, the compositor's trace goes to it
 # on the interface's io-channel instead of the serial channel, which the log

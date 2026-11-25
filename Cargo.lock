@@ -2399,6 +2399,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "layout-client"
+version = "0.0.1"
+dependencies = [
+ "compositor-client",
+ "driver-protocol",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "layout-test"
+version = "0.0.1"
+dependencies = [
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

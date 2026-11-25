@@ -22,6 +22,7 @@
 //! from clients enter the compositor on their own stacks (`export`). The state
 //! they share is behind a turnstile (`shared`).
 
+mod arrange;
 mod export;
 mod frame;
 mod input;
@@ -39,12 +40,12 @@ use {
     libdevice_driver::{BACK_BUFFER_VA, DriverInit, SURFACE_SPANS, local_key},
     libframebuffer::{Framebuffer, SLOTS_USED},
     libobject::{
-        EventCountKey, FrameAttribute, FrameKey, KeyTableKey, ObjectType, RawKey, Rights,
-        UntypedKey,
+        AddressSpaceKey, EventCountKey, FrameAttribute, FrameKey, KeyTableKey, ObjectType, RawKey,
+        Rights, StackPoolHandle, UntypedKey,
     },
     libserial_trace::{Trace, trace},
     libuser as user,
-    shared::{Display, Memory},
+    shared::{Display, LayoutMasters, Memory},
 };
 
 user::entry!(main);
@@ -166,8 +167,22 @@ fn set_up(init: &DriverInit, trace: &mut Trace) {
         .unwrap_or(Format::Xrgb8888);
     trace!(trace, "compositor: drawing in {canvas:?}");
 
+    // The masters of the display_layout_v1 keys: calls through them run on
+    // the stack pool Kickstart made for the compositor's clients.
+    let layout_masters = StackPoolHandle::from_wire(init.export_pool).map(|pool| {
+        let masters = LayoutMasters::new(
+            AddressSpaceKey::from_key(RawKey::from_wire(init.address_space)),
+            KeyTableKey::from_key(RawKey::from_wire(init.table)),
+            pool,
+            cursor.next_slot,
+            arrange::display_layout_v1_entries(),
+        );
+        cursor.next_slot += LayoutMasters::SLOTS;
+        masters
+    });
+
     shared::open(
-        shared::State::new(displays, layout, canvas, cursor.next_slot),
+        shared::State::new(displays, layout, canvas, cursor.next_slot, layout_masters),
         turns,
     );
     // Say the drawing Threads can draw and the exports can be served.
@@ -186,7 +201,7 @@ fn open_display(
     cursor: &mut Cursor,
 ) -> Option<Display> {
     let display = DisplayClient::new(DisplayBindings::from_imports_nth(init.imports(), index));
-    let (_generation, scanout, width_mm, height_mm, _rotations) = display
+    let (_generation, scanout, width_mm, height_mm, rotations) = display
         .describe()
         .inspect_err(|error| {
             trace!(
@@ -238,6 +253,7 @@ fn open_display(
         "compositor: display_v1 instance {index}: {width}x{height} {format:?}, {}, {width_mm}x{height_mm} mm",
         if scanout { "scanout" } else { "flush" }
     );
+    // Every output starts upright: the layout is not kept (M4).
     Some(Display {
         instance: index,
         width,
@@ -245,6 +261,13 @@ fn open_display(
         format,
         memory,
         back_buffer,
+        upright: (width, height),
+        native: (width, height),
+        hardware_turns: 0,
+        software_turns: 0,
+        rotations,
+        width_mm,
+        height_mm,
     })
 }
 

@@ -67,6 +67,7 @@ pub static {{component.stem}}_DRIVER: DriverImage = DriverImage {
     memory_bits: {{component.driver.memory_bits}},
     extra: Extra::{{component.driver.extra}},
     serial: {{component.driver.serial | bool}},
+    layout: {{component.driver.layout | bool}},
     device_tree: {{component.driver.device_tree | bool}},
     dispatcher: {{component.driver.dispatcher | bool}},
     priority: {{component.driver.priority}},

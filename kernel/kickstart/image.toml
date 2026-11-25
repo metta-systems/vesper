@@ -43,7 +43,8 @@ memory = 33554432
 # channel (`serial = true`), switches the LED through the mailbox component
 # and resets the board through the power component. Its `draw` command asks the
 # compositor for a window, which `memory` leaves room for (the table the
-# window's Frames are lent into).
+# window's Frames are lent into). Its `layout` commands turn and move the
+# compositor's displays (`layout = true`).
 [[component]]
 name = "shell"
 binary = "shell"
@@ -51,6 +52,7 @@ interfaces = "../../userspace/shell/interfaces"
 active = true
 program = true
 serial = true
+layout = true
 memory = 131072
 resources = ["font"]
 

@@ -254,6 +254,61 @@ pub fn present(
     }
 }
 
+/// [`present`] for an output the compositor turns while drawing: the canvas
+/// is the viewport, turned `turns` clockwise quarter turns from the output's
+/// own memory, which is `native` pixels wide and high
+/// ([`native_point`](crate::layout::native_point)). A canvas whose size is not
+/// `native` turned is left alone. Each pixel lands on a different row of the
+/// output for a quarter turn, so this goes pixel by pixel; it serves outputs
+/// that cannot turn themselves.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "present's six, and the turn and the unturned size"
+)]
+pub fn present_turned(
+    canvas: &Canvas<'_>,
+    canvas_format: Format,
+    output: &mut [u8],
+    output_pitch: usize,
+    output_format: Format,
+    area: &Rect,
+    turns: u8,
+    native: (u32, u32),
+) {
+    if turns % 4 == 0 {
+        present(
+            canvas,
+            canvas_format,
+            output,
+            output_pitch,
+            output_format,
+            area,
+        );
+        return;
+    }
+    if crate::layout::turned_size(native, turns) != (canvas.width, canvas.height) {
+        return;
+    }
+    let Some(area) = area.intersect(&canvas.bounds()) else {
+        return;
+    };
+    let pixel_bytes = output_format.pixel_bytes();
+    for line in 0..area.height {
+        let Some(source) = canvas.row(&area, line) else {
+            continue;
+        };
+        let y = area.y.unsigned_abs() + line;
+        for (offset, &pixel) in (0_u32..).zip(source) {
+            let x = area.x.unsigned_abs() + offset;
+            let (native_x, native_y) = crate::layout::native_point((x, y), turns, native);
+            let start = native_y as usize * output_pitch + native_x as usize * pixel_bytes;
+            if let Some(target) = output.get_mut(start..start + pixel_bytes) {
+                convert_row(&[pixel], canvas_format, target, output_format);
+            }
+        }
+    }
+}
+
 /// Convert one row of canvas pixels in `canvas_format` into `target`, as
 /// pixels in `output_format`. There is one loop per pair of formats, so the
 /// inner loop does not branch.

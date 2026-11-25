@@ -310,6 +310,12 @@ _build-every-programs board=boards features='qemu' image_features=features: (_cr
 # Build the every-test e2e kernel (three programs exporting echo_v1 and a client importing it via every max 2)
 _build-every-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-every-programs board 'qemu' test_kernel_features) (_build-test-kernel 'every-test' board)
 
+# Build layout-test's program: the display_layout_v1 client, for the image configuration `board` + `image_features`; only layout-test bundles it, so it is not in `user_components`
+_build-layout-programs board=boards features='qemu' image_features=features: (_cross-build 'layout-client' board user_link features '' image_features)
+
+# Build the layout-test e2e kernel (the compositor on the framebuffer, and the layout client as an arranger and as a reader)
+_build-layout-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-layout-programs board 'qemu' test_kernel_features) (_build-test-kernel 'layout-test' board)
+
 # Build the compositor-test e2e kernel (the DWC2 component, the PL011 driver, the USB core, the HID component and the compositor)
 _build-compositor-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'compositor-test' board)
 
@@ -723,7 +729,7 @@ sdimage image='': _firmware
 # Build and boot via chainofcommand
 [group("hw")]
 boot: build chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_bin }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --rate-reset false --kernel "{{ kernel_bin }}"
 
 # Start this, then power the board on: Kickstart offers a faster console for 1.5 s at boot and
 # chainofcommand asks for `chainboot_load_baud`; it sends no kernel when chainboot asks for one.
@@ -744,7 +750,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-display _test-every _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-spi _test-board _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-display _test-every _test-layout _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-spi _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -814,6 +820,9 @@ _test-display: (_run-test-kernel 'display-test' '_build-display-test')
 
 # Boot every-test: a client importing echo_v1 `via every max 2` from three exporting programs is linked to the first two, each pair with a data area of its own, and calls both
 _test-every: (_run-test-kernel 'every-test' '_build-every-test')
+
+# Boot layout-test: the compositor's display_layout_v1, read by a client and turned and moved by one with layout = true; the framebuffer turns in software
+_test-layout: (_run-test-kernel 'layout-test' '_build-layout-test')
 
 # Boot uart-test: the PL011 driver component's two Threads serve a client's transmit and receive IO channels in loopback by interrupts
 _test-uart: (_run-test-kernel 'uart-test' '_build-uart-test')
@@ -1300,7 +1309,7 @@ _cross-clippy board=boards features='':
       -- --deny warnings --allow deprecated
 
 # The images the workspace clippy's build scripts embed (the kernel, the components, log-test's, panel-test's, display-test's, every-test's and midi-test's programs, Wood)
-_clippy-artifacts: (build boards 'qemu') (_build-components boards 'qemu') (_build-log-probe boards 'qemu') (_build-panel-probe boards 'qemu') (_build-display-probe boards 'qemu') (_build-every-programs boards 'qemu') (_build-midi-player boards 'qemu') (_build-wood boards 'qemu')
+_clippy-artifacts: (build boards 'qemu') (_build-components boards 'qemu') (_build-log-probe boards 'qemu') (_build-panel-probe boards 'qemu') (_build-display-probe boards 'qemu') (_build-every-programs boards 'qemu') (_build-layout-programs boards 'qemu') (_build-midi-player boards 'qemu') (_build-wood boards 'qemu')
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]

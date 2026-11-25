@@ -1446,3 +1446,171 @@ mod drag {
         assert_eq!(frame(&mut mover, &at(11, 12))[2], Fed::MoveTo(301, 202));
     }
 }
+
+/// Host tests of turning outputs and rearranging them: the turned size, where
+/// a viewport's pixels and rectangles land in an unturned output's memory,
+/// drawing a turned output, overlaps, the output a window is mostly on, and
+/// the windows and pointer following a moved origin.
+#[cfg(test)]
+mod turning {
+    use compositor_core::{
+        blit::{Canvas, Format, present_turned},
+        layout::{Layout, native_point, native_rect, turned_size},
+        router::Router,
+        windows::{Rect, Window},
+    };
+
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn a_quarter_turn_swaps_width_and_height() {
+        assert_eq!(turned_size((240, 320), 0), (240, 320));
+        assert_eq!(turned_size((240, 320), 1), (320, 240));
+        assert_eq!(turned_size((240, 320), 2), (240, 320));
+        assert_eq!(turned_size((240, 320), 3), (320, 240));
+    }
+
+    #[test]
+    fn a_clockwise_turn_puts_the_top_left_pixel_where_expected() {
+        // An output 4 wide and 3 high; turned a quarter, its viewport is 3 by 4.
+        let native = (4, 3);
+        assert_eq!(native_point((0, 0), 0, native), (0, 0));
+        assert_eq!(native_point((0, 0), 1, native), (3, 0), "top right");
+        assert_eq!(native_point((0, 0), 2, native), (3, 2), "bottom right");
+        assert_eq!(native_point((0, 0), 3, native), (0, 2), "bottom left");
+        // Along the viewport's top edge: down the output's right edge.
+        assert_eq!(native_point((2, 0), 1, native), (3, 2));
+        // The viewport's bottom right corner is the native top left for r90's
+        // opposite, r270.
+        assert_eq!(native_point((2, 3), 3, native), (3, 0));
+    }
+
+    #[test]
+    fn a_turned_rectangle_covers_the_native_points_of_its_corners() {
+        let native = (40, 30);
+        for turns in 0..4 {
+            let (width, height) = turned_size(native, turns);
+            let inside = rect(3, 5, 7, 4);
+            assert!(inside.right() <= i64::from(width) && inside.bottom() <= i64::from(height));
+            let turned = native_rect(inside, turns, native);
+            for (x, y) in [(3, 5), (9, 5), (3, 8), (9, 8)] {
+                let (native_x, native_y) = native_point((x, y), turns, native);
+                assert!(
+                    turned.contains(
+                        i32::try_from(native_x).expect("small"),
+                        i32::try_from(native_y).expect("small")
+                    ),
+                    "turn {turns}: corner {x},{y} at {native_x},{native_y} outside {turned:?}"
+                );
+            }
+            assert_eq!(
+                u64::from(turned.width) * u64::from(turned.height),
+                28,
+                "turn {turns}: the same pixels"
+            );
+        }
+    }
+
+    #[test]
+    fn a_turned_output_receives_each_pixel_where_the_turn_puts_it() {
+        // A 3 by 2 viewport of an output 2 wide and 3 high, turned a quarter.
+        let mut pixels = [1_u32, 2, 3, 4, 5, 6];
+        let canvas = Canvas {
+            pixels: &mut pixels,
+            pitch: 3,
+            width: 3,
+            height: 2,
+        };
+        let mut output = [0_u8; 2 * 3 * 4];
+        present_turned(
+            &canvas,
+            Format::Xrgb8888,
+            &mut output,
+            8,
+            Format::Xrgb8888,
+            &canvas.bounds(),
+            1,
+            (2, 3),
+        );
+        let words: Vec<u32> = output
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_le_bytes(*word))
+            .collect();
+        // The viewport's top row (1 2 3) runs down the output's right column,
+        // its bottom row (4 5 6) down the left one.
+        assert_eq!(words, [4, 1, 5, 2, 6, 3]);
+        // A canvas of the wrong size for the turn is left alone.
+        let mut untouched = [0_u8; 2 * 3 * 4];
+        present_turned(
+            &canvas,
+            Format::Xrgb8888,
+            &mut untouched,
+            8,
+            Format::Xrgb8888,
+            &canvas.bounds(),
+            1,
+            (3, 2),
+        );
+        assert!(untouched.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn viewports_may_touch_or_gap_but_not_overlap() {
+        let layout = Layout::row(&[Some((1024, 600)), Some((240, 320))]);
+        assert!(!layout.overlaps(1, &rect(1024, 0, 240, 320)), "where it is");
+        assert!(!layout.overlaps(1, &rect(1100, 400, 320, 240)), "a gap");
+        assert!(
+            layout.overlaps(1, &rect(1000, 0, 240, 320)),
+            "over the HDMI"
+        );
+        assert!(!layout.overlaps(0, &rect(0, 0, 1024, 600)), "itself only");
+    }
+
+    #[test]
+    fn a_window_is_on_the_output_that_shows_most_of_it() {
+        let layout = Layout::row(&[Some((1024, 600)), Some((240, 320))]);
+        assert_eq!(layout.output_of(&rect(10, 10, 100, 100)), Some(0));
+        assert_eq!(
+            layout.output_of(&rect(1000, 10, 100, 100)),
+            Some(1),
+            "76 of 100 columns"
+        );
+        assert_eq!(layout.output_of(&rect(2000, 2000, 10, 10)), None);
+    }
+
+    #[test]
+    fn windows_and_the_pointer_follow_a_moved_origin() {
+        let mut router = Router::with_layout(Layout::row(&[Some((1024, 600)), Some((240, 320))]));
+        assert!(router.windows_mut().add(Window {
+            id: 1,
+            client: 1,
+            rect: rect(100, 50, 200, 100),
+        }));
+        // The panel moves to the left of the HDMI output: the origin moves
+        // 240 to the right.
+        let mut layout = *router.layout();
+        layout.set(1, Some(rect(-240, 0, 240, 320)));
+        let shift = layout.renormalize();
+        assert_eq!(shift, (240, 0));
+        router.set_layout(layout, shift);
+        assert_eq!(router.layout().viewport(0), Some(rect(240, 0, 1024, 600)));
+        assert_eq!(
+            router.windows().get(1).map(|window| window.rect),
+            Some(rect(340, 50, 200, 100))
+        );
+        assert_eq!(
+            router.pointer(),
+            (752, 300),
+            "still in the HDMI output's middle"
+        );
+    }
+}

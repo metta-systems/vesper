@@ -244,6 +244,10 @@ pub enum Extra {
 /// Kickstart loads once per enabled device tree node whose `compatible` it
 /// names (see `libdevice_driver`).
 #[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag mirrors an independent manifest key"
+)]
 pub struct DriverImage {
     pub component: &'static ComponentImage,
     /// Device tree `compatible` strings the driver serves
@@ -262,6 +266,11 @@ pub struct DriverImage {
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`; see `libserial-channel`)
     pub serial: bool,
+    /// Whether the instance may arrange the compositor's outputs
+    /// (`layout = true`): Kickstart badges its `compositor_v1` keys with
+    /// `libdevice_driver::LAYOUT_BADGE`, and the `display_layout_v1` keys the
+    /// compositor installs for it carry the same badge
+    pub layout: bool,
     /// Whether the instance gets a read-only copy of the device tree at
     /// `libdevice_driver::DEVICE_TREE_VA` and the path of its node
     /// (`device_tree = true`), to read the properties of its node itself

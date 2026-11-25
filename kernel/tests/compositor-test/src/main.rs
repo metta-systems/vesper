@@ -102,14 +102,14 @@ pub fn run() -> ! {
             assert_ne!(init.areas()[0].channel_base, 0);
             assert_ne!(init.areas()[0].channel_event, 0);
         } else if name == components::COMPOSITOR.name {
-            // The compositor: the four functions of display_v1 from the one
+            // The compositor: the five functions of display_v1 from the one
             // output, the two of input_v1 and the serial channel; the report
             // key goes in its table only.
             assert_ne!(init.serial.transmit_submitted, 0, "a serial channel");
             assert_eq!(
                 imports.len(),
-                6,
-                "four of display_v1, descriptor and snapshot"
+                7,
+                "five of display_v1, descriptor and snapshot"
             );
             assert!(imports.iter().any(|record| record.channel_event != 0));
             assert_ne!(init.map_window.l2, 0, "a window to map the framebuffer");

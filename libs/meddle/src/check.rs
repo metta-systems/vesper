@@ -853,7 +853,9 @@ impl<'interface> Checker<'interface> {
             );
         }
         let bytes = |data: &Option<ast::DataDeclaration>| data.as_ref().map(|data| data.bytes);
-        if bytes(&other.data) != bytes(&interface.data) {
+        // An installed interface without a data area references nothing, so
+        // it shares nothing; one with an area shares this interface's.
+        if other.data.is_some() && bytes(&other.data) != bytes(&interface.data) {
             self.error(
                 installed,
                 format!(

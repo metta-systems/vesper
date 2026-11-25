@@ -182,6 +182,18 @@ impl Router {
         &self.layout
     }
 
+    /// Take `layout`, in which the desktop origin moved by (`dx`, `dy`): the
+    /// windows and the pointer move with it, so nothing moves on the glass, and
+    /// the pointer is then kept on the union of the new viewports.
+    pub fn set_layout(&mut self, layout: Layout, (dx, dy): (i32, i32)) {
+        self.layout = layout;
+        self.windows.shift(dx, dy);
+        (self.x, self.y) = self.layout.clamp(
+            i64::from(self.x) + i64::from(dx),
+            i64::from(self.y) + i64::from(dy),
+        );
+    }
+
     /// The window with keyboard focus.
     #[must_use]
     pub const fn focus(&self) -> Option<u32> {
