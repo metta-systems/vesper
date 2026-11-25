@@ -131,11 +131,12 @@ const PAGE: u64 = 4096;
 const PAGE_BITS: u8 = 12;
 
 /// The tables of a framebuffer window.
-const FB_WINDOW_TABLES: u32 = 4;
+const FB_WINDOW_TABLES: u32 = 6;
 const _: () = assert!(FB_WINDOW_TABLES as usize == FB_WINDOW_SPANS);
 
-/// The interface whose importers get a framebuffer window.
-const FB_INTERFACE: &str = "fb_v1";
+/// The interfaces whose importers get a framebuffer window: the mailbox
+/// framebuffer's own, and the one every display output exports.
+const FB_INTERFACES: [&str; 2] = ["fb_v1", "display_v1"];
 
 /// The interface whose importers get a surface window.
 const SURFACE_INTERFACE: &str = "compositor_v1";
@@ -2109,7 +2110,8 @@ pub fn load_drivers(
         }
     }
 
-    // A component that imports `fb_v1` maps the framebuffer's Frames itself:
+    // A component that imports `fb_v1` or `display_v1` maps the framebuffer's
+    // Frames itself:
     // it gets its second-level page table and spare last-level tables for the
     // spans that end up holding 4 KiB Frames. A component that imports
     // `compositor_v1` maps surfaces made of 2 MiB Frames, which need the
@@ -2117,7 +2119,7 @@ pub fn load_drivers(
     for loaded in prepared.iter_mut().flatten() {
         let imports = loaded.instance.driver.component.imports;
         let imports_interface = |name: &str| imports.iter().any(|import| import.interface == name);
-        let maps_framebuffer = imports_interface(FB_INTERFACE);
+        let maps_framebuffer = FB_INTERFACES.into_iter().any(imports_interface);
         if !maps_framebuffer && !imports_interface(SURFACE_INTERFACE) {
             continue;
         }

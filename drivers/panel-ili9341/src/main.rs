@@ -66,7 +66,7 @@ mod component {
             Builder, Display, NoResetPin,
             interface::{SpiError, SpiInterface},
             models::ILI9341Rgb565,
-            options::{Orientation, Rotation},
+            options::{ColorOrder, Orientation, Rotation},
         },
         panel_ili9341::{ROTATIONS, Rectangle, Screen, rgb565_be},
         spi_client::spi_v1::{self, Mode},
@@ -427,7 +427,13 @@ mod component {
         }
     }
 
-    /// mipidsi's orientation for `quarter_turns`.
+    /// mipidsi's orientation for `quarter_turns`, mirrored: the module's
+    /// glass shows columns in reverse, as Linux's ILI9341 driver
+    /// (`drivers/gpu/drm/tiny/ili9341.c`, `yx240qv29_enable`) sets it, with
+    /// the address mode (MADCTL, 36h) MX upright, MV a quarter turn, MY half a
+    /// turn and MV, MY and MX three quarters. mipidsi's mirrored orientations
+    /// set those same bits (`MemoryMapping::from_orientation`). Unmirrored,
+    /// the picture showed flipped left to right on the board (2026-11-25).
     const fn orientation(quarter_turns: u32) -> Orientation {
         let rotation = match quarter_turns {
             1 => Rotation::Deg90,
@@ -435,8 +441,16 @@ mod component {
             3 => Rotation::Deg270,
             _ => Rotation::Deg0,
         };
-        Orientation::new().rotate(rotation)
+        Orientation {
+            rotation,
+            mirrored: true,
+        }
     }
+
+    /// The module's colour filter order: BGR (MADCTL, 36h, bit 3), as Linux's
+    /// ILI9341 driver sets it. With RGB, red pixels showed blue on the board
+    /// (2026-11-25).
+    const COLOR_ORDER: ColorOrder = ColorOrder::Bgr;
 
     /// Bytes read from the caller's data area at a time: a whole number of
     /// pixels.
@@ -541,7 +555,7 @@ mod component {
             _badge: u64,
             _into: &libmeddle_runtime::KeyTableKey,
             _first_slot: u32,
-        ) -> Result<u32, Exception> {
+        ) -> Result<(u32, u32), Exception> {
             // A flush output: its pixels are the caller's data area.
             Err(Exception::Unsupported)
         }
@@ -648,7 +662,10 @@ mod component {
         // SAFETY: the buffer is lent to the interface for good, here only.
         let pixels = unsafe { &mut *core::ptr::addr_of_mut!(PIXELS) };
         let interface = SpiInterface::new(bus, dc, pixels);
-        let builder = Builder::new(ILI9341Rgb565, interface).display_size(node.width, node.height);
+        let builder = Builder::new(ILI9341Rgb565, interface)
+            .display_size(node.width, node.height)
+            .orientation(orientation(0))
+            .color_order(COLOR_ORDER);
         let started = libuser::clock::now_ns();
         let initialized = match node.reset {
             Some(reset) => builder

@@ -153,6 +153,7 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
     let mut reported = false;
     let mut seen = 0;
     let mut quiet_looks = 0_u32;
+    let mut flush_failures = 0_u32;
     loop {
         // Devices announced before a buffer was posted, or lost since.
         for subject in 1..=MAX_SUBJECT {
@@ -201,6 +202,7 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
             Err(CapError::TimedOut { .. }) => {}
             Err(error) => panic!("waiting for events failed: {:?}", error.code()),
         }
+        flush_failures = report_flush_failures(trace, flush_failures);
         while let Ok(Some(packet)) = completed.get() {
             let Some(rec) = packet.recs().first().copied() else {
                 continue;
@@ -275,6 +277,29 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
             }
         }
     }
+}
+
+/// Trace the presenters' failed flushes when their count reached a power of
+/// two since `before`, with how the last one failed; the input Thread holds
+/// the trace, and the presenters only count. Returns the count now.
+fn report_flush_failures(trace: &mut Trace, before: u32) -> u32 {
+    let (failures, last) = crate::frame::flush_failures();
+    if failures > before && (before == 0 || failures.ilog2() > before.ilog2()) {
+        let value = last & 0xffff_ffff;
+        let how = match last >> 32 {
+            1 => "not_present",
+            2 => "bad_rectangle",
+            3 => "failed",
+            4 => "another exception",
+            5 => "the call failed",
+            _ => "not granted",
+        };
+        trace!(
+            trace,
+            "compositor: a flush failed: {how} ({value:#x}); {failures} so far, each sent again"
+        );
+    }
+    failures
 }
 
 /// What was lost on the way to the windows so far: deliveries the clients'

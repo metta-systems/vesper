@@ -1,18 +1,23 @@
-//! What the compositor's Threads share: the windows, the router, the damage,
-//! the surfaces and the clients' event channels, behind one [`Turnstile`].
+//! What the compositor's Threads share: the outputs, the windows, the router,
+//! each output's damage, the surfaces and the clients' event channels, behind
+//! one [`Turnstile`].
 //!
 //! The first Thread reads input and moves the pointer, the calls clients make
-//! change windows, and the frame Thread draws what is damaged. Each of them
-//! enters the turnstile for as long as it takes to change or copy the state,
-//! and none holds a turn while it draws. Events go to the clients' channels
-//! under a turn, so each channel has one producer at a time.
+//! change windows, the frame Thread draws what is damaged on the scanout
+//! outputs, and a presenter Thread for each flush output draws and sends that
+//! output's damage. Each of them enters the turnstile for as long as it takes
+//! to change or copy the state, and none holds a turn while it draws or
+//! flushes. Events go to the clients' channels under a turn, so each channel
+//! has one producer at a time.
 
 use {
     core::cell::UnsafeCell,
     libcompositor_core::{
+        blit::Format,
         cursor,
         damage::Damage,
         events::{EventChannel, Outbox, client_records, data_area, deliver},
+        layout::{Layout, MAX_OUTPUTS},
         router::{Output, Router},
         windows::{Rect, Window},
     },
@@ -27,6 +32,30 @@ use {
 
 /// Bytes of a window's title.
 pub const MAX_TITLE: usize = 64;
+
+/// Where an output's pixels go.
+#[derive(Clone, Copy, Debug)]
+pub enum Memory {
+    /// A scanout output's own memory, mapped write-combining: what is written
+    /// there shows.
+    Scanout(Framebuffer),
+    /// A flush output's pixels: the `display_v1` data area shared with the
+    /// output, `pitch` bytes a row; `flush` sends a rectangle of it.
+    Flush { base: u64, len: u64, pitch: usize },
+}
+
+/// One output the compositor drives: `display_v1` import instance `instance`.
+#[derive(Clone, Copy, Debug)]
+pub struct Display {
+    pub instance: usize,
+    pub width: u32,
+    pub height: u32,
+    pub format: Format,
+    pub memory: Memory,
+    /// Where the output's back buffer is mapped: `width * height` pixels in
+    /// the canvas format, in the compositor's own memory.
+    pub back_buffer: u64,
+}
 
 /// A window's surface: memory the compositor owns and has mapped.
 #[derive(Clone, Copy, Debug)]
@@ -55,7 +84,11 @@ impl Surface {
 /// The compositor's state.
 pub struct State {
     pub router: Router,
-    pub damage: Damage,
+    /// The outputs, by index; the router's layout holds their viewports.
+    pub displays: [Option<Display>; MAX_OUTPUTS],
+    /// What each output has to draw again, in desktop coordinates inside the
+    /// output's viewport.
+    pub damage: [Damage; MAX_OUTPUTS],
     /// The surface at each surface window; a slot is handed out once, since a
     /// client may still hold the Frames after its window is gone.
     pub surfaces: [Option<Surface>; SURFACE_SLOTS],
@@ -63,11 +96,9 @@ pub struct State {
     pub slots_used: usize,
     /// The first slot of the compositor's table that nothing uses yet.
     pub next_table_slot: u32,
-    pub order: PixelOrder,
-    pub width: u32,
-    pub height: u32,
-    /// The display, mapped.
-    pub framebuffer: Framebuffer,
+    /// The format of the back buffers and of every surface (clients learn its
+    /// `pixel_order`).
+    pub canvas: Format,
     /// Where the pointer was when the screen last needed to know.
     pub cursor: (i32, i32),
     /// What each client's event channel lost, by the client's position among
@@ -76,29 +107,52 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(framebuffer: Framebuffer, next_table_slot: u32) -> Self {
-        let (width, height) = (framebuffer.width(), framebuffer.height());
-        let router = Router::new(width, height);
+    /// The state for `displays`, arranged by `layout`, drawing in `canvas`
+    /// format; every output starts wholly damaged.
+    pub fn new(
+        displays: [Option<Display>; MAX_OUTPUTS],
+        layout: Layout,
+        canvas: Format,
+        next_table_slot: u32,
+    ) -> Self {
+        let router = Router::with_layout(layout);
         let cursor = router.pointer();
-        let mut damage = Damage::new();
-        damage.add(Rect {
-            x: 0,
-            y: 0,
-            width,
-            height,
-        });
-        Self {
+        let mut state = Self {
             router,
-            damage,
+            displays,
+            damage: [Damage::new(); MAX_OUTPUTS],
             surfaces: [None; SURFACE_SLOTS],
             slots_used: 0,
             next_table_slot,
-            order: framebuffer.order(),
-            width,
-            height,
-            framebuffer,
+            canvas,
             cursor,
             outboxes: [Outbox::new(); MAX_AREAS],
+        };
+        for (_index, viewport) in layout.viewports() {
+            state.add_damage(viewport);
+        }
+        state
+    }
+
+    /// The order of the color components of the canvas, as clients and the
+    /// background color see it.
+    #[must_use]
+    pub const fn order(&self) -> PixelOrder {
+        match self.canvas {
+            Format::Xbgr8888 => PixelOrder::Rgb,
+            Format::Xrgb8888 | Format::Rgb565Be => PixelOrder::Bgr,
+        }
+    }
+
+    /// Damage `rect` of the desktop on every output that shows some of it.
+    pub fn add_damage(&mut self, rect: Rect) {
+        let layout = *self.router.layout();
+        for (index, viewport) in layout.viewports() {
+            if let (Some(shown), Some(damage)) =
+                (viewport.intersect(&rect), self.damage.get_mut(index))
+            {
+                damage.add(shown);
+            }
         }
     }
 
@@ -142,7 +196,7 @@ impl State {
             .filter(|surface| surface.window == id)
     }
 
-    /// The screen rectangle of window `id`.
+    /// The desktop rectangle of window `id`.
     #[must_use]
     pub fn rect_of(&self, id: u32) -> Option<Rect> {
         self.router.windows().get(id).map(|window| window.rect)
@@ -161,7 +215,7 @@ impl State {
     /// Damage the whole of window `id`.
     pub fn damage_window(&mut self, id: u32) {
         if let Some(rect) = self.rect_of(id) {
-            self.damage.add(rect);
+            self.add_damage(rect);
         }
     }
 
@@ -172,9 +226,8 @@ impl State {
         if now == self.cursor {
             return false;
         }
-        self.damage
-            .add(cursor::rect_at(self.cursor.0, self.cursor.1));
-        self.damage.add(cursor::rect_at(now.0, now.1));
+        self.add_damage(cursor::rect_at(self.cursor.0, self.cursor.1));
+        self.add_damage(cursor::rect_at(now.0, now.1));
         self.cursor = now;
         true
     }
@@ -238,14 +291,14 @@ pub fn init() -> &'static DriverInit {
     unsafe { driver_init(INIT_VA) }
 }
 
-/// The `EventCount` that tells the frame Thread there is damage; its first
-/// advance says the exports can be served.
+/// The `EventCount` that tells the frame Thread and the presenters there is
+/// damage; its first advance says the exports can be served.
 #[must_use]
 pub fn wake_key() -> EventCountKey {
     EventCountKey::from_key(RawKey::from_wire(init().event_count))
 }
 
-/// Tell the frame Thread there is something to draw.
+/// Tell the frame Thread and the presenters there is something to draw.
 pub fn wake() {
     wake_key()
         .advance(1)

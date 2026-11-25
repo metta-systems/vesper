@@ -290,8 +290,9 @@ pub struct StackSpan {
 /// installed, so only Frames need mapping there.
 pub const DEVICE_WINDOW_VA: u64 = 0x3800_0000;
 
-/// Where a component that imports `fb_v1` maps the framebuffer's Frames
-/// ([`MapWindow`]): `FB_WINDOW_SPANS` consecutive 2 MiB spans.
+/// Where a component that imports `fb_v1` or `display_v1` maps the
+/// framebuffer's Frames ([`MapWindow`]): `FB_WINDOW_SPANS` consecutive 2 MiB
+/// spans.
 pub const FB_WINDOW_VA: u64 = 0x3e00_0000;
 
 /// Where surface memory is mapped, in a component that imports `compositor_v1`
@@ -316,8 +317,9 @@ pub const SURFACE_SLOTS: usize = 8;
 pub const BACK_BUFFER_VA: u64 = SURFACE_WINDOW_VA + SURFACE_SLOTS as u64 * SURFACE_SLOT_BYTES;
 
 /// Spans of 2 MiB in the framebuffer window, and so the spare page tables a
-/// component receives: a 1024x768 framebuffer at any alignment touches three.
-pub const FB_WINDOW_SPANS: usize = 4;
+/// component receives: a 1920x1200 framebuffer (9,216,000 bytes) at any
+/// alignment touches six.
+pub const FB_WINDOW_SPANS: usize = 6;
 
 /// Most register ranges of one node.
 pub const MAX_REGIONS: usize = 4;

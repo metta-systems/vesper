@@ -745,8 +745,9 @@ name = "compositor"
 version = "0.0.1"
 dependencies = [
  "compositor-server",
+ "display",
+ "display-client",
  "driver-protocol",
- "fb-client",
  "input-client",
  "metta-compositor-core",
  "metta-meddle-runtime",
@@ -5475,9 +5476,9 @@ dependencies = [
 name = "vesper-framebuffer"
 version = "0.0.1"
 dependencies = [
- "fb-client",
+ "display",
+ "display-client",
  "vesper-device-driver",
- "vesper-graphics",
  "vesper-objects",
 ]
 

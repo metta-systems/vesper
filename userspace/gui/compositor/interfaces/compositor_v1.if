@@ -97,6 +97,13 @@ local interface compositor_v1
     move_window(card32 window, int32 x, int32 y)
         raises (no_window);
 
+    ## Where the window's top left corner is on the screen: the place the
+    ## compositor chose for it, or the last `move_window`. A client that moves
+    ## its window by an Alt-drag (`compositor_core::drag`) starts from it.
+    position(card32 window)
+        returns (int32 x, int32 y)
+        raises (no_window);
+
     ## Put the window on top of the others.
     raise(card32 window)
         raises (no_window);

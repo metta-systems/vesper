@@ -21,6 +21,7 @@ interfaces = "../../../drivers/mailbox/interfaces"
 name = "fb"
 binary = "fb"
 interfaces = "../../../drivers/fb/interfaces"
+exports = ["../../../drivers/display/interfaces"]
 video_memory = true
 
 [[driver]]

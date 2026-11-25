@@ -13,7 +13,8 @@
 //! only client: it reads the device's descriptor and state, posts buffers on
 //! the event channel and routes the records it gets to its windows, tracing
 //! what each window receives on the PL011's serial channel. It also owns the
-//! display: it maps the framebuffer through the fb component and draws the
+//! display: it maps the framebuffer through the fb component's `display_v1`
+//! (the image's only output) and draws the
 //! background and the cursor, which it says under QEMU (the recipe checks).
 //!
 //! The boot Thread installs the report Notification key at `REPORT_SLOT` of the
@@ -101,11 +102,15 @@ pub fn run() -> ! {
             assert_ne!(init.areas()[0].channel_base, 0);
             assert_ne!(init.areas()[0].channel_event, 0);
         } else if name == components::COMPOSITOR.name {
-            // The compositor: the five functions of fb_v1, the two of
-            // input_v1 and the serial channel; the report key goes in its
-            // table only.
+            // The compositor: the four functions of display_v1 from the one
+            // output, the two of input_v1 and the serial channel; the report
+            // key goes in its table only.
             assert_ne!(init.serial.transmit_submitted, 0, "a serial channel");
-            assert_eq!(imports.len(), 7, "five of fb_v1, descriptor and snapshot");
+            assert_eq!(
+                imports.len(),
+                6,
+                "four of display_v1, descriptor and snapshot"
+            );
             assert!(imports.iter().any(|record| record.channel_event != 0));
             assert_ne!(init.map_window.l2, 0, "a window to map the framebuffer");
             assert!(init.map_window.tables.iter().all(|&table| table != 0));

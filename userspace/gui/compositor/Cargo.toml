@@ -19,8 +19,9 @@ qemu = ["libserial-trace/qemu", "libuser/qemu"]
 
 [dependencies]
 compositor-server = { workspace = true }
+display = { workspace = true }
+display-client = { workspace = true }
 driver-protocol = { workspace = true }
-fb-client = { workspace = true }
 input-client = { workspace = true }
 libcompositor-core = { workspace = true }
 libdevice-driver = { workspace = true }

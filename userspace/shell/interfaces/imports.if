@@ -11,4 +11,4 @@
 # starts and after records were dropped.
 uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { set_led }
 uses power_v1 via device compatible "brcm,bcm2835-pm" { reset }
-uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, raise, destroy, snapshot }
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, position, raise, destroy, snapshot }

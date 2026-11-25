@@ -98,9 +98,10 @@ local interface display_v1
 
     ## A scanout output: install the Frames of its memory in the lent table,
     ## at consecutive slots from `first_slot` in address order, and return how
-    ## many; once per generation.
+    ## many, and where in the first Frame the first pixel is, in bytes; once
+    ## per generation.
     frames(card32 first_slot) lends (key_table into)
-        returns (card32 installed)
+        returns (card32 installed, card32 offset)
         raises (not_present, unsupported, already_handed_out, install_failed);
 
     ## Turn the output's scan direction to `rotation` and return the size the

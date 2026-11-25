@@ -3,5 +3,6 @@
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 # The program makes two windows of the compositor, places them, and reads the
-# events the compositor routes to them on the interface's io-channel.
-uses compositor_v1 via component compositor { pixel_order, create_window, move_window }
+# events the compositor routes to them on the interface's io-channel, feeding
+# them to the Alt-drag mover, which moves a window from its `position`.
+uses compositor_v1 via component compositor { pixel_order, create_window, move_window, position }

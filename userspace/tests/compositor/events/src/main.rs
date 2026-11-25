@@ -17,12 +17,18 @@
 //!
 //! The program checks that each window receives its part, in order, with its
 //! own id in `subject`, that B gets no key, and that nothing is dropped. It
-//! exits QEMU with status 0 once everything arrived, and 1 on a wrong record
-//! or after `TIMEOUT_NS`.
+//! feeds every record to each window's Alt-drag mover
+//! (`compositor_core::drag`), started from `compositor_v1.position`, which
+//! must be where the window was placed: the drag has no Alt, so the movers
+//! must leave it to the window. It exits QEMU with status 0 once everything
+//! arrived, and 1 on a wrong record or after `TIMEOUT_NS`.
 
 use {
     compositor_client::compositor_v1::{Bindings, Client},
-    libcompositor_core::events::{EventChannel, Receiver, data_area},
+    libcompositor_core::{
+        drag::{Fed, Mover},
+        events::{EventChannel, Receiver, data_area},
+    },
     libdevice_driver::driver_init,
     libobject::{EventCountKey, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey},
     vesper_input_event::{
@@ -170,6 +176,14 @@ fn main(init_va: u64) -> ! {
     };
     let a = window(0, A_SIZE, A_PLACE);
     let b = window(1, B_SIZE, B_PLACE);
+    let mover = |id: u32, place: (i32, i32)| match compositor.position(id) {
+        Ok(position) if position == place => Mover::new(position),
+        other => fail(format_args!(
+            "position of window {id}: {other:?}, placed at {place:?}"
+        )),
+    };
+    let mut a_mover = mover(a, A_PLACE);
+    let mut b_mover = mover(b, B_PLACE);
     libuser::semihosting::println!("window-events: windows {a} (A) and {b} (B) ready");
 
     let mut a_next = 0;
@@ -195,6 +209,17 @@ fn main(init_va: u64) -> ! {
         );
         if event.kind == Kind::Dropped {
             fail(format_args!("the compositor dropped events"));
+        }
+        let mover = if event.subject == a {
+            &mut a_mover
+        } else {
+            &mut b_mover
+        };
+        if mover.feed(&event) != Fed::Pass {
+            fail(format_args!(
+                "window {}'s mover took a record of a drag without Alt",
+                event.subject
+            ));
         }
         let (expected, next): (&[Expect], &mut usize) = if event.subject == a {
             (&A_EXPECTED, &mut a_next)
