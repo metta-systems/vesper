@@ -101,7 +101,6 @@ Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memo
 - [ ] Implement mapping-local Unmap versus origin-capability Revoke of descendants: retain the origin, define partial completion, and prevent racing mapping installation.
 - [ ] Encode and enforce origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no-Frame-slot-reuse rule.
 - [ ] Implement the revocation/reclamation completion protocol: teardown bookkeeping retained across partial map/unmap failures, Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
-- [ ] Define per-target MMU/MPU/IOMMU, address-width and DMA restrictions, with a protected-context fallback that never downgrades hostile-code isolation.
 - [ ] Test rights denial for `Frame.Map`, `PageTable.Map` and `ASIDPool.Assign`; inject failures before and after Retype reservation and check ownership and accounting; test partial mapping failures, revocation races, cross-AddressSpace reuse without stale-data disclosure, and run target integration for retype → map → access → unmap/revoke → safe reuse, including failure paths.
 
 ## Phase 6 — Deferred completion and IPC
@@ -142,8 +141,6 @@ Secondary-core bring-up, the kernel lock, IPIs and Threads on several cores are 
 ## Final integration
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
-  - [ ] Move endpoint-test's fixture init pages and hand-wired Invocations onto the init record and the generated-interface import wiring Kickstart gives drivers (`DriverInit`, `imports.if`).
-  - [ ] Move the Bounce fixture (sync-test, ppc-test, via `libkicktest::bounce`) onto EL0 components where it does not need EL1 register access.
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`) and enable the protections the running core supports.
   - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN: set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN`. Prerequisite: the EL1t boot Thread stops using its EL0-accessible low stack. Validate on a core with FEAT_PAN (QEMU `virt` with a newer CPU).
   - [ ] Select `CPTR_EL2.TZ`/`TSM` by feature: `libboot`'s `_startup_in_rust` sets them (RES1 on ARMv8.0); with SVE or SME they must be cleared so traps reach EL1 through `CPACR_EL1.ZEN`/`SMEN`.

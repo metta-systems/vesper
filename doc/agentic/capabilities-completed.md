@@ -69,7 +69,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] Queued-rendezvous endpoint example as a userspace composition over Invocation and Notification/EventCount (`test-endpoint`).
 - [x] Fault delivery: synchronous upcall into `KeySlot::FAULT_HANDLER`, retry/skip/terminate, unhandled faults park the Thread as `Faulted` (`test-fault`).
 
-## Carved objects and device memory
+## Carved objects
 
 Time and scheduling work is in [`scheduling-completed.md`](scheduling-completed.md).
 
@@ -79,15 +79,6 @@ Time and scheduling work is in [`scheduling-completed.md`](scheduling-completed.
 - [x] `Untyped.Retype` creates inert, unbound AddressSpaces; `AddressSpace.Bind` (op 2, `MAP` on the AddressSpace, `INSTALL` on the KeyTable) binds a self-naming KeyTable once, installing the `THREAD_RETURN` sentinel, and a table may serve several AddressSpaces; Activate, CreateInvocation, `Scheduler.ConfigureThread` and Calls into an unbound AddressSpace fail with `NotBound` (status 40) while PageTable/Frame mapping and `ASIDPool.Assign` work; the component loader creates component AddressSpaces through Retype and Bind (`kernel/nucleus/src/api/arch/address_space.rs`, `libs/object/src/address_space.rs`, `libs/component-loader/src/component.rs`; host ABI tests, `memory-test` `address_space_bind`, every component-loading test kernel).
 - [x] `InvalidSelfReference` (status 41; `x1` the self slot, `InvalidSelfReference::KeyTableKey(4)`; `x2` the key that led to the table) is reported at syscall entry, by `AddressSpace.Bind` and by `CreateInvocation's` placement check for a table whose `SELF_KEYTABLE` capability does not name it (a `CallWithKey` caller gets `NotBound` instead), replacing the provisional `InconsistentKey`/`CapabilityInvalidated` (`libs/object/src/syscall_status.rs`, `objects/invocation.rs`, `api/arch/address_space.rs`; host ABI tests, nucleus `debug_console` suite, `memory-test`).
 - [x] Retired objects are held until cleanup: no retirable kind is pooled, and a retired Thread's or AddressSpace's carved memory is never re-carved (`memory-test`, `sync-test`).
-- [x] Device Frames: Retype carves Frames from a device Untyped without zeroing them, and `Frame.Map` installs them as Device-nGnRnE memory, never executable (nucleus `untyped` and `page_table` tests).
-- [x] Kickstart hands out device Untypeds for the enabled device-tree ranges (page-rounded, merged, aligned power-of-two blocks, kernel-owned pages withheld) in boot slots from 160, recording the range in `BOOT_INFO` (`kickstart::bootstrap::install_device_untypeds`; `memory-test` checks none overlaps the interrupt controller and maps and reads the PL011 through one).
-- [x] The ARM local interrupt block (`brcm,bcm2836-l1-intc`) is withheld from device memory on every board (`kickstart::privileged::WITHHELD`; `libkicktest::devices::assert_device_untypeds_avoid_the_kernel` in `preempt-test` on rpi3 and rpi4 and in `memory-test`).
-
-## Final integration
-
-- [x] Separately linked EL0 component images, bundled and loaded in place (`libs/image`, `libs/image-build`, `image.toml` manifests).
-- [x] Kickstart finds its nucleus image through the manifest.
-- [x] `EXECUTE` mappings are executable at exactly one level (PXN/UXN), never RW+X at EL0.
 
 ## Later capability work
 

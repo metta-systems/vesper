@@ -14,4 +14,5 @@ item leaves a one-line marker in [memory-completed.md](memory-completed.md).
 - [ ] EL0 cache maintenance (`SCTLR_EL1.UCI`) for components that maintain shared buffers themselves, as MEM2 selects.
 - [ ] Implement fbuf setup that agrees addresses for every participant before mapping, with reservation/conflict handling and rollback before pointers are published.
 - [ ] Implement exclusive, immutable-shared and mutable-shared modes with explicit transitions, and `MappedSlice` ownership of a private, non-derivable capability and mapping with incarnation-checked Drop cleanup.
+- [ ] Define per-target MMU/MPU/IOMMU, address-width and DMA restrictions, with a protected-context fallback that never downgrades hostile-code isolation.
 - [ ] Implement `ASIDControl` pool creation and partitioning of the 16-bit ASID space once its schema is selected.

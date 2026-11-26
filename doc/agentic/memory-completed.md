@@ -3,6 +3,8 @@
 One line per finished item of [memory-implementation-plan.md](memory-implementation-plan.md).
 
 - [x] Buffer is a userspace construct over Frames; no kernel Buffer kind.
+- [x] Device Frames: Retype carves Frames from a device Untyped without zeroing them, and `Frame.Map` installs them as Device-nGnRnE memory, never executable (nucleus `untyped` and `page_table` tests).
+- [x] `EXECUTE` mappings are executable at exactly one level (PXN/UXN), never RW+X at EL0.
 - [x] Explicit PageTable installation (`PageTable.Map`/`Unmap`); `Frame.Map`/`Unmap`/`GetAddress` with an explicit target AddressSpace, rights ceiling, W^X at one exception level and recorded mapping identity; Copy installs no mapping.
 - [x] No intra-AddressSpace physical aliases (`PhysicalAlias`); cross-AddressSpace aliases allowed.
 - [x] ASID pool allocation, `ASIDPool.Assign`, ASID-scoped TLB invalidation on unmap, `AddressSpace.Activate` installing the root, non-global TTBR0 leaves (`test-memory`).

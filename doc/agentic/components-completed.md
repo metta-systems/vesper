@@ -2,6 +2,10 @@
 
 One line per finished item of [components-implementation-plan.md](components-implementation-plan.md).
 
+- [x] Separately linked EL0 component images, bundled and loaded in place (`libs/image`, `libs/image-build`, `image.toml` manifests).
+- [x] Kickstart finds its nucleus image through the manifest.
+- [x] Kickstart hands out device Untypeds for the enabled device-tree ranges (page-rounded, merged, aligned power-of-two blocks, kernel-owned pages withheld) in boot slots from 160, recording the range in `BOOT_INFO` (`kickstart::bootstrap::install_device_untypeds`; `memory-test` checks none overlaps the interrupt controller and maps and reads the PL011 through one).
+- [x] The ARM local interrupt block (`brcm,bcm2836-l1-intc`) is withheld from device memory on every board (`kickstart::privileged::WITHHELD`; `libkicktest::devices::assert_device_untypeds_avoid_the_kernel` in `preempt-test` on rpi3 and rpi4 and in `memory-test`).
 - [x] Meddle IDL front end and Rust stub generator (`libs/meddle`, CLI `bin/meddler`), runtime support (`libs/meddle-runtime`); `mailbox_v1` generates the `mailbox` interface crate and the `mailbox-client` crate, built against the stub `mailbox` component; tested by `just _test-meddle`, linted by `just _clippy-meddle`.
 - [x] Kickstart wires `interfaces/imports.if`: each `uses ... via <property>` binds to the driver instance the client node's property links to, with one Invocation per function and one exporter stack per client, delivered in `DriverInit::imports` with the exporter's Return key in `DriverInit::return_key`; `just _test-driver` and `just _test-driver-rpi4` exercise calls and an exception from `uart1` into `aux`.
 - [x] Mailbox loading: `uses ... via first, second` link chains (Meddle, image tables, Kickstart), device Frames minted for kernel-owned pages of drivers on `privileged::SHARES_KERNEL_PAGES` (the Raspberry Pi 3 mailbox), and the `mailbox` driver in the boot image; `just _test-mailbox` and `just _test-mailbox-rpi4` load it and call it from the power node through `firmware, mboxes`.
