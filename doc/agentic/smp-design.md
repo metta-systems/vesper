@@ -72,6 +72,10 @@ All by the maintainer, 2026-11-25.
   trap stack (`SP_EL1`) with no execution stack: `el_switch` takes the EL1 mode from its
   caller (EL1t on `SP_EL0` for the boot core, EL1h for a secondary). It runs no Thread, so
   its code runs as the nucleus's idle path does, and no other stack is carved for it.
+- **No multicore kernel state (C13(a), 2026-11-26).** SMP keeps no kernel lifecycle
+  state: what multicore depends on is the kernel lock (SMP2). `libkernel-state` is only
+  the init-phase flag `InitStateLock::write` checks (maintainer, 2026-11-26: the
+  `SingleCoreMain`/`MultiCoreMain` state machine, which nothing moved, is removed).
 
 ## 1. What exists today
 
@@ -79,12 +83,12 @@ All by the maintainer, 2026-11-25.
 |---|---|---|
 | Entry | Every core that reaches `_boot_cores` (and chainboot's `_start`) compares its full affinity (Aff3, Aff2..Aff0) with `BOOT_CORE_AFFINITY` (0); the others park on `wfe` forever | `libs/boot/src/arch/aarch64/boot.s`, `boot.rs`; `bin/chainboot/src/boot.s` |
 | Core id | `libcpu::smp::CoreAffinity` (the `MPIDR_EL1` affinity fields, in PSCI `CPU_ON` layout); no logical index yet | `libs/cpu/src/arch/aarch64/smp.rs` |
-| Kernel state machine | `Init → SingleCoreMain → MultiCoreMain`; the last transition does not exist | `libs/kernel-state/src/lib.rs` |
+| Kernel state | Only an init-phase flag per image, for `InitStateLock`; nothing ends the phase, and SMP keeps no lifecycle state (C13(a)) | `libs/kernel-state/src/lib.rs` |
 | Kernel lock | `KERNEL_LOCK: IRQSafeNullLock<()>`, which protects nothing against another core; a TODO asks for the read-only / per-cpu / atomic / locked split | `kernel/nucleus/src/main.rs:58-62`, `libs/locking` |
 | Per-core state | Kept as plain fields of the one `Nucleus`: `current_thread`, `current_since_ticks`, `dispatched`, `dispatch_next`, `preempt_requested`, `interrupt_ticks`, `idle_ticks`; plus statics `IDLING`, `timer::PROGRAMMED`, the FP owner in `fp_unit` | `kernel/nucleus/src/objects/nucleus.rs:89-132`, `main.rs`, `timer.rs`, `objects/arch/fp_unit.rs` |
 | Kernel stack | One 512 KiB trap stack per core in `SP_EL1`, mapped by Kickstart in slots after the nucleus's `__STACK_VIRT_BOTTOM` with guard pages; a per-core record (`nucleus::core_record`) in `TPIDR_EL1` on every core; the boot Thread runs EL1t on the init stack after the image, the secondaries EL1h on their trap stacks | `kernel/kickstart/src/cores.rs`, `paging.rs`, `el_switch.rs` |
 | EL2 → EL1 | Kickstart runs at EL2 with the MMU off, builds the tables, releases the secondaries, then `el_switch` sets VBAR, MAIR, TCR (inner shareable), SCTLR and drops to EL1t; each secondary runs the same `el_switch` into EL1h | `kernel/kickstart/src/el_switch.rs`, `secondary.rs` |
-| Secondary cores | Released by the start-method component at EL2; at EL1 each sets its bit in `ONLINE` and parks in Kickstart's image on `wfe` (no idle loop in the nucleus yet); the boot core waits for them for at most 1 s in `el1_entry` | `kernel/kickstart/src/secondary.rs`, `lib.rs` |
+| Secondary cores | Released by the start-method component at EL2; at EL1 each sets its bit in `ONLINE` and goes on into the nucleus's `nucleus_secondary_idle` (`TTBR0` walks and its timers off, `wfi` with interrupts masked, no nucleus state touched); the boot core waits for them for at most 1 s in `el1_entry` | `kernel/kickstart/src/secondary.rs`, `lib.rs`; `kernel/nucleus/src/main.rs` |
 | TLB maintenance | Nucleus already uses broadcast forms (`tlbi vae1is`, `tlbi aside1is`, `dsb ish`); Kickstart's boot flush is local `tlbi vmalle1` | `objects/arch/aarch64_objects.rs`, `el_switch.rs` |
 | Interrupt controller ABI | `IrqChipOps`: `init`, `claim` (on the calling CPU), `complete`, `mask`, `unmask`, `set_trigger`, `xlate`. No per-CPU init, no IPI, no routing | `libs/irqchip/src/lib.rs` |
 | BCM2836 component | Drives core 0's local registers only; core 1–3 timer, mailbox and source registers are reserved fields | `drivers/irqchip-bcm2836/src/lib.rs` |
@@ -144,6 +148,12 @@ complete on the Pi's cores (the chainboot rule). The rule that follows:
 - The secondary reads its parameters with plain loads, enables its MMU and caches, and
   only then signals "online" through a cacheable atomic, which the boot core reads
   coherently.
+- Set/way maintenance is local to the core doing it, so the whole hierarchy (with the
+  levels the cores share) is cleaned and invalidated once, by the boot core, before the
+  release; a secondary walks only its own L1.
+- What a secondary writes with caches on (`ONLINE`) sits in a cache line of its own: a
+  dirty line written back later would overwrite whatever the boot core stored in the same
+  line with its caches off after the release.
 
 ### Start-method components
 

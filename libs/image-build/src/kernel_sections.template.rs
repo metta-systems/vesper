@@ -58,6 +58,10 @@ pub const NUCLEUS_SET_PLATFORM_VIRT: u64 = {{nucleus_set_platform_virt | address
 /// its component lines and a panic on.
 pub const NUCLEUS_SET_BOARD_CONSOLE_VIRT: u64 = {{nucleus_set_board_console_virt | address}};
 
+/// Exported wait of a secondary core that runs no Thread, entered at `EL1h` on its trap
+/// stack.
+pub const NUCLEUS_SECONDARY_IDLE_VIRT: u64 = {{nucleus_secondary_idle_virt | address}};
+
 // ═══════════════════════════════════════════════════════════════
 // Combined kernel sections
 // ═══════════════════════════════════════════════════════════════

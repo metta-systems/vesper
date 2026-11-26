@@ -129,6 +129,39 @@ pub unsafe extern "C" fn nucleus_set_board_console(base: usize) {
     }
 }
 
+/// Where a secondary core waits while it runs no Thread (SMP1). Kickstart's secondary
+/// entry jumps here at `EL1h` on the core's trap stack, interrupts masked, MMU and caches
+/// on, once the core is online.
+///
+/// The core touches no nucleus state and takes no lock: it only waits. Its `TTBR0_EL1`
+/// still names Kickstart's identity map, which is Kickstart's memory, so translation
+/// walks through `TTBR0` stop here; its timers are turned off, since their reset state is
+/// UNKNOWN and a pending one would end every `wfi`.
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.bootstrap")]
+pub extern "C" fn nucleus_secondary_idle() -> ! {
+    use aarch64_cpu::{
+        asm::barrier,
+        registers::{CNTP_CTL_EL0, CNTV_CTL_EL0, Read, TCR_EL1, Write},
+    };
+    TCR_EL1.modify(TCR_EL1::EPD0::DisableTTBR0Walks);
+    barrier::isb(barrier::SY);
+    // SAFETY: dropping this core's own TLB entries only costs walks.
+    unsafe {
+        asm!(
+            "tlbi vmalle1",
+            "dsb nsh",
+            "isb",
+            options(nostack, preserves_flags)
+        );
+    }
+    CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::CLEAR + CNTP_CTL_EL0::IMASK::SET);
+    CNTV_CTL_EL0.write(CNTV_CTL_EL0::ENABLE::CLEAR + CNTV_CTL_EL0::IMASK::SET);
+    loop {
+        aarch64_cpu::asm::wfi();
+    }
+}
+
 /// Print `line` on the board console, when Kickstart gave one.
 fn board_line(line: core::fmt::Arguments) {
     board_console::line(line);

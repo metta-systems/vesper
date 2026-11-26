@@ -34,6 +34,13 @@ mod qsort;
 mod secondary;
 pub mod serial;
 
+/// The secondary cores as Kickstart started them, read at EL1 (`smp-test`).
+pub mod smp {
+    #[cfg(feature = "smp_test")]
+    pub use crate::secondary::{COHERENCY_ROUNDS, coherency_check};
+    pub use crate::secondary::{online_cores, released_cores, reported_affinity};
+}
+
 use {
     crate::{
         boot_info::{BOOT_INFO, DeviceTreeBlob},
@@ -630,6 +637,14 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     semi::println!("📕 Kernel mapping tables filled in as ? for kernel, as ? for phys memory");
 
     print_my_sp();
+
+    // The data caches may hold lines from before: the firmware's, out of reset UNKNOWN.
+    // Kickstart wrote the tables and loaded the nucleus with caches off, so a stale line
+    // would hide them once caches are on. Clean as well as invalidate: the firmware
+    // resident at EL3 (the Raspberry Pi 4 and 5's Arm Trusted Firmware) ran with caches
+    // on, and its dirty lines must reach memory. The walk covers the levels the cores
+    // share, so it runs before any other core turns its caches on.
+    libcpu::cache::clean_invalidate_data_caches();
 
     // The secondary cores go to EL1 on the same tables and vectors; `el1_entry` waits
     // for them.
