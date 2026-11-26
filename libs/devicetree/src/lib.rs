@@ -9,11 +9,13 @@
 //! - `compatible` is a string list matched entry by entry;
 //! - [`interrupts`] resolves interrupt routing: the generic timer, the root
 //!   controller and each node's interrupts with their controller;
+//! - [`cpus`] lists the CPUs with their affinity and start method, and the PSCI node;
 //! - [`DeviceTree::board`] and its siblings find what boot programs need
 //!   before any driver runs: the board, the console UART, the firmware mailbox
 //!   and the activity LED.
 
 mod board;
+pub mod cpus;
 mod dump;
 pub mod interrupts;
 pub mod pci;

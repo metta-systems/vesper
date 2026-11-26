@@ -21,16 +21,6 @@ Secondaries run no Threads; the kernel lock is still the null lock because they 
 enter the shared kernel state. Order: QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3
 and Pi 5 boards.
 
-- [ ] `libdevicetree`: parse `/cpus` (count, `reg`, `enable-method`, `cpu-release-addr`)
-  and the PSCI node, with host tests on the three board trees in `targets/`.
-- [ ] Start-method ABI crate (working name `libs/cpu-start`): operation table, version,
-  configuration and compatible section, as in the design; host tests of the layout.
-- [ ] `cpu-start-spin-table` and `cpu-start-psci` components, position-independent like
-  the interrupt-controller components and checked the same way (relocation kinds, no
-  FP); host tests of the release-word writes and the PSCI call and error mapping.
-- [ ] Kickstart: pick the component from the `/cpus` `enable-method` once (refusing a
-  tree whose nodes disagree), bundle the implementations in the image, relocate and call
-  only the one picked, at EL2. The nucleus does not get its table.
 - [ ] Kickstart: reserve `/reserved-memory` `no-map` nodes (Pi 5 `atf@0`) as it does
   `/memreserve/`, if the firmware's memory node does not already exclude them; check that
   chainboot leaves the first page alone.
@@ -41,8 +31,9 @@ and Pi 5 boards.
 - [ ] A secondary entry: the EL2 prologue factored out of `_startup_in_rust` (and the
   `qemu` EL3 → EL2 step), then `el_switch` with the shared `TTBR1`/`TCR`/`MAIR`/`VBAR`,
   its own `SP_EL1` and `TPIDR_EL1`, no BSS clear, no atomics before its MMU is on.
-- [ ] Release the cores just before Kickstart's own drop to EL1, with the
-  mixed-attribute handshake of the design (plain stores cleaned to PoC; "online"
+- [ ] Release the cores just before Kickstart's own drop to EL1 through the loaded
+  component (`cpu_start::LoadedCpuStart::start`), with the mixed-attribute handshake of
+  the design (plain stores cleaned to PoC; "online"
   signalled by a cacheable atomic after the MMU is on).
 - [ ] Nucleus: a secondary idle loop (`wfi`, interrupts masked, no Thread) and the
   `MultiCoreMain` state transition in `libkernel-state`.
@@ -54,8 +45,8 @@ and Pi 5 boards.
 
 - [ ] Move the per-core fields of `Nucleus` and the per-core statics (`IDLING`,
   `timer::PROGRAMMED`, the `fp_unit` owner) into the per-core record, reached through
-  `TPIDR_EL1`. Update the scheduler-record totals as
-  [C11](smp-decisions.md#c11-nucleus-wide-totals-in-the-scheduler-records) selects.
+  `TPIDR_EL1`. The nucleus totals become per-core and each core publishes its own in its
+  root Scheduler record (C11(a)).
 - [ ] Replace `KERNEL_LOCK`'s `IRQSafeNullLock` with a ticket spinlock taken on every
   kernel entry; host model tests of the lock, and a debug check that no path waits for
   another core while holding it.

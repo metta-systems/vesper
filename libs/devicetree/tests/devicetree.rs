@@ -1277,4 +1277,79 @@ mod tests {
             });
         }
     }
+
+    mod cpus {
+        use {
+            super::{RPI3, RPI4, RPI5, with_index},
+            vesper_devicetree::cpus::{
+                Cpu, PSCI, PSCI_CPU_ON_64, Psci, PsciConduit, SPIN_TABLE, common_enable_method,
+                cpus, psci,
+            },
+        };
+
+        /// The spin-table CPUs of the Raspberry Pi 3 and 4: Aff0 0..3, release words
+        /// 0xd8, 0xe0, 0xe8, 0xf0.
+        fn spin_table_cpus() -> Vec<Cpu<'static>> {
+            [0xd8, 0xe0, 0xe8, 0xf0]
+                .into_iter()
+                .enumerate()
+                .map(|(index, release_address)| Cpu {
+                    index,
+                    affinity: index as u64,
+                    enable_method: Some(SPIN_TABLE),
+                    release_address: Some(release_address),
+                })
+                .collect()
+        }
+
+        #[test]
+        fn pi_3_and_4_cpus_are_released_through_a_spin_table() {
+            for blob in [RPI3, RPI4] {
+                with_index(blob, |tree| {
+                    assert_eq!(cpus(tree).collect::<Vec<_>>(), spin_table_cpus());
+                    assert_eq!(common_enable_method(cpus(tree)), Some(SPIN_TABLE));
+                    assert_eq!(psci(tree), None);
+                });
+            }
+        }
+
+        #[test]
+        fn pi_5_cpus_are_numbered_by_aff1_and_started_by_psci() {
+            with_index(RPI5, |tree| {
+                // The cache nodes under each `cpu@N` are not CPUs.
+                let found: Vec<_> = cpus(tree).collect();
+                let affinities: Vec<_> = found.iter().map(|cpu| cpu.affinity).collect();
+                assert_eq!(affinities, [0x000, 0x100, 0x200, 0x300]);
+                assert!(
+                    found
+                        .iter()
+                        .enumerate()
+                        .all(|(index, cpu)| cpu.index == index
+                            && cpu.enable_method == Some(PSCI)
+                            && cpu.release_address.is_none())
+                );
+                assert_eq!(common_enable_method(cpus(tree)), Some(PSCI));
+                assert_eq!(
+                    psci(tree),
+                    Some(Psci {
+                        compatible: "arm,psci-1.0",
+                        conduit: PsciConduit::Smc,
+                        cpu_on: PSCI_CPU_ON_64,
+                    })
+                );
+            });
+        }
+
+        #[test]
+        fn disagreeing_or_missing_enable_methods_have_no_common_method() {
+            let spin = spin_table_cpus();
+            let mut mixed = spin.clone();
+            mixed[2].enable_method = Some(PSCI);
+            assert_eq!(common_enable_method(mixed.into_iter()), None);
+            let mut missing = spin;
+            missing[0].enable_method = None;
+            assert_eq!(common_enable_method(missing.into_iter()), None);
+            assert_eq!(common_enable_method(core::iter::empty()), None);
+        }
+    }
 }

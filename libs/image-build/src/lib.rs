@@ -431,8 +431,8 @@ const INCLUDED_KINDS: [&str; 3] = ["driver", "component", "resource"];
 /// `interfaces` directories before the manifest's. Its relative paths (an
 /// entry's `interfaces`, a resource's `file`, the top-level `interfaces`)
 /// are relative to the fragment and are made absolute before merging.
-/// A fragment cannot include further fragments or carry `[nucleus]` or
-/// `[[privileged]]`, and no two drivers or components, nor two resources, of
+/// A fragment cannot include further fragments or carry `[nucleus]`,
+/// `[[privileged]]` or `[[cpu_start]]`, and no two drivers or components, nor two resources, of
 /// the merged manifest can share a name.
 fn read_manifest(path: &Path) -> toml::Table {
     let mut table = parse_manifest(path);
@@ -453,7 +453,7 @@ fn read_manifest(path: &Path) -> toml::Table {
                 .unwrap_or_else(|| panic!("{}: `include` lists manifest paths", path.display())),
         );
         let fragment = parse_manifest(&fragment_path);
-        for key in ["include", "nucleus", "privileged"] {
+        for key in ["include", "nucleus", "privileged", "cpu_start"] {
             assert!(
                 !fragment.contains_key(key),
                 "{}: an included manifest cannot have `{key}`",
@@ -661,6 +661,11 @@ pub fn generate_kernel(manifest: &str) {
 /// Render the template of the generated file `file` in `$OUT_DIR` with
 /// `context`, and write it there.
 fn render(file: &str, context: &Value) {
+    render_as(file, file, context);
+}
+
+/// Render the template `file` with `context` into `$OUT_DIR/<output>`.
+fn render_as(file: &str, output: &str, context: &Value) {
     let mut environment = Environment::new();
     environment.set_syntax(
         SyntaxConfig::builder()
@@ -691,8 +696,8 @@ fn render(file: &str, context: &Value) {
         .get_template(file)
         .and_then(|template| template.render(context))
         .unwrap_or_else(|error| panic!("cannot render {file}: {error:#}"));
-    fs::write(out_dir().join(file), rendered)
-        .unwrap_or_else(|error| panic!("cannot write {file}: {error}"));
+    fs::write(out_dir().join(output), rendered)
+        .unwrap_or_else(|error| panic!("cannot write {output}: {error}"));
 }
 
 // ─── Privileged components ──────────────────────────────────────────────
@@ -716,21 +721,67 @@ pub struct PrivilegedElf {
     pub segments: Vec<PrivilegedSegment>,
     /// `(offset, addend)` of every `R_AARCH64_RELATIVE` relocation
     pub relocations: Vec<(u64, u64)>,
-    /// Offset of the operation table (`libirqchip::OPS_SYMBOL`)
+    /// Offset of the operation table (`kind.ops_symbol`)
     pub ops_offset: u64,
-    /// Device tree `compatible` strings, in kind order
+    /// The device tree strings it serves (`kind.list_section`), in order
     pub compatible: Vec<String>,
 }
 
+/// One family of position-independent components: what its manifest entries are called,
+/// the operation table every one exports and the section naming what it serves.
+#[derive(Debug, Clone, Copy)]
+pub struct PieKind {
+    /// The manifest key of its entries (`[[privileged]]`)
+    pub manifest_key: &'static str,
+    /// The exported operation table
+    pub ops_symbol: &'static str,
+    /// The section of NUL-terminated strings it serves
+    pub list_section: &'static str,
+    /// Its linker script, for diagnostics
+    pub link_script: &'static str,
+    /// The generated file and the static listing every image in it
+    pub output: &'static str,
+    pub list_name: &'static str,
+}
+
+/// Interrupt-controller components (`libirqchip`): served by `compatible`.
+pub const INTERRUPT_CONTROLLERS: PieKind = PieKind {
+    manifest_key: "privileged",
+    ops_symbol: "IRQCHIP_OPS",
+    list_section: ".irqchip_compatible",
+    link_script: "linker/privileged.ld",
+    output: "privileged.rs",
+    list_name: "PRIVILEGED",
+};
+
+/// Start-method components (`libcpu-start`): served by `enable-method`.
+pub const START_METHODS: PieKind = PieKind {
+    manifest_key: "cpu_start",
+    ops_symbol: "CPU_START_OPS",
+    list_section: ".cpu_start_enable_method",
+    link_script: "linker/cpu-start.ld",
+    output: "cpu_start.rs",
+    list_name: "CPU_START",
+};
+
 impl PrivilegedElf {
-    /// Read a privileged component linked with `linker/privileged.ld`.
+    /// Read an interrupt-controller component linked with `linker/privileged.ld`.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::read_kind`].
+    pub fn read(path: &Path) -> Self {
+        Self::read_kind(path, INTERRUPT_CONTROLLERS)
+    }
+
+    /// Read a position-independent component of `kind`.
     ///
     /// # Panics
     ///
     /// If the file is not a PIE `AArch64` ELF linked at 0 with page-aligned
     /// segments, has any relocation other than `R_AARCH64_RELATIVE`, or lacks
-    /// the operation table or the `compatible` list.
-    pub fn read(path: &Path) -> Self {
+    /// the operation table or the list of what it serves.
+    pub fn read_kind(path: &Path, kind: PieKind) -> Self {
         use goblin::elf::{
             program_header::{PF_W, PF_X, PT_INTERP, PT_LOAD},
             reloc::R_AARCH64_RELATIVE,
@@ -765,7 +816,8 @@ impl PrivilegedElf {
                 assert_eq!(
                     header.p_vaddr % PAGE_SIZE,
                     0,
-                    "{display}: segments must be page-aligned (use linker/privileged.ld)"
+                    "{display}: segments must be page-aligned (use {})",
+                    kind.link_script
                 );
                 let start = usize::try_from(header.p_offset).unwrap_or(usize::MAX);
                 let end = start + usize::try_from(header.p_filesz).unwrap_or(usize::MAX);
@@ -816,16 +868,16 @@ impl PrivilegedElf {
         let ops_offset = elf
             .syms
             .iter()
-            .find(|symbol| elf.strtab.get_at(symbol.st_name) == Some("IRQCHIP_OPS"))
+            .find(|symbol| elf.strtab.get_at(symbol.st_name) == Some(kind.ops_symbol))
             .map_or_else(
-                || panic!("{display}: missing the IRQCHIP_OPS operation table"),
+                || panic!("{display}: missing the {} operation table", kind.ops_symbol),
                 |symbol| symbol.st_value,
             );
 
         let compatible = elf
             .section_headers
             .iter()
-            .find(|header| elf.shdr_strtab.get_at(header.sh_name) == Some(".irqchip_compatible"))
+            .find(|header| elf.shdr_strtab.get_at(header.sh_name) == Some(kind.list_section))
             .map(|header| {
                 let start = usize::try_from(header.sh_offset).unwrap_or(usize::MAX);
                 let end = start + usize::try_from(header.sh_size).unwrap_or(usize::MAX);
@@ -840,7 +892,7 @@ impl PrivilegedElf {
                     .collect::<Vec<_>>()
             })
             .filter(|compatible| !compatible.is_empty())
-            .unwrap_or_else(|| panic!("{display}: missing the .irqchip_compatible list"));
+            .unwrap_or_else(|| panic!("{display}: missing the {} list", kind.list_section));
 
         Self {
             segments,
@@ -859,23 +911,41 @@ impl PrivilegedElf {
 /// Each entry names the component (`name`, an identifier) and its cargo
 /// `binary`, built with `linker/privileged.ld` as a PIE.
 pub fn bundle_privileged(manifest: &str) {
+    bundle_pie(manifest, INTERRUPT_CONTROLLERS);
+}
+
+/// Bundle the `[[cpu_start]]` entries of `manifest` (relative to the crate) into
+/// `$OUT_DIR/cpu_start.rs`: one `pub static <NAME>: libimage::PrivilegedImage` per
+/// start-method component, whose `compatible` lists the `enable-method` values it
+/// implements, plus `pub static CPU_START: &[&PrivilegedImage]`, empty when the manifest
+/// lists none.
+///
+/// Each entry names the component (`name`, an identifier) and its cargo `binary`, built
+/// with `linker/cpu-start.ld` as a PIE.
+pub fn bundle_cpu_start(manifest: &str) {
+    bundle_pie(manifest, START_METHODS);
+}
+
+/// Bundle the manifest entries of `kind` into `$OUT_DIR/<kind.output>`.
+fn bundle_pie(manifest: &str, kind: PieKind) {
     let (manifest_path, table) = load_manifest(manifest);
     let out = out_dir();
+    let key = kind.manifest_key;
 
     let mut components = Vec::new();
     let entries = table
-        .get("privileged")
+        .get(key)
         .and_then(toml::Value::as_array)
         .cloned()
         .unwrap_or_default();
     for entry in &entries {
-        let field = |key: &str| {
+        let field = |field_key: &str| {
             entry
-                .get(key)
+                .get(field_key)
                 .and_then(toml::Value::as_str)
                 .unwrap_or_else(|| {
                     panic!(
-                        "{}: a [[privileged]] entry has no {key}",
+                        "{}: a [[{key}]] entry has no {field_key}",
                         manifest_path.display()
                     )
                 })
@@ -883,11 +953,11 @@ pub fn bundle_privileged(manifest: &str) {
         let name = field("name");
         assert!(
             name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
-            "{}: privileged component name `{name}` must be an identifier",
+            "{}: [[{key}]] component name `{name}` must be an identifier",
             manifest_path.display()
         );
         let binary = field("binary");
-        let image = PrivilegedElf::read(&find_artifact(binary));
+        let image = PrivilegedElf::read_kind(&find_artifact(binary), kind);
         let stem = name.to_uppercase();
 
         let segments: Vec<_> = image
@@ -895,7 +965,7 @@ pub fn bundle_privileged(manifest: &str) {
             .iter()
             .enumerate()
             .map(|(index, segment)| {
-                let bin_file = format!("privileged_{name}_{index}.bin");
+                let bin_file = format!("{key}_{name}_{index}.bin");
                 fs::write(out.join(&bin_file), &segment.data)
                     .unwrap_or_else(|error| panic!("cannot write {bin_file}: {error}"));
                 context! {
@@ -915,7 +985,7 @@ pub fn bundle_privileged(manifest: &str) {
             .map(|(offset, addend)| context! { offset, addend })
             .collect();
         println!(
-            "cargo::warning=info: Bundled privileged {name} ({binary}): {} segments, {} relocations, drives [{}]",
+            "cargo::warning=info: Bundled {key} {name} ({binary}): {} segments, {} relocations, serves [{}]",
             image.segments.len(),
             image.relocations.len(),
             image.compatible.join(", ")
@@ -930,9 +1000,10 @@ pub fn bundle_privileged(manifest: &str) {
             ops_offset => image.ops_offset,
         });
     }
-    render(
+    render_as(
         "privileged.rs",
-        &context! { components, page_size => PAGE_SIZE },
+        kind.output,
+        &context! { components, page_size => PAGE_SIZE, list_name => kind.list_name },
     );
 }
 

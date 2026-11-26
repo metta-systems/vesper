@@ -1,0 +1,37 @@
+[package]
+name = "cpu-start-psci"
+
+description = "Start-method component that starts secondary cores with PSCI CPU_ON (Raspberry Pi 5)."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+# Opt in to standard host integration tests of the call and error mapping.
+host-tests = []
+
+[dependencies]
+libcpu-start = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "cpu-start-psci"
+test = false
+
+[[test]]
+name = "psci"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

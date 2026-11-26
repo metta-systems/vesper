@@ -18,6 +18,7 @@
 
 mod boot_info;
 pub mod bootstrap;
+mod cpu_start;
 pub mod device_tree;
 pub mod drivers;
 pub mod early_console;
@@ -425,6 +426,14 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
         })
         .ok();
 
+    // Pick the start-method component the same way; without one the system runs on
+    // the boot core alone.
+    let cpu_start_plan = cpu_start::plan(&device_tree, embed::cpu_start::CPU_START)
+        .inspect_err(|reason| {
+            semi::println!("🥾 No secondary cores: {reason}");
+        })
+        .ok();
+
     // unsafe {
     //     BOOT_INFO.dtb_size = dtb.total_size();
 
@@ -558,6 +567,16 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             .expect("🥾 Failed to load the interrupt controller component");
         privileged::record(&handoff);
     }
+
+    // The start-method component, loaded and initialised at EL2; it releases the
+    // secondary cores before Kickstart drops to EL1.
+    let _start_method = cpu_start_plan.as_ref().and_then(|plan| {
+        cpu_start::load(plan, mmu_setup.allocator())
+            .inspect_err(|reason| {
+                semi::println!("🥾 No secondary cores: {reason}");
+            })
+            .ok()
+    });
 
     // ═══════════════════════════════════════════════════════════════
     // Interlude: Print the BOOT_INFO region map
