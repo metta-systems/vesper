@@ -14,24 +14,21 @@ starts. Mark an item `- [x]` only after its validation has passed; a finished it
 leaves a one-line marker in [smp-completed.md](smp-completed.md).
 
 Done: SMP0 (the decisions), SMP1 except its board runs, SMP2 (the kernel lock and
-per-core state); see [smp-completed.md](smp-completed.md).
+per-core state), SMP3 (inter-processor interrupts; retirement and the cross-core
+Reschedule moved to Phase 11 of the scheduling plan); see
+[smp-completed.md](smp-completed.md).
 
 ## SMP1: cores online, idle
 
-Secondaries run no Threads and never enter the kernel. Order: QEMU `raspi3b` and
-`raspi4b`, then the Pi 4, Pi 3 and Pi 5 boards.
+Secondaries run no Threads; they enter the kernel only to prepare themselves at the
+interrupt controller and to take IPIs. Order: QEMU `raspi3b` and `raspi4b`, then the
+Pi 4, Pi 3 and Pi 5 boards.
 
 - [ ] Board runs of `smp-test` (`just boot-smp-test`, or `smp-test-<boards>.bin` on a card)
   on the Pi 3 and Pi 5 (the Pi 4 passes): `smp-test: PASS`, which checks `SMPEN`
-  coherency with the cross-core counter; the Pi 5 is the first run of the PSCI component
-  and of the `no-map` reservation.
-
-## SMP3: inter-processor interrupts
-
-- [ ] Check the BCM2836 mailbox write-set (`0x80`) and read/write-clear (`0xc0`)
-  register offsets, and the mailbox interrupt semantics, against the QA7 datasheet; it is
-  not in the repository and the sandbox cannot fetch it.
-- [ ] `smp-test` case: an IPI round trip on each core.
+  coherency with the cross-core counter and an IPI round trip with each core; the Pi 3 is
+  the first run of the BCM2836 mailbox IPIs, the Pi 5 the first of the PSCI component and
+  the `no-map` reservation.
 
 ## SMP4: Threads on secondary cores
 

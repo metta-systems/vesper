@@ -24,6 +24,9 @@ debug_kernel = ["fp_entry_trap"]
 # Test-only: absorb FP/SIMD access traps for `fp-trap-test` (see `absorb_fp_simd_trap`), and run its
 # kernel probe on request (`run_kernel_fp_probe`); never enable in production kernels.
 fp_trap_test = ["dep:fp-trap-protocol"]
+# Test-only: the IPI round trip of `smp-test` (`IPI_PING`/`IPI_PONG` and the ping SVC, see
+# `smp_test_ping`); never enable in production kernels.
+smp_test = []
 # Trap FP/SIMD while the kernel runs, also when entered from an FP frame (`FpEntryGuard`);
 # on in debug kernels, off in release kernels.
 fp_entry_trap = []

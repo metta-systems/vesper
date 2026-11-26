@@ -23,15 +23,15 @@
 //! raises the target's line while any of its bits is set, and the target's
 //! claim clears it through the read/write-clear register.
 //!
-//! Resources: the BCM2836 "QA7" local peripherals and BCM2835 ARM
-//! peripherals datasheets; the BCM2711 ARM Peripherals manual, §6.5.2
-//! (`ARM_LOCAL`, Table 104: the per-core timer control, mailbox control and IRQ
-//! source registers at 0x40, 0x50 and 0x60, one word per core); the
-//! `brcm,bcm2836-l1-intc` and `brcm,bcm2835-armctrl-ic` device tree bindings;
-//! QEMU `hw/intc/bcm2836_control.c` (the mailbox write-set registers at 0x80
-//! and read/write-clear registers at 0xc0, `0x10 * core + 4 * mailbox`) and
-//! `bcm2835_ic.c`. The mailbox register offsets are not yet checked against
-//! QA7.
+//! Resources: the BCM2836 "QA7" local peripherals datasheet, rev 3.4
+//! (`doc/bcm2836-peripherals.pdf`): §3.3 (a mailbox is a write-bits-high-to-set
+//! and write-bits-high-to-clear register and interrupts while non-zero; mailboxes
+//! 0-3 are core 0's, 4-7 core 1's), §4 (the register map), §4.7 (the per-core
+//! mailbox interrupt control at 0x50), §4.8 (the mailbox write-set registers at
+//! 0x80 and read/write-clear registers at 0xc0, `0x10 * core + 4 * mailbox`) and
+//! §4.10 (the per-core interrupt source at 0x60); the BCM2835 ARM peripherals
+//! datasheet; the `brcm,bcm2836-l1-intc` and `brcm,bcm2835-armctrl-ic` device
+//! tree bindings; QEMU `hw/intc/bcm2836_control.c` and `bcm2835_ic.c`.
 
 use {
     bitbybit::{bitenum, bitfield},

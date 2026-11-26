@@ -145,6 +145,13 @@ fn take_ipis() -> bool {
     if kinds & nucleus::core_record::IPI_HALT != 0 {
         park_for_panic()
     }
+    #[cfg(feature = "smp_test")]
+    if kinds & nucleus::core_record::IPI_PING != 0 {
+        let boot_core = TIMER_CORE.load(Ordering::Relaxed);
+        if boot_core != 0 {
+            send_ipis(1 << (boot_core - 1), nucleus::core_record::IPI_PONG);
+        }
+    }
     kinds & nucleus::core_record::IPI_RESCHEDULE != 0
 }
 
@@ -504,7 +511,27 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
         default_exception_handler(e);
     }
     let _kernel = KERNEL_LOCK.enter();
+    #[cfg(feature = "smp_test")]
+    if smp_test_ping(e) {
+        return;
+    }
     cap_invoke_handler(e);
+}
+
+/// `smp-test`'s ping SVC (`core_record::SMP_TEST_PING_SVC`): send `IPI_PING` to the
+/// logical CPU in `x0`, which answers this core with `IPI_PONG`; `x0` returns 0 once
+/// the controller sent it, 1 otherwise. Whether the SVC was the ping. Runs under the
+/// kernel lock; the pinged core takes its IPI once this entry let the lock go.
+#[cfg(feature = "smp_test")]
+fn smp_test_ping(e: &mut ExceptionContext) -> bool {
+    use aarch64_cpu::registers::{ESR_EL1, Read};
+    if ESR_EL1.read(ESR_EL1::ISS) != u64::from(nucleus::core_record::SMP_TEST_PING_SVC) {
+        return false;
+    }
+    let cpu = e.gpr[0];
+    let sent = cpu < u64::from(u32::BITS) && send_ipis(1 << cpu, nucleus::core_record::IPI_PING);
+    e.gpr[0] = u64::from(!sent);
+    true
 }
 
 #[cfg(any(test, feature = "test_build"))]
