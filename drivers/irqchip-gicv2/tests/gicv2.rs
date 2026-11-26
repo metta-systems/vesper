@@ -10,9 +10,9 @@ mod tests {
     use {
         arm_gic::gicv2::registers::{Gicc, Gicd},
         derive_mmio::Mmio,
-        irqchip_gicv2::{ConfigError, Gic400, LINE_COUNT},
+        irqchip_gicv2::{ConfigError, Gic400, IPI_LINE, IPI_SGI, LINE_COUNT},
         libirqchip::{
-            Controller, INVALID_LINE, IrqChipConfig, MmioRegion, SPURIOUS, TRIGGER_EDGE,
+            Controller, INVALID_LINE, IrqChipConfig, MAX_CPUS, MmioRegion, SPURIOUS, TRIGGER_EDGE,
             TRIGGER_FIXED, TRIGGER_LEVEL,
         },
     };
@@ -42,7 +42,7 @@ mod tests {
         targets: [u32; 256],
         configuration: [u32; 64],
         _reserved: [u32; 128],
-        _sgir: u32,
+        sgir: u32,
         _padding: u32,
     }
 
@@ -232,6 +232,93 @@ mod tests {
         gic.set_trigger(uart, true).expect("SPI trigger");
         assert_eq!(distributor.read_configuration(index).unwrap() & edge, 0);
         assert_eq!(gic.set_trigger(3, true), Err(ConfigError::BadLine));
+    }
+
+    /// `GICD_SGIR`: the target list filter (bits 25:24, 0 = the CPU target
+    /// list), the target list (bits 23:16), `NSATT` (bit 15) and the SGI's
+    /// INTID (bits 3:0).
+    const fn sgir(target_list: u32, intid: u32) -> u32 {
+        (target_list << 16) | (1 << 15) | intid
+    }
+
+    /// Present this core as CPU interface `interface` in the banked SGI/PPI
+    /// target bytes, as a core of a multiprocessor GIC reads them.
+    fn be_cpu_interface(distributor: &mut MmioDistributorDevice<'static>, interface: u8) {
+        let byte = u32::from(interface);
+        distributor
+            .write_targets(0, byte | byte << 8 | byte << 16 | byte << 24)
+            .unwrap();
+    }
+
+    #[test]
+    fn init_cpu_records_the_banked_interface_and_enables_the_ipi_sgi() {
+        let (mut gic, mut distributor, mut cpu_interface) = gic();
+        cpu_interface.write_control(0);
+        cpu_interface.write_priority_mask(0);
+        be_cpu_interface(&mut distributor, 1 << 2);
+        gic.init_cpu(1).expect("a CPU interface");
+        let (index, bit) = bank_bit(IPI_LINE);
+        assert_ne!(distributor.read_set_enable(index).unwrap() & bit, 0);
+        assert_ne!(cpu_interface.read_control() & GICC_CTLR_ENABLE, 0);
+        assert_eq!(cpu_interface.read_priority_mask() & PRIORITY_MASK, 0xff);
+        // The recorded interface is the one an IPI to CPU 1 targets.
+        gic.send_ipi(1 << 1).expect("CPU 1 is known");
+        assert_eq!(distributor.read_sgir(), sgir(1 << 2, IPI_SGI));
+    }
+
+    #[test]
+    fn init_cpu_without_an_interface_or_beyond_max_cpus_is_refused() {
+        let (mut gic, mut distributor, _cpu_interface) = gic();
+        assert_eq!(gic.init_cpu(0), Err(ConfigError::NoCpuInterface));
+        be_cpu_interface(&mut distributor, 1);
+        assert_eq!(
+            gic.init_cpu(u32::try_from(MAX_CPUS).unwrap()),
+            Err(ConfigError::BadCpu)
+        );
+    }
+
+    #[test]
+    fn send_ipi_targets_every_named_cpu_in_one_sgir_write() {
+        let (mut gic, mut distributor, _cpu_interface) = gic();
+        // Logical CPUs 0..3 on CPU interfaces 3, 2, 1, 0: the mask names logical CPUs.
+        for (cpu, interface) in [(0, 3), (1, 2), (2, 1), (3, 0)] {
+            be_cpu_interface(&mut distributor, 1 << interface);
+            gic.init_cpu(cpu).expect("a CPU interface");
+        }
+        gic.send_ipi(0b0101).expect("CPUs 0 and 2 are known");
+        assert_eq!(distributor.read_sgir(), sgir((1 << 3) | (1 << 1), IPI_SGI));
+    }
+
+    #[test]
+    fn send_ipi_to_an_unknown_cpu_signals_nobody() {
+        let (mut gic, mut distributor, _cpu_interface) = gic();
+        be_cpu_interface(&mut distributor, 1);
+        gic.init_cpu(0).expect("a CPU interface");
+        assert_eq!(gic.send_ipi(0b11), Err(ConfigError::UnknownCpu));
+        assert_eq!(gic.send_ipi(1 << MAX_CPUS), Err(ConfigError::UnknownCpu));
+        assert_eq!(distributor.read_sgir(), 0);
+        assert_eq!(gic.send_ipi(0), Ok(()));
+        assert_eq!(distributor.read_sgir(), 0, "an empty mask writes nothing");
+    }
+
+    #[test]
+    fn a_claimed_sgi_is_ended_at_once_with_its_source_cpu() {
+        let (mut gic, _distributor, mut cpu_interface) = gic();
+        // SGI 0 from CPU interface 2: the source CPU is GICC_IAR bits 12:10.
+        let acknowledged = (2 << 10) | IPI_SGI;
+        cpu_interface.write_interrupt_acknowledge(acknowledged);
+        assert_eq!(gic.claim(), IPI_LINE);
+        assert_eq!(cpu_interface.read_end_of_interrupt(), acknowledged);
+        // Its complete writes nothing more.
+        cpu_interface.write_end_of_interrupt(0);
+        gic.complete(IPI_LINE);
+        assert_eq!(cpu_interface.read_end_of_interrupt(), 0);
+        // Any other line is ended by its complete only.
+        cpu_interface.write_interrupt_acknowledge(40);
+        assert_eq!(gic.claim(), 40);
+        assert_eq!(cpu_interface.read_end_of_interrupt(), 0);
+        gic.complete(40);
+        assert_eq!(cpu_interface.read_end_of_interrupt(), 40);
     }
 
     #[test]

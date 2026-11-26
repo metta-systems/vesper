@@ -3,11 +3,15 @@
 //! Kickstart loads the component matching the device tree's root interrupt
 //! controller into the kernel half and hands its [`PlatformHandoff`] to
 //! [`install`] once, from the boot Thread at EL1 (see `libirqchip`). From then
-//! on the nucleus calls the component directly, on the single boot core with
-//! interrupts masked.
+//! on the nucleus calls the component directly, with interrupts masked, from
+//! any core under the kernel lock. The secondary cores find the installed
+//! component through [`is_installed`] and then each run [`init_cpu`].
 
 use {
-    core::cell::UnsafeCell,
+    core::{
+        cell::UnsafeCell,
+        sync::atomic::{AtomicBool, Ordering},
+    },
     libirqchip::{
         ABI_VERSION, INVALID_LINE, IrqChipConfig, IrqChipOps, PlatformHandoff, SPURIOUS,
         TRIGGER_EDGE, TRIGGER_FIXED, TRIGGER_LEVEL,
@@ -39,11 +43,15 @@ struct Platform {
 /// Written once by [`install`] at boot, read-only afterwards.
 struct PlatformCell(UnsafeCell<Option<Platform>>);
 
-// SAFETY: see `PlatformCell`; the nucleus runs on one core with interrupts
-// masked, and boot installs before any interrupt can be taken.
+// SAFETY: see `PlatformCell`; boot installs before any interrupt can be taken,
+// and another core reads it only after `INSTALLED` publishes it.
 unsafe impl Sync for PlatformCell {}
 
 static PLATFORM: PlatformCell = PlatformCell(UnsafeCell::new(None));
+
+/// Set with release once [`PLATFORM`] holds an initialised component; read
+/// with acquire by the cores that did not install it.
+static INSTALLED: AtomicBool = AtomicBool::new(false);
 
 fn platform() -> Option<&'static Platform> {
     // SAFETY: see `PlatformCell`.
@@ -84,12 +92,43 @@ pub unsafe fn install(handoff: &PlatformHandoff) -> Result<u32, InstallError> {
         return Err(InstallError::NoTimerLine);
     };
     platform.physical_timer_line = line;
+    INSTALLED.store(true, Ordering::Release);
     Ok(line)
 }
 
 /// Whether a component is installed.
 pub fn is_installed() -> bool {
-    platform().is_some()
+    INSTALLED.load(Ordering::Acquire) && platform().is_some()
+}
+
+/// The line an inter-processor interrupt arrives on, if a component is
+/// installed.
+pub fn ipi_line() -> Option<u32> {
+    is_installed()
+        .then(platform)
+        .flatten()
+        .map(|platform| platform.ops.ipi_line)
+}
+
+/// Prepare the calling core, logical CPU `cpu`, to take interrupts; whether
+/// the component accepted it.
+pub fn init_cpu(cpu: u32) -> bool {
+    is_installed()
+        .then(platform)
+        .flatten()
+        // SAFETY: the component's contract; called once per core, under the
+        // kernel lock or on the boot core before any other core enters.
+        .is_some_and(|platform| unsafe { (platform.ops.init_cpu)(cpu) } == 0)
+}
+
+/// Raise the IPI line on every logical CPU of `cpu_mask`; whether the
+/// component sent it.
+pub fn send_ipi(cpu_mask: u32) -> bool {
+    is_installed()
+        .then(platform)
+        .flatten()
+        // SAFETY: the component's contract; called under the kernel lock.
+        .is_some_and(|platform| unsafe { (platform.ops.send_ipi)(cpu_mask) } == 0)
 }
 
 /// The physical timer's line, if a component is installed.

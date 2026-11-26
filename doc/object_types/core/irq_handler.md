@@ -62,7 +62,7 @@ Clears the binding, masks the line and frees it for a new `IRQControl.Issue`. Ev
 
 ## Interrupt controllers
 
-The interrupt controller is driven by a **privileged component**: a position-independent EL1 image bundled in the boot image (`drivers/irqchip-*`, interface in `libirqchip`). Kickstart picks the component whose `compatible` list names the device tree's root interrupt controller (the CPU timer's `interrupt-parent`), relocates it into the kernel half, maps the controllers' MMIO after it, and hands the kernel its operation table (`init`, `claim`, `complete`, `mask`, `unmask`, `set_trigger`, `xlate`). One image carries every component; the choice is made at boot. Lines are component-defined numbers; device tree interrupt specifiers become lines, with the trigger they ask for, through `xlate`.
+The interrupt controller is driven by a **privileged component**: a position-independent EL1 image bundled in the boot image (`drivers/irqchip-*`, interface in `libirqchip`). Kickstart picks the component whose `compatible` list names the device tree's root interrupt controller (the CPU timer's `interrupt-parent`), relocates it into the kernel half, maps the controllers' MMIO after it, and hands the kernel its operation table (`init`, `claim`, `complete`, `mask`, `unmask`, `set_trigger`, `xlate`, and the per-core `init_cpu` and `send_ipi` for inter-processor interrupts). One image carries every component; the choice is made at boot. Lines are component-defined numbers; device tree interrupt specifiers become lines, with the trigger they ask for, through `xlate`.
 
 | Component | Controller | Boards | Lines |
 |---|---|---|---|

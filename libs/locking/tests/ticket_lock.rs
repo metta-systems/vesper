@@ -185,6 +185,27 @@ mod tests {
     }
 
     #[test]
+    fn acquire_while_stops_waiting_when_told_and_otherwise_takes_the_lock() {
+        let lock = Arc::new(TicketLock::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        lock.acquire(1);
+        let (waiter_lock, waiter_stop) = (Arc::clone(&lock), Arc::clone(&stop));
+        let waiter = thread::spawn(move || {
+            waiter_lock.acquire_while(2, || !waiter_stop.load(Ordering::Relaxed))
+        });
+        while lock.waiting() < 1 {
+            thread::yield_now();
+        }
+        stop.store(true, Ordering::Relaxed);
+        assert!(!waiter.join().expect("the waiter panicked"), "it gave up");
+        assert!(lock.is_held_by(1));
+        // A free lock is taken at once, without asking.
+        let fresh = TicketLock::new();
+        assert!(fresh.acquire_while(3, || false));
+        assert!(fresh.is_held_by(3));
+    }
+
+    #[test]
     fn try_acquire_takes_only_a_free_lock() {
         let lock = Arc::new(TicketLock::new());
         assert!(lock.try_acquire(1));

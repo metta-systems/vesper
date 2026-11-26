@@ -65,6 +65,17 @@ unsafe extern "C" fn claim() -> u32 {
 
 unsafe extern "C" fn complete(_line: u32) {}
 
+/// The fake IPI line.
+const IPI_LINE: u32 = 4;
+
+unsafe extern "C" fn init_cpu(_cpu: u32) -> i32 {
+    0
+}
+
+unsafe extern "C" fn send_ipi(_cpu_mask: u32) -> i32 {
+    0
+}
+
 unsafe extern "C" fn mask(line: u32) {
     MASKED.fetch_or(bit(line), Ordering::Relaxed);
 }
@@ -114,6 +125,7 @@ unsafe extern "C" fn xlate(kind: u32, cells: *const u32, count: u32, trigger: *m
 static OPS: IrqChipOps = IrqChipOps {
     abi_version: ABI_VERSION,
     line_count: LINES,
+    ipi_line: IPI_LINE,
     init,
     claim,
     complete,
@@ -121,6 +133,8 @@ static OPS: IrqChipOps = IrqChipOps {
     unmask,
     set_trigger,
     xlate,
+    init_cpu,
+    send_ipi,
 };
 
 /// Install the fake component once for the whole test binary.

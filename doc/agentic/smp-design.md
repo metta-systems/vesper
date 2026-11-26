@@ -88,7 +88,7 @@ All by the maintainer, 2026-11-25.
 | Per-core state | In each core's `CoreRecord`: the scheduling state and totals (`CoreState`: `current_thread`, `current_since_ticks`, `dispatched`, `dispatch_next`, `preempt_requested`, `interrupt_ticks`, `idle_ticks`, `fp_totals`), which the `Nucleus` reaches through its `this_core` field (`ThisCore`, by `TPIDR_EL1`), under the kernel lock; and, touched by their own core without the lock, `idling`, the programmed timer deadline and the FP entry guard's exit flag and toggle count | `kernel/nucleus/src/objects/core_record.rs`, `nucleus.rs`, `main.rs`, `timer.rs`, `objects/arch/fp_unit.rs` |
 | Kernel stack | One 512 KiB trap stack per core in `SP_EL1`, mapped by Kickstart in slots after the nucleus's `__STACK_VIRT_BOTTOM` with guard pages; a per-core record (`nucleus::core_record`) in `TPIDR_EL1` on every core; the boot Thread runs EL1t on the init stack after the image, the secondaries EL1h on their trap stacks | `kernel/kickstart/src/cores.rs`, `paging.rs`, `el_switch.rs` |
 | EL2 → EL1 | Kickstart runs at EL2 with the MMU off, builds the tables, releases the secondaries, then `el_switch` sets VBAR, MAIR, TCR (inner shareable), SCTLR and drops to EL1t; each secondary runs the same `el_switch` into EL1h | `kernel/kickstart/src/el_switch.rs`, `secondary.rs` |
-| Secondary cores | Released by the start-method component at EL2; at EL1 each sets its bit in `ONLINE` and goes on into the nucleus's `nucleus_secondary_idle` (`TTBR0` walks and its timers off, `wfi` with interrupts masked, no nucleus state touched); the boot core waits for them for at most 1 s in `el1_entry` | `kernel/kickstart/src/secondary.rs`, `lib.rs`; `kernel/nucleus/src/main.rs` |
+| Secondary cores | Released by the start-method component at EL2; at EL1 each sets its bit in `ONLINE` and goes on into the nucleus's `nucleus_secondary_idle` (`TTBR0` walks and its timers off). It waits on `wfe` until the boot core has installed the interrupt controller (and run its own `init_cpu`), runs `init_cpu` under the kernel lock, then waits on `wfi` with a short unmask window, taking its IPI line as a kernel entry; it runs no Thread. The boot core waits for them for at most 1 s in `el1_entry` | `kernel/kickstart/src/secondary.rs`, `lib.rs`; `kernel/nucleus/src/main.rs` |
 | TLB maintenance | Nucleus already uses broadcast forms (`tlbi vae1is`, `tlbi aside1is`, `dsb ish`); Kickstart's boot flush is local `tlbi vmalle1` | `objects/arch/aarch64_objects.rs`, `el_switch.rs` |
 | Interrupt controller ABI | `IrqChipOps`: `init`, `claim` (on the calling CPU), `complete`, `mask`, `unmask`, `set_trigger`, `xlate`. No per-CPU init, no IPI, no routing | `libs/irqchip/src/lib.rs` |
 | BCM2836 component | Drives core 0's local registers only; core 1–3 timer, mailbox and source registers are reserved fields | `drivers/irqchip-bcm2836/src/lib.rs` |
@@ -154,6 +154,10 @@ complete on the Pi's cores (the chainboot rule). The rule that follows:
 - What a secondary writes with caches on (`ONLINE`) sits in a cache line of its own: a
   dirty line written back later would overwrite whatever the boot core stored in the same
   line with its caches off after the release.
+- A store that cores waiting in `wfe` look for is completed before the `sev`
+  (`libcpu::send_event`: `dsb ish; sev`). Otherwise a waiter can wake, read the old
+  value and wait again for an event that already came: the first Pi 4 run of `smp-test`
+  lost its coherency round that way, which QEMU does not show.
 
 ### Start-method components
 
@@ -259,24 +263,50 @@ Mechanism per controller:
 - **BCM2836 local controller (Pi 3):** per-core mailboxes. Write-set at
   `0x4000_0080 + 0x10·core + 4·mailbox`, read/write-clear at `0x4000_00C0 + ...`, enable
   in `CORE_MAILBOX_INT_CONTROL` (`0x4000_0050 + 4·core`). Local lines 4..7 are already
-  numbered `LINE_MAILBOX0..3` in the component.
+  numbered `LINE_MAILBOX0..3` in the component. The per-core control and source
+  registers are confirmed by the BCM2711 manual (§6.5.2, Table 104, the same ARM_LOCAL
+  layout); the mailbox set/clear offsets are from QEMU's `bcm2836_control.c` and still
+  to be checked against QA7.
 - **GIC-400 (Pi 4, Pi 5):** SGIs through `GICD_SGIR` (target list bits 23:16, INTID
   bits 3:0). SGI/PPI enables, priorities and the CPU interface (`GICC_CTLR`, `GICC_PMR`)
   are banked, so each core initialises its own.
 
 The IPI kind travels in the per-core record (atomic bits); one hardware line or SGI is
-enough.
+enough. As built:
+
+- `CoreRecord::pending_ipis` holds the kinds (`IPI_RESCHEDULE`, `IPI_STOP`, `IPI_HALT`)
+  and `ipis_taken` counts the lines taken. A core finds another's record through
+  `core_record::of(index)`: the records are one run, and each holds the core count.
+- Sending (`send_ipis`): set the kind in each target's record with release, then one
+  `send_ipi` of the target mask. Taking (`take_ipis`, in `handle_irq` when the claimed
+  line is `ipi_line`): swap the kinds out with acquire. The claim acknowledged the line
+  first, so a kind set after the swap raises it again.
+- Reschedule sets the core's `preempt_requested`, so the exit path of an interrupt that
+  stopped a Thread selects again; Halt parks; Stop has no work until synchronous
+  retirement.
+- Only the boot core's timer is programmed (`TIMER_CORE`) until each core has its own
+  deadline queue (SMP4).
 
 ### Interrupt-controller ABI
 
-`IrqChipOps` grows, in place (no backwards compatibility):
+`IrqChipOps` grows, in place (no backwards compatibility; `ABI_VERSION` stays 1):
 
-- `init_cpu(cpu)`: called on each core at bring-up. BCM2836: enable that core's timer
-  (`CORE_TIMER_INT_CONTROL` CNTPNS bit) and mailbox 0 IRQ. GIC: enable the CPU interface,
-  priority mask and the timer PPI on this core.
-- `send_ipi(cpu_mask)`.
-- `claim` already works "on the calling CPU"; the component's data (`static` in its
-  `main.rs`) is shared, which the kernel lock covers.
+- `ipi_line`: the line an IPI arrives on, on every core. BCM2836: mailbox 0 (local
+  line 4); GIC: SGI 0. Its `claim` acknowledges it at the controller (BCM2836: clears
+  the mailbox bits it read; GIC: writes `GICC_EOIR` with the whole `GICC_IAR` value,
+  whose bits 12:10 hold an SGI's source CPU), so an IPI sent after the claim raises the
+  line again.
+- `init_cpu(cpu)`: called on each core once, after `init`, with its logical index. The
+  component records the core's hardware identity (BCM2836: `MPIDR_EL1.Aff0`; GIC: the
+  CPU interface bit its banked `GICD_ITARGETSR0`-`7` report) and unmasks the IPI line
+  there; the GIC also enables the core's banked CPU interface and priority mask.
+- `send_ipi(cpu_mask)`: bit `n` is logical CPU `n`; refused, signalling nobody, if the
+  mask names a CPU that has not run `init_cpu`. BCM2836: a write-set of mailbox 0 of
+  each target core; GIC: one `GICD_SGIR` write with the CPU target list.
+- `claim`, `mask` and `unmask` of a core's own lines (its timers, mailboxes, SGIs and
+  PPIs) act on the calling core: the nucleus unmasks its timer line on each core itself,
+  as it already does on the boot core. The component's data (`static` in its `main.rs`)
+  is shared, which the kernel lock covers.
 - Per-line routing (`route(line, cpu)`) comes later; at first every device line goes to
   the boot core, as the GIC component already does.
 
@@ -313,20 +343,24 @@ The panic handler stops the other cores with the Halt IPI. Semihosting and the b
 UART print from several cores, so a line must be written under a lock (the kernel lock in
 the kernel; `libs/log`'s `static mut LOGGER` is set once at boot and is fine).
 
-Until the Halt IPI exists (SMP3), a flag does it:
+How it is done:
 
 - The first core to panic claims the panic (`PANICKED_CORE`, its kernel-lock holder id)
   and sends `sev`.
 - A core that panics after another parks at once, printing nothing. The same core
   panicking again still ends in `libmachine`'s re-entry guard.
-- The other cores park (interrupts masked, `wfe` forever) where they look at the flag:
-  - a secondary waits on `wfe` in `nucleus_secondary_idle`, so the `sev` wakes it;
-  - the boot core's idle loop looks after each wake, before it takes the kernel lock again.
-
-  A core inside a kernel entry finishes it; a core waiting for the lock waits on.
-- The panicking core prints under the kernel lock. If it does not hold the lock, it takes
-  it with `TicketLock::try_acquire` for at most 1 s, then prints anyway: the panic may be
-  in the lock itself.
+- The panicking core takes the kernel lock (if it does not hold it: with
+  `TicketLock::try_acquire` for at most 1 s, since the panic may be in the lock itself),
+  then sends Halt to every other core and prints.
+- The other cores park (interrupts masked, `wfe` forever):
+  - a core taking interrupts is woken by its Halt IPI. The interrupt is a kernel entry,
+    whose wait for the kernel lock gives up and parks once another core has panicked
+    (`TicketLock::acquire_while`; the abandoned ticket leaves the lock taken for good,
+    which nothing after a panic needs);
+  - a secondary still waiting on `wfe` for the controller is woken by the `sev` and sees
+    the flag;
+  - the boot core's idle loop looks after each wake, before it takes the lock again.
+  A core inside a kernel entry finishes it and parks at its next entry or idle wait.
 - Every other kernel line is printed inside a kernel entry, so under the lock. The
   secondaries print nothing.
 

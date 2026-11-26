@@ -10,12 +10,13 @@
 
 use {
     core::cell::UnsafeCell,
-    irqchip_gicv2::{Gic400, LINE_COUNT},
+    irqchip_gicv2::{Gic400, IPI_LINE, LINE_COUNT},
     libirqchip::{ABI_VERSION, IrqChipConfig, IrqChipOps, SPURIOUS, irqchip_export},
 };
 
-/// The bound controller. The nucleus calls the component on one core with
-/// interrupts masked, so accesses never overlap.
+/// The bound controller. The nucleus calls the component from any core, one
+/// call at a time under its kernel lock and with interrupts masked, so
+/// accesses never overlap.
 struct ChipCell(UnsafeCell<Option<Gic400>>);
 
 // SAFETY: see `ChipCell`: every access is serialized by the nucleus.
@@ -72,6 +73,20 @@ unsafe extern "C" fn set_trigger(line: u32, level: u32) -> i32 {
     }
 }
 
+unsafe extern "C" fn init_cpu(cpu: u32) -> i32 {
+    match chip().map(|chip| chip.init_cpu(cpu)) {
+        Some(Ok(())) => 0,
+        _ => -1,
+    }
+}
+
+unsafe extern "C" fn send_ipi(cpu_mask: u32) -> i32 {
+    match chip().map(|chip| chip.send_ipi(cpu_mask)) {
+        Some(Ok(())) => 0,
+        _ => -1,
+    }
+}
+
 unsafe extern "C" fn xlate(_kind: u32, cells: *const u32, count: u32, trigger: *mut u32) -> u32 {
     // SAFETY: the caller passes `count` readable cells.
     let cells = unsafe { core::slice::from_raw_parts(cells, count as usize) };
@@ -86,6 +101,7 @@ irqchip_export!(
     IrqChipOps {
         abi_version: ABI_VERSION,
         line_count: LINE_COUNT,
+        ipi_line: IPI_LINE,
         init,
         claim,
         complete,
@@ -93,6 +109,8 @@ irqchip_export!(
         unmask,
         set_trigger,
         xlate,
+        init_cpu,
+        send_ipi,
     },
     compatible = ["arm,gic-400", "arm,cortex-a15-gic"]
 );
