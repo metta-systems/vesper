@@ -7,7 +7,7 @@ use {
         registers::{
             CNTKCTL_EL1, CPACR_EL1, ELR_EL2, HCR_EL2, ID_AA64MMFR0_EL1, MAIR_EL1, MDSCR_EL1,
             PMUSERENR_EL0, Read, SCTLR_EL1, SP_EL0, SP_EL1, SPSR_EL1, SPSR_EL2, TCR_EL1, TPIDR_EL0,
-            TPIDRRO_EL0, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Write,
+            TPIDR_EL1, TPIDRRO_EL0, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Write,
         },
     },
     tock_registers::fields::FieldValue,
@@ -84,7 +84,8 @@ fn configure_el0_visible_state() {
 /// * `vbar` - Exception vector base address (physical, must be 2KB aligned)
 /// * `entry_point` - Kernel entry point (virtual address)
 /// * `execution_stack_pointer` - Initial execution stack pointer in `SP_EL0` (`EL1t`)
-/// * `trap_stack_pointer` - Shared per-core kernel trap stack pointer in `SP_EL1`
+/// * `trap_stack_pointer` - This core's kernel trap stack pointer in `SP_EL1`
+/// * `core_record` - Kernel virtual address of this core's record, for `TPIDR_EL1`
 ///
 /// Implementation status: the entry is trusted linked `Kickstart`/`Kicktest` code,
 /// not a protected EL0 Thread; `vbar` is its mapped high virtual address.
@@ -107,6 +108,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     entry_point: u64,
     execution_stack_pointer: u64,
     trap_stack_pointer: u64,
+    core_record: u64,
 ) -> ! {
     // ═══════════════════════════════════════════════════════════
     // STEP 1: Configure EL2 to allow EL1 operation
@@ -260,6 +262,8 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     ELR_EL2.set(entry_point);
     SP_EL0.set(execution_stack_pointer);
     SP_EL1.set(trap_stack_pointer);
+    // This core's record (`nucleus::core_record`), EL1-only: no component reads it.
+    TPIDR_EL1.set(core_record);
 
     memory_barrier();
 

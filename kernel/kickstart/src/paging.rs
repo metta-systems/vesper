@@ -311,9 +311,9 @@ pub fn create_kernel_mapping(
     setup: &mut MmuSetup,
     layout: &KernelLayout,
     ram: impl Iterator<Item = (u64, u64)>,
-    el1_stack: u64,
-    el1_stack_size: usize,
-) -> Result<(u64,), &'static str> {
+    trap_stacks: &[u64],
+    trap_stack_size: usize,
+) -> Result<(), &'static str> {
     // Map each section with its specific permissions
     for section in layout.iter_sections() {
         map_section(setup, &section)?;
@@ -352,20 +352,19 @@ pub fn create_kernel_mapping(
         }
     }
 
-    // Map kernel stack
-    let stack_bottom = layout.stack_virt_bottom;
-
-    for i in 0..el1_stack_size.div_ceil(4 * 1024) as u64 {
-        setup.map_page(
-            Ttbr::Ttbr1,
-            VirtAddr::new(stack_bottom.as_u64() + i * 4 * 1024),
-            PhysAddr::new(el1_stack + i * 4 * 1024),
-            perms,
-            ("Nucleus stack mapping", Alloc::Persistent),
-        );
+    // Map each core's trap stack in its slot (see `trap_stack_top`).
+    for (index, &stack) in trap_stacks.iter().enumerate() {
+        let slot_bottom = trap_stack_top(layout, index, trap_stack_size) - trap_stack_size as u64;
+        for page in 0..trap_stack_size.div_ceil(4 * 1024) as u64 {
+            setup.map_page(
+                Ttbr::Ttbr1,
+                VirtAddr::new(slot_bottom + page * 4 * 1024),
+                PhysAddr::new(stack + page * 4 * 1024),
+                perms,
+                ("Nucleus stack mapping", Alloc::Persistent),
+            );
+        }
     }
-
-    let stack_virt_top = stack_bottom + el1_stack_size;
 
     // ─────────────────────────────────────────────────────────────────
     // Setup device MMIO mappings
@@ -375,7 +374,15 @@ pub fn create_kernel_mapping(
     // Map as device memory (non-cacheable, no speculation)
     // create_device_mapping(setup, device_base_phys, VIRT_MMIO, 0x100_0000); // 16MiB
 
-    Ok((stack_virt_top.into(),))
+    Ok(())
+}
+
+/// Kernel virtual top of core `index`'s trap stack. The stacks follow the nucleus's
+/// `__STACK_VIRT_BOTTOM` (itself after a guard page) in slots of `trap_stack_size` bytes,
+/// one unmapped guard page between consecutive slots, by logical index.
+pub fn trap_stack_top(layout: &KernelLayout, index: usize, trap_stack_size: usize) -> u64 {
+    let slot = (trap_stack_size + 4 * 1024) as u64;
+    layout.stack_virt_bottom.as_u64() + index as u64 * slot + trap_stack_size as u64
 }
 
 /// Map a single section with proper permissions

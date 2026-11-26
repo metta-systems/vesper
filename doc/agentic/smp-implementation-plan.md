@@ -21,13 +21,10 @@ Secondaries run no Threads; the kernel lock is still the null lock because they 
 enter the shared kernel state. Order: QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3
 and Pi 5 boards.
 
-- [ ] Kickstart: carve a trap stack and a per-core record per core from accounted memory,
-  sized from `/cpus`, and map the stacks in the kernel half next to the boot core's. The
-  record holds the core's logical index (its `/cpus` order) and `CoreAffinity`; the kernel
-  reads its index from there, not from `MPIDR_EL1`.
 - [ ] A secondary entry: the EL2 prologue factored out of `_startup_in_rust` (and the
   `qemu` EL3 → EL2 step), then `el_switch` with the shared `TTBR1`/`TCR`/`MAIR`/`VBAR`,
-  its own `SP_EL1` and `TPIDR_EL1`, no BSS clear, no atomics before its MMU is on.
+  its own `SP_EL1` and `TPIDR_EL1` (`cores::Cores::record_virt` and
+  `paging::trap_stack_top` of its index), no BSS clear, no atomics before its MMU is on.
 - [ ] Release the cores just before Kickstart's own drop to EL1 through the loaded
   component (`cpu_start::LoadedCpuStart::start`), with the mixed-attribute handshake of
   the design (plain stores cleaned to PoC; "online"
