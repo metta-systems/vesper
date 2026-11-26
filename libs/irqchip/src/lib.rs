@@ -10,7 +10,14 @@
 //! a trusted callout, like QNX interrupt callouts or Nemesis interrupt stubs.
 //!
 //! Every operation runs at EL1 with interrupts masked, must not block or
-//! allocate, and touches only the component's own data and MMIO.
+//! allocate, and touches only the component's own data and MMIO. Operations
+//! may come from any core; the nucleus calls them one at a time, under its
+//! kernel lock. A core's private lines (its timers, its IPI line) and
+//! [`IrqChipOps::claim`] act on the calling core.
+//!
+//! CPUs are named by their logical index (the order of the device tree's
+//! `/cpus`, SMP C9(a)); a component learns the hardware identity behind an
+//! index when that core calls [`IrqChipOps::init_cpu`].
 //!
 //! Interrupt lines are component-defined numbers in `0..line_count`; device
 //! tree interrupt specifiers become lines through [`IrqChipOps::xlate`].
@@ -36,6 +43,10 @@ pub const TRIGGER_EDGE: u32 = 1;
 
 /// [`IrqChipOps::xlate`] trigger: level triggered.
 pub const TRIGGER_LEVEL: u32 = 2;
+
+/// Maximum CPUs a component tracks (the CPU interfaces of a `GICv2`); an
+/// [`IrqChipOps::send_ipi`] mask names CPUs below it.
+pub const MAX_CPUS: usize = 8;
 
 /// Maximum controllers (device tree nodes) one component drives.
 pub const MAX_CONTROLLERS: usize = 4;
@@ -135,6 +146,11 @@ pub struct IrqChipOps {
     pub abi_version: u32,
     /// Number of lines the component numbers
     pub line_count: u32,
+    /// The line an inter-processor interrupt arrives on, on every core. Its
+    /// [`claim`](Self::claim) acknowledges it at the controller, so a later
+    /// [`send_ipi`](Self::send_ipi) raises it again even before
+    /// [`complete`](Self::complete).
+    pub ipi_line: u32,
     /// Take ownership of the controllers in `config`: record the mappings and
     /// mask every line. Returns 0 on success.
     pub init: unsafe extern "C" fn(config: *const IrqChipConfig) -> i32,
@@ -156,6 +172,18 @@ pub struct IrqChipOps {
     /// [`TRIGGER_FIXED`], [`TRIGGER_EDGE`] or [`TRIGGER_LEVEL`].
     pub xlate:
         unsafe extern "C" fn(kind: u32, cells: *const u32, count: u32, trigger: *mut u32) -> u32,
+    /// Prepare the calling core, logical CPU `cpu`, to take interrupts:
+    /// record its hardware identity for [`send_ipi`](Self::send_ipi), enable
+    /// its CPU interface where it has one, and unmask
+    /// [`ipi_line`](Self::ipi_line) on it. Called on every core once,
+    /// after [`init`](Self::init). Returns 0 on success, nonzero if `cpu` is
+    /// at least [`MAX_CPUS`] or the core cannot be told apart.
+    pub init_cpu: unsafe extern "C" fn(cpu: u32) -> i32,
+    /// Raise [`ipi_line`](Self::ipi_line) on every CPU of `cpu_mask` (bit
+    /// `n` is logical CPU `n`). Returns 0 on success, nonzero if the mask
+    /// names a CPU that has not run [`init_cpu`](Self::init_cpu); then no CPU
+    /// is signalled.
+    pub send_ipi: unsafe extern "C" fn(cpu_mask: u32) -> i32,
 }
 
 /// Name of the section holding a component's NUL-terminated `compatible`

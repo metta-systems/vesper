@@ -13,7 +13,8 @@ This file holds only open work, in order. Each stage is verified before the next
 starts. Mark an item `- [x]` only after its validation has passed; a finished item
 leaves a one-line marker in [smp-completed.md](smp-completed.md).
 
-Done: SMP0 (the decisions); see [smp-completed.md](smp-completed.md).
+Done: SMP0 (the decisions), SMP1 except its board runs, SMP2 (the kernel lock and
+per-core state); see [smp-completed.md](smp-completed.md).
 
 ## SMP1: cores online, idle
 
@@ -21,27 +22,20 @@ Secondaries run no Threads and never enter the kernel. Order: QEMU `raspi3b` and
 `raspi4b`, then the Pi 4, Pi 3 and Pi 5 boards.
 
 - [ ] Board runs of `smp-test` (`just boot-smp-test`, or `smp-test-<boards>.bin` on a card)
-  on the Pi 4, Pi 3 and Pi 5: `smp-test: PASS`, which checks `SMPEN` coherency with the
-  cross-core counter; the Pi 5 is the first run of the PSCI component and of the
-  `no-map` reservation.
-
-## SMP2: one kernel lock and per-core state
-
-- [ ] All existing e2e tests pass unchanged with the secondaries online and idle.
+  on the Pi 3 and Pi 5 (the Pi 4 passes): `smp-test: PASS`, which checks `SMPEN`
+  coherency with the cross-core counter; the Pi 5 is the first run of the PSCI component
+  and of the `no-map` reservation.
 
 ## SMP3: inter-processor interrupts
 
-- [ ] `IrqChipOps`: `init_cpu` and `send_ipi`, edited in place. BCM2836: per-core timer
-  and mailbox 0 registers (checked against QA7); GIC-400: banked CPU interface, PPI
-  enable, `GICD_SGIR`. Host tests in each component's typed register views.
-- [ ] Nucleus: IPI kinds (Reschedule, Stop, Halt) as atomic bits in the per-core record,
-  one hardware line or SGI.
+- [ ] Check the BCM2836 mailbox write-set (`0x80`) and read/write-clear (`0xc0`)
+  register offsets, and the mailbox interrupt semantics, against the QA7 datasheet; it is
+  not in the repository and the sandbox cannot fetch it.
 - [ ] Device lines stay on the boot core; a Notification signal or EventCount advance
   whose waiter's core is another sends Reschedule.
 - [ ] Synchronous retirement of a Thread running on another core and of an AddressSpace
   current on other cores: Stop IPIs, the kernel lock released until every core
   acknowledged, an "active on" core mask in the AddressSpace before its ASID is reused.
-- [ ] Panic sends Halt.
 - [ ] `smp-test` cases: IPI round trip on each core, retirement of a Thread running on
   another core, AddressSpace retirement while current on two cores.
 

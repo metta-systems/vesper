@@ -263,7 +263,7 @@ fn coherency_round(index: u32) {
 #[cfg(feature = "smp_test")]
 pub fn coherency_check(online: u64) -> (u64, u64) {
     COHERENCY.go.store(1, Ordering::Release);
-    aarch64_cpu::asm::sev();
+    libcpu::send_event();
     for _ in 0..COHERENCY_ROUNDS {
         COHERENCY.counter.fetch_add(1, Ordering::Relaxed);
     }

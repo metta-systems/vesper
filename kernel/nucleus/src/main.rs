@@ -72,10 +72,19 @@ static KERNEL_LOCK: KernelLock = KernelLock(TicketLock::new());
 struct KernelLock(TicketLock);
 
 impl KernelLock {
-    /// Take the lock for this kernel entry, until the returned guard drops.
+    /// Take the lock for this kernel entry, until the returned guard drops. A
+    /// core still waiting when another core panics parks instead: the panicking
+    /// core keeps the lock.
     fn enter(&'static self) -> KernelEntry {
-        self.0.acquire(this_core_holder());
+        self.take(this_core_holder());
         KernelEntry
+    }
+
+    /// Take the lock for `holder`, or park if another core panics meanwhile.
+    fn take(&self, holder: u32) {
+        if !self.0.acquire_while(holder, || !another_core_panicked()) {
+            park_for_panic()
+        }
     }
 
     /// Run `section` on the Nucleus state the lock guards.
@@ -101,8 +110,42 @@ impl KernelLock {
         if another_core_panicked() {
             park_for_panic()
         }
-        self.0.acquire(holder);
+        self.take(holder);
     }
+}
+
+/// The kernel-lock holder id of the core whose timer the nucleus programs: the
+/// boot core, which installed the interrupt controller. 0 before that.
+static TIMER_CORE: AtomicU32 = AtomicU32::new(0);
+
+/// Send IPI `kind` (a `core_record::IPI_*` bit) to every logical CPU of
+/// `cpu_mask`: set the kind in each core's record, then raise their IPI line.
+/// Whether the controller sent it.
+fn send_ipis(cpu_mask: u32, kind: u32) -> bool {
+    let mut targets = 0_u32;
+    for cpu in 0..u32::BITS {
+        if cpu_mask & (1 << cpu) == 0 {
+            continue;
+        }
+        if let Some(record) = nucleus::core_record::of(cpu as usize) {
+            record.pending_ipis.fetch_or(kind, Ordering::Release);
+            targets |= 1 << cpu;
+        }
+    }
+    targets != 0 && nucleus::platform::send_ipi(targets)
+}
+
+/// Take the IPI kinds sent to this core, after claiming its IPI line: a halt
+/// parks the core here; whether a reschedule was asked for. Stop's work
+/// comes with synchronous retirement.
+fn take_ipis() -> bool {
+    let record = nucleus::core_record::current();
+    record.ipis_taken.fetch_add(1, Ordering::Relaxed);
+    let kinds = record.pending_ipis.swap(0, Ordering::Acquire);
+    if kinds & nucleus::core_record::IPI_HALT != 0 {
+        park_for_panic()
+    }
+    kinds & nucleus::core_record::IPI_RESCHEDULE != 0
 }
 
 /// The kernel-lock holder id of the core that panicked first, or 0. The other cores
@@ -140,18 +183,24 @@ fn claim_panic() {
         Err(first) if first == holder => return,
         Err(_) => park_for_panic(),
     }
-    // The other cores wait in `wfe` (secondaries) or look after their next interrupt.
-    aarch64_cpu::asm::sev();
-    if holder == u32::MAX || KERNEL_LOCK.0.is_held_by(holder) {
+    // A core still waiting on `wfe` for the controller looks at the flag.
+    libcpu::send_event();
+    if holder == u32::MAX {
         return;
     }
-    let ticks = nucleus::timer::frequency() * PANIC_LOCK_WAIT_MS / 1000;
-    let start = nucleus::timer::counter();
-    while !KERNEL_LOCK.0.try_acquire(holder) {
-        if nucleus::timer::counter().saturating_sub(start) > ticks {
-            return;
+    if !KERNEL_LOCK.0.is_held_by(holder) {
+        let ticks = nucleus::timer::frequency() * PANIC_LOCK_WAIT_MS / 1000;
+        let start = nucleus::timer::counter();
+        while !KERNEL_LOCK.0.try_acquire(holder)
+            && nucleus::timer::counter().saturating_sub(start) <= ticks
+        {
+            core::hint::spin_loop();
         }
-        core::hint::spin_loop();
+    }
+    // Every other core that takes interrupts parks on its Halt IPI, wherever it is.
+    if let Some(record) = nucleus::core_record::try_current() {
+        let all = (1_u32 << record.core_count) - 1;
+        send_ipis(all & !(1 << record.index), nucleus::core_record::IPI_HALT);
     }
 }
 
@@ -212,6 +261,13 @@ pub unsafe extern "C" fn nucleus_set_platform(handoff: *const libirqchip::Platfo
             // first kernel exit finds something that needs it; it is taken
             // whenever a Thread runs with interrupts unmasked.
             nucleus::platform::unmask(line);
+            let record = nucleus::core_record::current();
+            TIMER_CORE.store(record.index + 1, Ordering::Relaxed);
+            if !nucleus::platform::init_cpu(record.index) {
+                warn!("Interrupt controller refused core {}", record.index);
+            }
+            // The secondary cores wait on `wfe` for the component to appear.
+            libcpu::send_event();
             line
         }
         Err(error) => {
@@ -241,11 +297,15 @@ pub unsafe extern "C" fn nucleus_set_board_console(base: usize) {
 /// entry jumps here at `EL1h` on the core's trap stack, interrupts masked, MMU and caches
 /// on, once the core is online.
 ///
-/// The core touches no nucleus state and takes no lock: it waits on `wfe`, and parks
-/// when another core has panicked. Its `TTBR0_EL1` still names Kickstart's identity map,
-/// which is Kickstart's memory, so translation walks through `TTBR0` stop here; its
-/// timers are turned off, since their reset state is UNKNOWN and a pending one would end
-/// every wait.
+/// Until the boot core installs the interrupt controller, the core waits on `wfe`
+/// (the boot core's `sev` after the install, or a panicking core's, wakes it). It then
+/// prepares itself at the controller (`init_cpu`, under the kernel lock) and waits on
+/// `wfi`, unmasking interrupts only for a moment after each wake, as the boot core's
+/// idle loop does: its IPI line ends the wait, and the interrupt is a kernel entry of
+/// its own. It parks when another core has panicked. Its `TTBR0_EL1` still names
+/// Kickstart's identity map, which is Kickstart's memory, so translation walks through
+/// `TTBR0` stop here; its timers are turned off, since their reset state is UNKNOWN and
+/// a pending one would end every wait.
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.bootstrap")]
 pub extern "C" fn nucleus_secondary_idle() -> ! {
@@ -266,12 +326,28 @@ pub extern "C" fn nucleus_secondary_idle() -> ! {
     }
     CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::CLEAR + CNTP_CTL_EL0::IMASK::SET);
     CNTV_CTL_EL0.write(CNTV_CTL_EL0::ENABLE::CLEAR + CNTV_CTL_EL0::IMASK::SET);
-    // `wfe`, so that the `sev` of a panicking core wakes it to park.
+    let record = nucleus::core_record::current();
+    let mut asked_controller = false;
+    let mut takes_interrupts = false;
     loop {
         if another_core_panicked() {
             park_for_panic()
         }
-        aarch64_cpu::asm::wfe();
+        if !asked_controller && nucleus::platform::is_installed() {
+            asked_controller = true;
+            let _kernel = KERNEL_LOCK.enter();
+            takes_interrupts = nucleus::platform::init_cpu(record.index);
+        }
+        if takes_interrupts {
+            record.idling.store(true, Ordering::Release);
+            aarch64_cpu::asm::wfi();
+            libexception::asynchronous::local_irq_unmask();
+            barrier::isb(barrier::SY);
+            libexception::asynchronous::local_irq_mask();
+            record.idling.store(false, Ordering::Release);
+        } else {
+            aarch64_cpu::asm::wfe();
+        }
     }
 }
 
@@ -784,7 +860,9 @@ const MAX_CLAIMS_PER_ENTRY: usize = 64;
 fn handle_irq(frame: &mut ExceptionContext) {
     let nested = frame.origin == ExceptionOrigin::CurrentSpx;
     let timer_line = nucleus::platform::physical_timer_line();
+    let ipi_line = nucleus::platform::ipi_line();
     let mut ticked = false;
+    let mut reschedule = false;
     // Interrupt handling is timed, line by line and in all: the interrupted
     // Thread is not charged for it, and each line's record counts it.
     let entered = nucleus::timer::counter();
@@ -800,6 +878,9 @@ fn handle_irq(frame: &mut ExceptionContext) {
             // deadline, if any.
             nucleus::timer::disarm();
             ticked = true;
+        } else if Some(line) == ipi_line {
+            // The claim acknowledged it; the kinds are in this core's record.
+            reschedule |= take_ipis();
         } else {
             nucleus::platform::mask(line);
             if !deliver_irq(line) {
@@ -826,6 +907,11 @@ fn handle_irq(frame: &mut ExceptionContext) {
             nucleus.ticks += 1;
             // Whatever is due wakes: timed-out waits, dispatcher timers.
             nucleus.expire_deadlines();
+        }
+        if reschedule {
+            // Another core changed what may run here: select on the way out,
+            // as for an activation.
+            nucleus.this_core.preempt_requested = true;
         }
         if nested || (!ticked && !nucleus.this_core.preempt_requested) {
             return Ok(None);
@@ -900,6 +986,11 @@ fn idle_until_runnable() -> PreparedResume {
 /// another Thread is runnable, or the exhaustion of the current Thread's
 /// budget. Every kernel exit that can change either calls this.
 fn reprogram_timer() {
+    // Only the boot core's timer is the nucleus's until each core has its
+    // own deadline queue (SMP4).
+    if TIMER_CORE.load(Ordering::Relaxed) != this_core_holder() {
+        return;
+    }
     let deadline = KERNEL_LOCK.held(|()| {
         let nucleus_ptr = nucleus_anchor()?;
         // SAFETY: the anchor names the retained boot-carved Nucleus, and the

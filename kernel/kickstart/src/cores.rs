@@ -110,9 +110,11 @@ impl Cores {
     /// physical addresses.
     pub fn write_records(&self, trap_stack_top: impl Fn(usize) -> u64) {
         let base = self.records.as_u64() as *mut CoreRecord;
+        let core_count = u32::try_from(self.plan.count).expect("at most MAX_CPUS cores");
         for (index, &affinity) in self.plan.affinities[..self.plan.count].iter().enumerate() {
             let record = CoreRecord::new(
                 u32::try_from(index).expect("at most MAX_CPUS cores"),
+                core_count,
                 affinity,
                 trap_stack_top(index),
             );

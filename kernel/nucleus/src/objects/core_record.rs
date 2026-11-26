@@ -15,7 +15,7 @@ use {
     core::{
         cell::UnsafeCell,
         ops::{Deref, DerefMut},
-        sync::atomic::{AtomicBool, AtomicU64},
+        sync::atomic::{AtomicBool, AtomicU32, AtomicU64},
     },
     libobject::scheduler_record::FpTotals,
 };
@@ -28,8 +28,8 @@ use {
 pub struct CoreRecord {
     /// The core's logical index: its position among the CPUs of `/cpus` (SMP C9(a))
     pub index: u32,
-    /// Reserved, zero
-    pub reserved: u32,
+    /// How many cores there are: the records are one run, by logical index
+    pub core_count: u32,
     /// The core's `MPIDR_EL1` affinity bits (`libcpu::smp::CoreAffinity`)
     pub affinity: u64,
     /// Kernel virtual address of the top of the core's `SP_EL1` trap stack
@@ -48,17 +48,33 @@ pub struct CoreRecord {
     pub fp_exit_open: AtomicBool,
     /// `FPEN` writes the kernel-entry FP guard made on this core, at entries and exits.
     pub fp_entry_toggles: AtomicU64,
+    /// The inter-processor interrupt kinds sent to the core and not yet taken
+    /// ([`IPI_RESCHEDULE`], [`IPI_STOP`], [`IPI_HALT`]): any core sets a bit, then
+    /// raises the core's IPI line; the core takes them all once it claimed the line.
+    pub pending_ipis: AtomicU32,
+    /// IPI lines the core has taken.
+    pub ipis_taken: AtomicU64,
 }
 
 /// [`CoreRecord::programmed_deadline`] with no deadline programmed.
 pub const NO_DEADLINE: u64 = u64::MAX;
 
+/// IPI kind: something to run there changed; the core selects again on its way out of
+/// the kernel.
+pub const IPI_RESCHEDULE: u32 = 1 << 0;
+/// IPI kind: a Thread running there, or an `AddressSpace` current there, is going away
+/// (its work comes with synchronous retirement, SMP3).
+pub const IPI_STOP: u32 = 1 << 1;
+/// IPI kind: another core panicked; the core parks.
+pub const IPI_HALT: u32 = 1 << 2;
+
 impl CoreRecord {
-    /// The record of a core that has run nothing yet.
-    pub const fn new(index: u32, affinity: u64, trap_stack_top: u64) -> Self {
+    /// The record of a core that has run nothing yet: logical CPU `index` of
+    /// `core_count`.
+    pub const fn new(index: u32, core_count: u32, affinity: u64, trap_stack_top: u64) -> Self {
         Self {
             index,
-            reserved: 0,
+            core_count,
             affinity,
             trap_stack_top,
             state: UnsafeCell::new(CoreState::new()),
@@ -66,8 +82,23 @@ impl CoreRecord {
             programmed_deadline: AtomicU64::new(NO_DEADLINE),
             fp_exit_open: AtomicBool::new(false),
             fp_entry_toggles: AtomicU64::new(0),
+            pending_ipis: AtomicU32::new(0),
+            ipis_taken: AtomicU64::new(0),
         }
     }
+}
+
+/// The record of logical CPU `index`, found from the running core's own: the records
+/// are one run, by logical index. `None` past the last core.
+pub fn of(index: usize) -> Option<&'static CoreRecord> {
+    let own = current();
+    if index >= own.core_count as usize {
+        return None;
+    }
+    let base = core::ptr::from_ref(own).wrapping_sub(own.index as usize);
+    // SAFETY: Kickstart wrote `core_count` records in one run from `base`, mapped in the
+    // kernel half for as long as the nucleus runs; `index` is below the count.
+    Some(unsafe { &*base.add(index) })
 }
 
 /// The record of the core this runs on.
@@ -102,7 +133,7 @@ fn test_record() -> &'static CoreRecord {
     struct TestRecord(CoreRecord);
     // SAFETY: the nucleus tests run on one core, one test at a time.
     unsafe impl Sync for TestRecord {}
-    static RECORD: TestRecord = TestRecord(CoreRecord::new(0, 0, 0));
+    static RECORD: TestRecord = TestRecord(CoreRecord::new(0, 1, 0, 0));
     &RECORD.0
 }
 

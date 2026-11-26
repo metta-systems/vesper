@@ -13,18 +13,30 @@
 //!   of the basic register, banks 1 and 2 GPU interrupts 0-31 and 32-63.
 //!
 //! Lines: `0..32` local (the local hwirq), then `32 + 32 * bank + irq` for the
-//! cascaded block (see [`armctrl_line`]). Only core 0 is driven (single-core
-//! nucleus).
+//! cascaded block (see [`armctrl_line`]). The local lines are each core's own:
+//! their enables and pending bits are per-core registers, and every operation
+//! on them takes the hardware core number (`MPIDR_EL1.Aff0`) of the calling
+//! core. The cascaded block's lines are routed to the core that ran [`Bcm2836::new`].
+//!
+//! Inter-processor interrupts use mailbox 0 ([`IPI_LINE`]): a sender sets a bit
+//! of the target core's mailbox 0 through its write-set register; the mailbox
+//! raises the target's line while any of its bits is set, and the target's
+//! claim clears it through the read/write-clear register.
 //!
 //! Resources: the BCM2836 "QA7" local peripherals and BCM2835 ARM
-//! peripherals datasheets; the `brcm,bcm2836-l1-intc` and
-//! `brcm,bcm2835-armctrl-ic` device tree bindings; QEMU
-//! `hw/intc/bcm2836_control.c` and `bcm2835_ic.c`.
+//! peripherals datasheets; the BCM2711 ARM Peripherals manual, §6.5.2
+//! (`ARM_LOCAL`, Table 104: the per-core timer control, mailbox control and IRQ
+//! source registers at 0x40, 0x50 and 0x60, one word per core); the
+//! `brcm,bcm2836-l1-intc` and `brcm,bcm2835-armctrl-ic` device tree bindings;
+//! QEMU `hw/intc/bcm2836_control.c` (the mailbox write-set registers at 0x80
+//! and read/write-clear registers at 0xc0, `0x10 * core + 4 * mailbox`) and
+//! `bcm2835_ic.c`. The mailbox register offsets are not yet checked against
+//! QA7.
 
 use {
     bitbybit::{bitenum, bitfield},
     derive_mmio::Mmio,
-    libirqchip::{INVALID_LINE, IrqChipConfig, SPURIOUS},
+    libirqchip::{INVALID_LINE, IrqChipConfig, MAX_CPUS, SPURIOUS},
     libmmio::assert_register_offsets,
 };
 
@@ -58,6 +70,14 @@ pub const LINE_CNTHP: u32 = 2;
 pub const LINE_CNTV: u32 = 3;
 /// Mailbox 0; mailboxes 1-3 follow.
 pub const LINE_MAILBOX0: u32 = 4;
+/// The inter-processor interrupt: mailbox 0.
+pub const IPI_LINE: u32 = LINE_MAILBOX0;
+/// Mailboxes per core.
+const MAILBOXES: usize = 4;
+/// Mailboxes per core, as local lines.
+const MAILBOX_LINES: u32 = 4;
+/// Cores of the BCM2836/7.
+pub const CORES: usize = 4;
 /// The cascaded GPU controller: never a deliverable line.
 const LINE_GPU: u32 = 8;
 /// Performance monitor.
@@ -192,8 +212,27 @@ impl GpuInterrupts {
     pub const ALL: Self = Self::new_with_raw_value(u32::MAX);
 }
 
-/// The BCM2836 local peripherals block. Only core 0 is driven, so the other
-/// cores' registers are reserved here.
+/// The 32 bits of one mailbox. Writing ones to its write-set register sets
+/// them; writing ones to its read/write-clear register clears them, and
+/// reading that register gives the mailbox.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct Mailbox {
+    #[bit(0, rw)]
+    bit: [bool; 32],
+}
+
+impl Mailbox {
+    /// Every bit.
+    pub const ALL: Self = Self::new_with_raw_value(u32::MAX);
+    /// The bit an IPI sets: any bit raises the line, the IPI kind travels in
+    /// the nucleus's per-core record.
+    pub const IPI: Self = Self::new_with_raw_value(1);
+}
+
+/// The BCM2836 local peripherals block, every core's registers. Per-core
+/// registers are arrays indexed by core; the mailbox arrays by
+/// `MAILBOXES * core + mailbox`.
 #[derive(Mmio)]
 #[mmio(no_owned)]
 #[repr(C)]
@@ -205,25 +244,32 @@ pub struct LocalRegisterBlock {
     #[mmio(Write)]
     pmu_int_routing_clear: PmuRouting,
     _timers: [u32; 10],
-    core0_timer_int_control: TimerControl,
-    _core1_3_timer_int_control: [u32; 3],
-    core0_mailbox_int_control: MailboxControl,
-    _core1_3_mailbox_int_control: [u32; 3],
+    timer_int_control: [TimerControl; CORES],
+    mailbox_int_control: [MailboxControl; CORES],
     #[mmio(PureRead)]
-    core0_irq_source: IrqSource,
-    _core1_3_irq_source: [u32; 3],
-    _fiq_sources: [u32; 4],
+    irq_source: [IrqSource; CORES],
+    _fiq_sources: [u32; CORES],
+    #[mmio(Write)]
+    mailbox_write_set: [Mailbox; CORES * MAILBOXES],
+    mailbox_read_clear: [Mailbox; CORES * MAILBOXES],
 }
 
-assert_register_offsets!(LocalRegisterBlock, 0x80, {
+assert_register_offsets!(LocalRegisterBlock, 0x100, {
     gpu_int_routing: 0x0c,
     pmu_int_routing_set: 0x10,
     pmu_int_routing_clear: 0x14,
-    core0_timer_int_control: 0x40,
-    core0_mailbox_int_control: 0x50,
-    core0_irq_source: 0x60,
+    timer_int_control: 0x40,
+    mailbox_int_control: 0x50,
+    irq_source: 0x60,
     _fiq_sources: 0x70,
+    mailbox_write_set: 0x80,
+    mailbox_read_clear: 0xc0,
 });
+
+/// The index of `mailbox` of `core` in the mailbox register arrays.
+const fn mailbox_index(core: usize, mailbox: usize) -> usize {
+    MAILBOXES * core + mailbox
+}
 
 /// The BCM2835 ARM-control interrupt block.
 #[derive(Mmio)]
@@ -263,13 +309,19 @@ const fn bank_of(line: u32) -> Option<(u32, u32)> {
     Some((offset / BANK_LINES, offset % BANK_LINES))
 }
 
-/// Errors from [`Bcm2836::new`].
+/// Errors from [`Bcm2836`] operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigError {
     /// No `brcm,bcm2836-l1-intc` controller was configured
     MissingLocal,
     /// A controller has no MMIO region, or one too small for its registers
     BadRegion,
+    /// A hardware core number the controller does not have
+    BadCore,
+    /// A logical CPU at least [`MAX_CPUS`]
+    BadCpu,
+    /// A logical CPU that has not run [`Bcm2836::init_cpu`]
+    UnknownCpu,
 }
 
 /// The local controller and, when present, the cascaded ARM-control block.
@@ -281,6 +333,19 @@ pub struct Bcm2836 {
     gpu_enabled: [GpuInterrupts; 2],
     /// Enabled ARM peripheral interrupts of the basic bank
     basic_enabled: BasicInterrupts,
+    /// The hardware core of each logical CPU that ran [`Bcm2836::init_cpu`]
+    cores: [Option<usize>; MAX_CPUS],
+}
+
+/// The routing name of hardware core `core`.
+const fn routing_core(core: usize) -> Option<Core> {
+    match core {
+        0 => Some(Core::Core0),
+        1 => Some(Core::Core1),
+        2 => Some(Core::Core2),
+        3 => Some(Core::Core3),
+        _ => None,
+    }
 }
 
 /// The register block of type `T` mapped by `region`.
@@ -292,13 +357,16 @@ fn block<T>(region: &libirqchip::MmioRegion) -> Result<*mut T, ConfigError> {
 }
 
 impl Bcm2836 {
-    /// Bind to the mapped controllers in `config` and mask every line.
+    /// Bind to the mapped controllers in `config`, mask every line and clear
+    /// every mailbox, and route the cascaded block to hardware core
+    /// `boot_core`, the caller's.
     ///
     /// # Safety
     ///
     /// Each region's `virt` must map the named controller's registers for EL1
     /// for `'static`, and nothing else may drive them.
-    pub unsafe fn new(config: &IrqChipConfig) -> Result<Self, ConfigError> {
+    pub unsafe fn new(config: &IrqChipConfig, boot_core: usize) -> Result<Self, ConfigError> {
+        let boot_routing = routing_core(boot_core).ok_or(ConfigError::BadCore)?;
         let mut local = None;
         let mut armctrl = None;
         for controller in config.controllers() {
@@ -320,22 +388,33 @@ impl Bcm2836 {
             armctrl,
             gpu_enabled: [GpuInterrupts::ZERO; 2],
             basic_enabled: BasicInterrupts::ZERO,
+            cores: [None; MAX_CPUS],
         };
-        chip.reset();
+        chip.reset(boot_routing);
         Ok(chip)
     }
 
-    /// Mask every line and route the GPU interrupt to core 0.
-    fn reset(&mut self) {
-        self.local.write_core0_timer_int_control(TimerControl::ZERO);
+    /// Mask every line on every core, clear every mailbox, and route the GPU
+    /// interrupt to `boot_core`.
+    fn reset(&mut self, boot_core: Core) {
+        for core in 0..CORES {
+            // `core` is below `CORES`, the length of every per-core array.
+            let _in_range = self.local.write_timer_int_control(core, TimerControl::ZERO);
+            let _in_range = self
+                .local
+                .write_mailbox_int_control(core, MailboxControl::ZERO);
+            for mailbox in 0..MAILBOXES {
+                let _in_range = self
+                    .local
+                    .write_mailbox_read_clear(mailbox_index(core, mailbox), Mailbox::ALL);
+            }
+        }
         self.local
-            .write_core0_mailbox_int_control(MailboxControl::ZERO);
-        self.local
-            .write_pmu_int_routing_clear(PmuRouting::ZERO.with_irq_core(0, true));
+            .write_pmu_int_routing_clear(PmuRouting::new_with_raw_value(0xff));
         self.local.write_gpu_int_routing(
             GpuRouting::ZERO
-                .with_irq_core(Core::Core0)
-                .with_fiq_core(Core::Core0),
+                .with_irq_core(boot_core)
+                .with_fiq_core(boot_core),
         );
         if let Some(armctrl) = &mut self.armctrl {
             armctrl.write_basic_disable(BasicInterrupts::ALL_ARM_PERIPHERALS);
@@ -347,16 +426,25 @@ impl Bcm2836 {
         }
     }
 
-    /// The first pending, enabled line on core 0, or [`SPURIOUS`].
-    pub fn claim(&self) -> u32 {
-        let source = self.local.read_core0_irq_source();
+    /// The first pending, enabled line on hardware core `core`, or
+    /// [`SPURIOUS`]. A mailbox line is acknowledged here: the bits found in
+    /// the mailbox are cleared, so a bit set after this raises the line again.
+    pub fn claim(&mut self, core: usize) -> u32 {
+        let Ok(source) = self.local.read_irq_source(core) else {
+            return SPURIOUS;
+        };
+        let mailbox = (0..MAILBOX_LINES).find(|&mailbox| source.mailbox(mailbox as usize));
         let direct = (0..4_u32)
             .find(|&timer| source.timer(timer as usize))
             .map(|timer| LINE_CNTPS + timer)
             .or_else(|| {
-                (0..4_u32)
-                    .find(|&mailbox| source.mailbox(mailbox as usize))
-                    .map(|mailbox| LINE_MAILBOX0 + mailbox)
+                mailbox.map(|mailbox| {
+                    let index = mailbox_index(core, mailbox as usize);
+                    if let Ok(bits) = self.local.read_mailbox_read_clear(index) {
+                        let _in_range = self.local.write_mailbox_read_clear(index, bits);
+                    }
+                    LINE_MAILBOX0 + mailbox
+                })
             })
             .or_else(|| source.pmu().then_some(LINE_PMU));
         if let Some(line) = direct {
@@ -382,18 +470,24 @@ impl Bcm2836 {
             .unwrap_or(SPURIOUS)
     }
 
-    /// Enable (`enable`) or disable delivery of `line`.
-    pub fn set_enabled(&mut self, line: u32, enable: bool) {
+    /// Enable (`enable`) or disable delivery of `line`. A local line is
+    /// hardware core `core`'s own; a cascaded line is routed to the boot core.
+    pub fn set_enabled(&mut self, line: u32, enable: bool, core: usize) {
+        if core >= CORES {
+            return;
+        }
         if line <= LINE_CNTV {
             let timer = line as usize;
-            self.local
-                .modify_core0_timer_int_control(|control| control.with_irq(timer, enable));
-        } else if (LINE_MAILBOX0..LINE_MAILBOX0 + 4).contains(&line) {
+            let _in_range = self
+                .local
+                .modify_timer_int_control(core, |control| control.with_irq(timer, enable));
+        } else if (LINE_MAILBOX0..LINE_MAILBOX0 + MAILBOX_LINES).contains(&line) {
             let mailbox = (line - LINE_MAILBOX0) as usize;
-            self.local
-                .modify_core0_mailbox_int_control(|control| control.with_irq(mailbox, enable));
+            let _in_range = self
+                .local
+                .modify_mailbox_int_control(core, |control| control.with_irq(mailbox, enable));
         } else if line == LINE_PMU {
-            let route = PmuRouting::ZERO.with_irq_core(0, true);
+            let route = PmuRouting::ZERO.with_irq_core(core, true);
             if enable {
                 self.local.write_pmu_int_routing_set(route);
             } else {
@@ -430,6 +524,48 @@ impl Bcm2836 {
         }
         // The GPU cascade (local line 8) is always routed; other local lines
         // are not implemented by the controller.
+    }
+
+    /// Record that logical CPU `cpu` is hardware core `core`, the caller, and
+    /// unmask its IPI mailbox.
+    ///
+    /// # Errors
+    ///
+    /// If `cpu` is at least [`MAX_CPUS`] or `core` is not a core of the chip.
+    pub fn init_cpu(&mut self, cpu: u32, core: usize) -> Result<(), ConfigError> {
+        if core >= CORES {
+            return Err(ConfigError::BadCore);
+        }
+        let slot = self
+            .cores
+            .get_mut(cpu as usize)
+            .ok_or(ConfigError::BadCpu)?;
+        *slot = Some(core);
+        self.set_enabled(IPI_LINE, true, core);
+        Ok(())
+    }
+
+    /// Raise the IPI on every logical CPU of `cpu_mask` (bit `n` is CPU `n`).
+    ///
+    /// # Errors
+    ///
+    /// If the mask names a CPU that has not run [`Self::init_cpu`]; then no
+    /// core is signalled.
+    pub fn send_ipi(&mut self, cpu_mask: u32) -> Result<(), ConfigError> {
+        let mut targets = [None; MAX_CPUS];
+        for (cpu, target) in targets.iter_mut().enumerate() {
+            if cpu_mask & (1 << cpu) != 0 {
+                *target = Some(self.cores[cpu].ok_or(ConfigError::UnknownCpu)?);
+            }
+        }
+        if cpu_mask >> MAX_CPUS != 0 {
+            return Err(ConfigError::UnknownCpu);
+        }
+        for core in targets.into_iter().flatten() {
+            let index = mailbox_index(core, (IPI_LINE - LINE_MAILBOX0) as usize);
+            let _in_range = self.local.write_mailbox_write_set(index, Mailbox::IPI);
+        }
+        Ok(())
     }
 
     /// Decode a device tree interrupt specifier for the controller of `kind`.

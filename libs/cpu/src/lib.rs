@@ -15,4 +15,4 @@ pub mod arch;
 #[cfg(target_arch = "aarch64")]
 pub use crate::arch::aarch64::{cache, smp};
 #[cfg(target_arch = "aarch64")]
-pub use crate::arch::aarch64::{endless_sleep, nop};
+pub use crate::arch::aarch64::{endless_sleep, nop, send_event};

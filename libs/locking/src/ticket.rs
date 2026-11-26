@@ -50,8 +50,21 @@ impl TicketLock {
     ///
     /// If `holder` is zero, or already holds the lock: it would wait for itself.
     pub fn acquire(&self, holder: u32) {
+        // Only `holder` itself stores its id, so the check in `acquire_while` sees its
+        // own last store.
+        self.acquire_while(holder, || true);
+    }
+
+    /// Take the lock for `holder` as [`acquire`](Self::acquire) does, but stop waiting
+    /// once `keep_waiting` says no; whether the lock was taken. A holder that stops
+    /// leaves its ticket behind, so the lock is never free again: for a system that has
+    /// stopped, such as after a panic.
+    ///
+    /// # Panics
+    ///
+    /// If `holder` is zero, or already holds the lock.
+    pub fn acquire_while(&self, holder: u32, keep_waiting: impl Fn() -> bool) -> bool {
         assert_ne!(holder, NO_HOLDER, "a ticket lock holder is nonzero");
-        // Only `holder` itself stores its id, so this read sees its own last store.
         assert_ne!(
             self.holder.load(Ordering::Relaxed),
             holder,
@@ -59,9 +72,13 @@ impl TicketLock {
         );
         let ticket = self.next.fetch_add(1, Ordering::Relaxed);
         while self.serving.load(Ordering::Acquire) != ticket {
+            if !keep_waiting() {
+                return false;
+            }
             spin_loop();
         }
         self.holder.store(holder, Ordering::Relaxed);
+        true
     }
 
     /// Take the lock for `holder` if it is free right now, without waiting; whether it
