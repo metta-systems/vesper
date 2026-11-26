@@ -201,7 +201,7 @@ fn setup(
     nucleus
         .create_console_thread(fixture_as)
         .expect("caller Thread");
-    nucleus.current_thread = nucleus.fixture_thread(0);
+    nucleus.this_core.current_thread = nucleus.fixture_thread(0);
 
     let notification = test_arena::carve(Notification::new()).expect("arena exhausted");
     let time = test_arena::carve(Time::empty(0)).expect("arena exhausted");

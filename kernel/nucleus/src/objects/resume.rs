@@ -174,7 +174,7 @@ impl<A: ArchObjects> Nucleus<A> {
         {
             return Err(CapError::InvalidOperation);
         }
-        let forced = self.dispatch_next.take();
+        let forced = self.this_core.dispatch_next.take();
         let resumed = self.switch_away(
             access,
             current,
@@ -186,12 +186,13 @@ impl<A: ArchObjects> Nucleus<A> {
         // child domain, to the child dispatcher's entry): it only stays
         // stale when nothing was activated.
         if forced.is_some() {
-            self.dispatched = forced;
+            self.this_core.dispatched = forced;
         } else if self
+            .this_core
             .dispatched
             .is_some_and(|dispatched| dispatched.thread == current)
         {
-            self.dispatched = None;
+            self.this_core.dispatched = None;
         }
         Ok(resumed)
     }
@@ -271,10 +272,10 @@ impl<A: ArchObjects> Nucleus<A> {
         self.charge_current(current);
         // A tick consumes a preemption request: the dispatcher it asked for
         // is at the front of the queue now.
-        self.preempt_requested = false;
+        self.this_core.preempt_requested = false;
         // A dispatched Thread that reached its limit or ran out of budget
         // activates the dispatcher.
-        if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
+        if let Some(dispatched) = self.this_core.dispatched.filter(|d| d.thread == current) {
             let now = self.counter_ticks();
             // The Thread of a child domain stops for the parent when the
             // grant is over, whatever its own limit says.
@@ -296,7 +297,7 @@ impl<A: ArchObjects> Nucleus<A> {
         }
         // A child domain's Thread that the next Thread in line is not the
         // child's dispatcher for is stopped by the parent: the grant ends.
-        if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
+        if let Some(dispatched) = self.this_core.dispatched.filter(|d| d.thread == current) {
             let child_dispatcher = self
                 .scheduler_mut(dispatched.scheduler)
                 .filter(|scheduler| scheduler.grant().is_some())
@@ -332,7 +333,7 @@ impl<A: ArchObjects> Nucleus<A> {
         &mut self,
         access: &Access,
     ) -> Result<Option<PreparedResume>, CapError> {
-        debug_assert!(self.current_thread.is_none(), "not idle");
+        debug_assert!(self.this_core.current_thread.is_none(), "not idle");
         let Some(next) = self.activations.peek() else {
             return Ok(None);
         };
@@ -440,14 +441,15 @@ impl<A: ArchObjects> Nucleus<A> {
                 "validated scheduler front changed"
             );
         }
-        if self.current_thread.is_none() {
+        if self.this_core.current_thread.is_none() {
             // Leaving idle: the interval since the last interrupt was spent
             // waiting. Interrupt time was moved out of it as it was handled.
             let now = self.counter_ticks();
-            self.idle_ticks = self
+            self.this_core.idle_ticks = self
+                .this_core
                 .idle_ticks
-                .saturating_add(now.saturating_sub(self.current_since_ticks));
-            self.current_since_ticks = now;
+                .saturating_add(now.saturating_sub(self.this_core.current_since_ticks));
+            self.this_core.current_since_ticks = now;
         }
         let fp_frame = |nucleus: &Self, thread: ThreadId| {
             nucleus
@@ -457,10 +459,11 @@ impl<A: ArchObjects> Nucleus<A> {
         let leaving_fp = current.is_some_and(|thread| fp_frame(self, thread));
         let entering_fp = fp_frame(self, next);
         if current != Some(next) {
-            self.fp_totals.thread_switches = self.fp_totals.thread_switches.wrapping_add(1);
+            self.this_core.fp_totals.thread_switches =
+                self.this_core.fp_totals.thread_switches.wrapping_add(1);
             if leaving_fp || entering_fp {
-                self.fp_totals.fp_thread_switches =
-                    self.fp_totals.fp_thread_switches.wrapping_add(1);
+                self.this_core.fp_totals.fp_thread_switches =
+                    self.this_core.fp_totals.fp_thread_switches.wrapping_add(1);
             }
         }
         let entering = self.thread_mut(next).expect("validated target Thread");
@@ -473,8 +476,8 @@ impl<A: ArchObjects> Nucleus<A> {
             stats.fp_entries = stats.fp_entries.wrapping_add(1);
             stats.fp_loads = stats.fp_loads.wrapping_add(1);
         }
-        self.current_thread = Some(next);
-        self.preempt_requested = false;
+        self.this_core.current_thread = Some(next);
+        self.this_core.preempt_requested = false;
         Ok(PreparedResume {
             current,
             next,
@@ -548,7 +551,7 @@ impl<A: ArchObjects> Nucleus<A> {
             None
         };
         let mut failed_reported = false;
-        if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
+        if let Some(dispatched) = self.this_core.dispatched.filter(|d| d.thread == current) {
             // A child's dispatcher handing the CPU to one of its Threads is
             // not a stop: the grant stays in force. Any other way the child
             // dispatcher leaves the CPU ends the grant.
@@ -591,8 +594,8 @@ impl<A: ArchObjects> Nucleus<A> {
             // Nothing is runnable: commit the stop and idle. Publishing the
             // stopped Thread can wake a dispatcher; the idle wait sees it.
             self.stop_current(current, parked);
-            self.current_thread = None;
-            self.preempt_requested = false;
+            self.this_core.current_thread = None;
+            self.this_core.preempt_requested = false;
             self.publish_thread(current, false);
             return Ok(Switch::Idle);
         };

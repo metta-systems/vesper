@@ -7,27 +7,18 @@
 //! [`program`] sets it, or switches it off when nothing does.
 
 use {
+    crate::objects::core_record::{self, NO_DEADLINE},
     aarch64_cpu::{
         asm::barrier,
         registers::{CNTFRQ_EL0, CNTP_CTL_EL0, CNTP_CVAL_EL0, CNTPCT_EL0, Read, Write},
     },
-    core::{
-        sync::atomic::{AtomicU64, Ordering},
-        time::Duration,
-    },
+    core::{sync::atomic::Ordering, time::Duration},
 };
 
 /// Length of one time slice.
 pub const TICK: Duration = Duration::from_millis(10);
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
-
-/// No deadline is programmed.
-const OFF: u64 = u64::MAX;
-
-/// The deadline last written to the hardware, or [`OFF`]: an unchanged
-/// deadline needs no register writes.
-static PROGRAMMED: AtomicU64 = AtomicU64::new(OFF);
 
 /// The counter frequency, in Hz.
 pub fn frequency() -> u64 {
@@ -52,11 +43,17 @@ pub fn slice_ticks() -> u64 {
     u64::try_from(ticks).unwrap_or(u64::MAX).max(1)
 }
 
-/// Fire the timer once when the counter reaches `deadline` ticks, or switch
-/// it off for `None`. A deadline already in the past fires at once.
+/// Fire this core's timer once when the counter reaches `deadline` ticks, or
+/// switch it off for `None`. A deadline already in the past fires at once.
+/// The deadline last written is in the core's record, as the timer registers
+/// are the core's own.
 pub fn program(deadline: Option<u64>) {
-    let wanted = deadline.unwrap_or(OFF);
-    if PROGRAMMED.swap(wanted, Ordering::Relaxed) == wanted {
+    let wanted = deadline.unwrap_or(NO_DEADLINE);
+    if core_record::current()
+        .programmed_deadline
+        .swap(wanted, Ordering::Relaxed)
+        == wanted
+    {
         return;
     }
     match deadline {

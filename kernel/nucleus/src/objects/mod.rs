@@ -3,6 +3,7 @@ pub mod arch;
 pub mod arch_objects;
 pub mod carved;
 pub mod completion;
+pub mod core_record;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
 pub mod event_count;

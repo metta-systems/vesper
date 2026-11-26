@@ -9,6 +9,7 @@ use {
             arch_objects::{AddressSpaceId, AddressSpaceObject, PageTableId},
             carved::{Carved, CarvedId},
             completion::{PendingKind, PendingState},
+            core_record::ThisCore,
             event_count::AdvanceOutcome,
             fp::FpUnit,
             irq::IrqTable,
@@ -89,10 +90,8 @@ pub struct NucleusPools<A: ArchObjects> {
 pub struct Nucleus<A: ArchObjects> {
     /// All object pools
     pub pools: NucleusPools<A>,
-    /// Currently running thread, as a checked identity: every read validates
-    /// its generation against the Thread's header, so a retired Thread is
-    /// never mistaken for the current Thread.
-    pub current_thread: Option<ThreadId>, // FIXME: not option, always something (Idle or other)
+    /// The running core's scheduling state and totals, in its per-core record.
+    pub this_core: ThisCore,
     /// Pending-invocation records for blocked callers.
     /// Bounded kernel-private storage: the closed-wait identity for blocked invocations.
     pub pending: PendingPool,
@@ -104,32 +103,8 @@ pub struct Nucleus<A: ArchObjects> {
     pub irq_table: IrqTable,
     /// Preemption-timer ticks taken since boot.
     pub ticks: u64,
-    /// When the current Thread was last made current, in counter ticks on the
-    /// [`Nucleus::counter_ticks`] timeline. The next switch away or tick charges
-    /// the elapsed ticks to that Thread and its bound Time. Starts at zero, so
-    /// the boot Thread is charged from counter start.
-    pub current_since_ticks: u64,
-
-    /// The Thread running under a dispatcher's `Dispatch`, and the
-    /// dispatcher's limit for it.
-    pub dispatched: Option<Dispatched>,
-    /// The dispatch the dispatcher just asked for, taken when it parks.
-    pub dispatch_next: Option<Dispatched>,
-    /// An activation made the dispatcher runnable ahead of the Thread that
-    /// is running: the timer fires at once so the nucleus switches.
-    pub preempt_requested: bool,
     /// The dispatchers' armed timers (`Scheduler.ArmTimer`).
     pub timers: SchedulerTimers,
-    /// Counter ticks spent handling interrupts since boot, published to the
-    /// Schedulers' records as `interrupt_ns`.
-    pub interrupt_ticks: u64,
-    /// Counter ticks spent with nothing to run, waiting in the kernel for an
-    /// interrupt, since boot; published to the Schedulers' records as
-    /// `idle_ns`. Time spent handling interrupts while idle is counted as
-    /// interrupt time, not idle time.
-    pub idle_ticks: u64,
-    /// Nucleus-wide FP/SIMD totals, published in the root Scheduler's record.
-    pub fp_totals: FpTotals,
 }
 
 /// A Thread that a dispatcher's `Dispatch` runs.
@@ -211,8 +186,8 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Time. Restarts the interval at now and returns the ticks charged.
     pub fn charge_current(&mut self, current: ThreadId) -> u64 {
         let now = self.counter_ticks();
-        let elapsed = now.saturating_sub(self.current_since_ticks);
-        self.current_since_ticks = now;
+        let elapsed = now.saturating_sub(self.this_core.current_since_ticks);
+        self.this_core.current_since_ticks = now;
         if let Some(thread) = self.thread_mut(current) {
             thread.run_time_ticks = thread.run_time_ticks.saturating_add(elapsed);
         }
@@ -281,10 +256,11 @@ impl<A: ArchObjects> Nucleus<A> {
             return;
         }
         if self
+            .this_core
             .dispatched
             .is_some_and(|dispatched| dispatched.scheduler == scheduler)
         {
-            self.dispatched = None;
+            self.this_core.dispatched = None;
         }
         let Some(dispatcher) = dispatcher else {
             return;
@@ -297,11 +273,11 @@ impl<A: ArchObjects> Nucleus<A> {
             }
             (parent, grant) => {
                 self.activations.push_front(dispatcher);
-                self.preempt_requested = true;
+                self.this_core.preempt_requested = true;
                 // Within a grant the parent's limit goes on applying to the
                 // dispatcher.
                 if let (Some(parent), Some(grant)) = (parent, grant) {
-                    self.dispatched = Some(Dispatched {
+                    self.this_core.dispatched = Some(Dispatched {
                         thread: dispatcher,
                         scheduler: parent,
                         deadline_ticks: grant.deadline_ticks,
@@ -342,10 +318,11 @@ impl<A: ArchObjects> Nucleus<A> {
             self.publish_thread(dispatcher, false);
         }
         if self
+            .this_core
             .dispatched
             .is_some_and(|dispatched| dispatched.scheduler == child)
         {
-            self.dispatched = None;
+            self.this_core.dispatched = None;
         }
         self.publish_scheduler_record(child);
         if let Some(parent) = parent {
@@ -412,7 +389,7 @@ impl<A: ArchObjects> Nucleus<A> {
             // The root dispatcher itself, woken from a wait of its own (not a
             // `Dispatch`): nobody dispatches the dispatcher, so it runs next.
             self.activations.push_front(id);
-            self.preempt_requested = true;
+            self.this_core.preempt_requested = true;
         }
     }
 
@@ -450,8 +427,8 @@ impl<A: ArchObjects> Nucleus<A> {
         );
         if !started
             || owner == destination
-            || self.current_thread == Some(id)
-            || [self.dispatched, self.dispatch_next]
+            || self.this_core.current_thread == Some(id)
+            || [self.this_core.dispatched, self.this_core.dispatch_next]
                 .into_iter()
                 .flatten()
                 .any(|dispatched| dispatched.thread == id)
@@ -593,7 +570,7 @@ impl<A: ArchObjects> Nucleus<A> {
                     | ExecutionContext::Parked { .. }
             );
         let scheduler = thread.scheduler;
-        if !legal || self.current_thread == Some(id) {
+        if !legal || self.this_core.current_thread == Some(id) {
             return Err(CapError::InvalidOperation);
         }
         if let Some(scheduler) = scheduler.and_then(|scheduler| self.scheduler_mut(scheduler))
@@ -605,10 +582,11 @@ impl<A: ArchObjects> Nucleus<A> {
             thread.suspended = true;
         }
         if self
+            .this_core
             .dispatched
             .is_some_and(|dispatched| dispatched.thread == id)
         {
-            self.dispatched = None;
+            self.this_core.dispatched = None;
         }
         self.publish_thread(id, false);
         Ok(())
@@ -926,13 +904,13 @@ impl<A: ArchObjects> Nucleus<A> {
     /// The earliest counter value at which the running Thread needs the
     /// timer, apart from timeouts and dispatcher timers.
     fn running_deadline_ticks(&mut self, slice_ticks: u64) -> Option<u64> {
-        let current = self.current_thread?;
+        let current = self.this_core.current_thread?;
         // An activation made the dispatcher runnable ahead of the running
         // Thread: fire at once so the nucleus switches.
-        if self.preempt_requested {
-            return Some(self.current_since_ticks);
+        if self.this_core.preempt_requested {
+            return Some(self.this_core.current_since_ticks);
         }
-        let since = self.current_since_ticks;
+        let since = self.this_core.current_since_ticks;
         let frequency = self.counter_frequency();
         let exhaustion = |nucleus: &mut Self| {
             nucleus
@@ -942,7 +920,7 @@ impl<A: ArchObjects> Nucleus<A> {
         };
         // A dispatched Thread runs until its limit or its budget runs out:
         // the dispatcher, not the queue's slice, bounds it.
-        if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
+        if let Some(dispatched) = self.this_core.dispatched.filter(|d| d.thread == current) {
             return match (dispatched.deadline_ticks, exhaustion(self)) {
                 (Some(limit), Some(exhaustion)) => Some(limit.min(exhaustion)),
                 (limit, exhaustion) => limit.or(exhaustion),
@@ -1027,8 +1005,8 @@ impl<A: ArchObjects> Nucleus<A> {
             return;
         };
         let frequency = self.counter_frequency();
-        let interrupt_ns = ticks_to_ns_ceil(self.interrupt_ticks, frequency);
-        let idle_ns = ticks_to_ns_ceil(self.idle_ticks, frequency);
+        let interrupt_ns = ticks_to_ns_ceil(self.this_core.interrupt_ticks, frequency);
+        let idle_ns = ticks_to_ns_ceil(self.this_core.idle_ticks, frequency);
         let grant_end_ns = grant
             .and_then(|grant| grant.deadline_ticks)
             .map_or(0, |ticks| ticks_to_ns_ceil(ticks, frequency));
@@ -1045,7 +1023,7 @@ impl<A: ArchObjects> Nucleus<A> {
             fp: if root {
                 FpTotals {
                     fp_entry_toggles: A::Fp::entry_toggles(),
-                    ..self.fp_totals
+                    ..self.this_core.fp_totals
                 }
             } else {
                 FpTotals::ZERO
@@ -1213,14 +1191,16 @@ impl<A: ArchObjects> Nucleus<A> {
             self.irq_table.record_handled(line, ticks);
         }
         let now = self.counter_ticks();
-        self.current_since_ticks = self
+        self.this_core.current_since_ticks = self
+            .this_core
             .current_since_ticks
             .saturating_add(total_ticks)
             .min(now);
-        self.interrupt_ticks = self.interrupt_ticks.saturating_add(total_ticks);
+        self.this_core.interrupt_ticks = self.this_core.interrupt_ticks.saturating_add(total_ticks);
         // The interrupted Thread's scheduler sees the new total with its next
         // read; this is a counter refresh, not an event.
         let scheduler = self
+            .this_core
             .current_thread
             .and_then(|id| self.thread(id))
             .and_then(|thread| thread.scheduler);
@@ -1232,7 +1212,10 @@ impl<A: ArchObjects> Nucleus<A> {
     /// The current Thread's identity. `InvalidThread` when no Thread is
     /// current or the recorded identity no longer names a live Thread.
     pub fn current_thread_id(&self) -> Result<ThreadId, CapError> {
-        let id = self.current_thread.ok_or(CapError::InvalidThread)?;
+        let id = self
+            .this_core
+            .current_thread
+            .ok_or(CapError::InvalidThread)?;
         self.thread(id).ok_or(CapError::InvalidThread)?;
         Ok(id)
     }
@@ -1483,6 +1466,7 @@ mod tests {
             arch::{AArch64ASIDPool, ArchPools},
             carved::{self, Carved, CarvedId},
             completion::PendingState,
+            core_record::{CoreState, ThisCore},
             event_count::{AdvanceOutcome, AwaitOutcome},
             notification::AwaitOutcome as NotificationAwait,
             scheduler::Region,
@@ -1508,9 +1492,10 @@ mod tests {
     /// re-initializes the same static storage before use.
     fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
         static mut NUCLEUS_MEM: MaybeUninit<Nucleus<ArchObjectsImpl>> = MaybeUninit::uninit();
-        // SAFETY: the pool backings and NUCLEUS_MEM are exclusively owned by
-        // the fixture; initialization happens before any use, and tests are
-        // sequential. Raw pointers avoid mutable references to statics
+        static mut CORE_STATE: CoreState = CoreState::new();
+        // SAFETY: the pool backings, NUCLEUS_MEM and CORE_STATE are exclusively
+        // owned by the fixture; initialization happens before any use, and tests
+        // are sequential. Raw pointers avoid mutable references to statics
         // (edition 2024).
         unsafe {
             let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
@@ -1518,20 +1503,15 @@ mod tests {
             assert!(
                 ObjectPool::<AArch64ASIDPool>::carve_size(1) <= core::mem::size_of::<[u128; 8]>()
             );
+            let core_state = &raw mut CORE_STATE;
+            core_state.write(CoreState::new());
             nucleus_ptr.write(Nucleus {
-                current_thread: None,
+                this_core: ThisCore::fixture(core_state),
                 pending: PendingPool::new(),
                 activations: Activations::new(),
-                idle_ticks: 0,
-                fp_totals: libobject::scheduler_record::FpTotals::ZERO,
                 irq_table: crate::objects::irq::IrqTable::empty(),
                 ticks: 0,
-                current_since_ticks: 0,
-                dispatched: None,
-                dispatch_next: None,
-                preempt_requested: false,
                 timers: crate::objects::timers::SchedulerTimers::new(),
-                interrupt_ticks: 0,
                 pools: NucleusPools {
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.

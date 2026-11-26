@@ -407,7 +407,10 @@ impl<A: ArchObjects> Nucleus<A> {
         access: &Access,
         prepared: PreparedCall,
     ) -> Result<CommittedCall, CapError> {
-        let current = self.current_thread.ok_or(CapError::InvalidThread)?;
+        let current = self
+            .this_core
+            .current_thread
+            .ok_or(CapError::InvalidThread)?;
         let source_thread = prepared.source_thread;
         if source_thread != current {
             return Err(CapError::InvalidOperation);
@@ -763,7 +766,10 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Per-call time attribution from the record's stamp stays inert until
     /// the Time subsystem exists.
     pub fn commit_return(&mut self, prepared: PreparedReturn) -> Result<CommittedReturn, CapError> {
-        let current = self.current_thread.ok_or(CapError::InvalidThread)?;
+        let current = self
+            .this_core
+            .current_thread
+            .ok_or(CapError::InvalidThread)?;
         let source_thread = prepared.source_thread;
         if source_thread != current {
             return Err(CapError::InvalidOperation);

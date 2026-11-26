@@ -678,7 +678,10 @@ pub fn run() -> ! {
             .entry(keys.root_scheduler)
             .carved_id()
             .unwrap_or_else(|error| panic!("root Scheduler identity: {:?}", error.code()));
-        let boot_thread = nucleus.current_thread.expect("the boot Thread exists");
+        let boot_thread = nucleus
+            .this_core
+            .current_thread
+            .expect("the boot Thread exists");
         nucleus
             .thread_mut(boot_thread)
             .expect("the boot Thread exists")

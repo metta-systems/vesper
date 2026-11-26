@@ -779,6 +779,7 @@ pub fn run() {
         )
         .unwrap_or_else(|error| panic!("PPC CreateInvocation failed: {:?}", error.code()));
     let boot_thread_id = nucleus
+        .this_core
         .current_thread
         .unwrap_or_else(|| panic!("no current boot Thread"));
     let assert_boot_thread_home = |nucleus: &Nucleus<ArchObjectsImpl>| {

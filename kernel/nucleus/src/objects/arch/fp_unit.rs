@@ -230,7 +230,7 @@ fn with_fp_open(routine: impl FnOnce()) {
 /// records what the [`FpEntryGuard`] opens at the exit.
 pub fn set_fp_access(fp_simd: bool) {
     #[cfg(feature = "fp_entry_trap")]
-    entry_guard::EXIT_FP_OPEN.store(fp_simd, core::sync::atomic::Ordering::Relaxed);
+    entry_guard::exit_fp_open().store(fp_simd, core::sync::atomic::Ordering::Relaxed);
     #[cfg(not(feature = "fp_entry_trap"))]
     CPACR_EL1.modify(if fp_simd {
         CPACR_EL1::FPEN::TrapNothing
@@ -239,10 +239,10 @@ pub fn set_fp_access(fp_simd: bool) {
     });
 }
 
-/// `FPEN` toggles the entry guard made: 0 without `fp_entry_trap`.
+/// `FPEN` toggles the entry guard made on this core: 0 without `fp_entry_trap`.
 pub fn entry_toggles() -> u64 {
     #[cfg(feature = "fp_entry_trap")]
-    return entry_guard::TOGGLES.load(core::sync::atomic::Ordering::Relaxed);
+    return entry_guard::toggles().load(core::sync::atomic::Ordering::Relaxed);
     #[cfg(not(feature = "fp_entry_trap"))]
     0
 }
@@ -259,7 +259,7 @@ pub fn entry_toggles() -> u64 {
 /// thing in it: the handler's prologue runs before it, but is integer code
 /// like all of the soft-float kernel. Entries taken in the kernel itself
 /// (`current_elx_*`) return into the kernel and take no guard. The exit value
-/// is one variable, which is per-core state once there is more than one core.
+/// and the toggle count are the core's own, in its record.
 pub struct FpEntryGuard;
 
 impl FpEntryGuard {
@@ -292,25 +292,30 @@ mod entry_guard {
         core::sync::atomic::{AtomicBool, AtomicU64, Ordering},
     };
 
-    /// Whether the frame the current entry returns to is an FP frame.
-    pub static EXIT_FP_OPEN: AtomicBool = AtomicBool::new(false);
-    /// `FPEN` writes the guard made, at entries and exits.
-    pub static TOGGLES: AtomicU64 = AtomicU64::new(0);
+    /// Whether the frame this core's current entry returns to is an FP frame.
+    pub fn exit_fp_open() -> &'static AtomicBool {
+        &crate::objects::core_record::current().fp_exit_open
+    }
+
+    /// `FPEN` writes the guard made on this core, at entries and exits.
+    pub fn toggles() -> &'static AtomicU64 {
+        &crate::objects::core_record::current().fp_entry_toggles
+    }
 
     pub fn enter() {
         let open = CPACR_EL1.matches_all(CPACR_EL1::FPEN::TrapNothing);
-        EXIT_FP_OPEN.store(open, Ordering::Relaxed);
+        exit_fp_open().store(open, Ordering::Relaxed);
         if open {
             CPACR_EL1.modify(CPACR_EL1::FPEN::TrapEl0El1);
             barrier::isb(barrier::SY);
-            TOGGLES.fetch_add(1, Ordering::Relaxed);
+            toggles().fetch_add(1, Ordering::Relaxed);
         }
     }
 
     pub fn exit() {
-        if EXIT_FP_OPEN.load(Ordering::Relaxed) {
+        if exit_fp_open().load(Ordering::Relaxed) {
             CPACR_EL1.modify(CPACR_EL1::FPEN::TrapNothing);
-            TOGGLES.fetch_add(1, Ordering::Relaxed);
+            toggles().fetch_add(1, Ordering::Relaxed);
         }
     }
 }

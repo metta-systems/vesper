@@ -111,12 +111,11 @@ impl Cores {
     pub fn write_records(&self, trap_stack_top: impl Fn(usize) -> u64) {
         let base = self.records.as_u64() as *mut CoreRecord;
         for (index, &affinity) in self.plan.affinities[..self.plan.count].iter().enumerate() {
-            let record = CoreRecord {
-                index: u32::try_from(index).expect("at most MAX_CPUS cores"),
-                reserved: 0,
+            let record = CoreRecord::new(
+                u32::try_from(index).expect("at most MAX_CPUS cores"),
                 affinity,
-                trap_stack_top: trap_stack_top(index),
-            };
+                trap_stack_top(index),
+            );
             // SAFETY: the record run was allocated for `count` records and is ours; the
             // MMU is off, so its physical address is its address.
             unsafe {

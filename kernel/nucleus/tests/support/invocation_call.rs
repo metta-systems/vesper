@@ -76,7 +76,7 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
             let source = nucleus
                 .create_thread(source_as)
                 .expect("source Thread allocation");
-            nucleus.current_thread = Some(source);
+            nucleus.this_core.current_thread = Some(source);
             let address_space = nucleus.address_space_mut(target_as).unwrap();
             address_space.set_translation_root(Some(ROOT));
             address_space.set_asid(Some(2));
@@ -164,7 +164,7 @@ fn call_frame(key: RawKey) -> SavedContext {
 }
 
 fn source_mut(nucleus: &mut Nucleus<ArchObjectsImpl>) -> &mut crate::objects::Thread {
-    let id = nucleus.current_thread.unwrap();
+    let id = nucleus.this_core.current_thread.unwrap();
     nucleus.thread_mut(id).unwrap()
 }
 
@@ -213,7 +213,7 @@ struct Snapshot {
 
 fn snapshot(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) -> Snapshot {
     let target = nucleus.address_space(fixture.target_as);
-    let current_thread = nucleus.current_thread;
+    let current_thread = nucleus.this_core.current_thread;
     let target_root = target.and_then(|address_space| address_space.translation_root());
     let target_asid = target.and_then(|address_space| address_space.asid());
     let stacks_in_use =
@@ -357,7 +357,7 @@ fn call_preparation_describes_the_migration_without_mutating_anything() {
         assert_eq!(snapshot(nucleus, &fixture), before);
         assert_eq!(source_mut(nucleus).invocation_stack.len(), 3);
 
-        let current = nucleus.current_thread.unwrap();
+        let current = nucleus.this_core.current_thread.unwrap();
         assert_eq!(prepared.source_thread(), current);
         assert_eq!(prepared.entry_pc().get(), FUNCTION);
         assert_eq!(prepared.stack_pool(), fixture.pool);
@@ -692,12 +692,12 @@ fn call_commit_pushes_continuation_and_migrates_into_the_target_table() {
         assert_eq!(below, before.source_stack);
 
         // Key resolution now selects the target AddressSpace's table.
-        assert_eq!(nucleus.current_thread, before.current_thread);
+        assert_eq!(nucleus.this_core.current_thread, before.current_thread);
         assert_eq!(
             nucleus.current_thread_table_addr(),
             Some(fixture.target_table)
         );
-        assert_eq!(Some(commit.source_thread), nucleus.current_thread);
+        assert_eq!(Some(commit.source_thread), nucleus.this_core.current_thread);
         assert_eq!(commit.translation.address_space(), fixture.target_as);
         assert_eq!(commit.translation.root(), ROOT);
         assert_eq!(commit.translation.asid(), 2);
@@ -803,7 +803,7 @@ fn stale_prepared_call_is_rejected_without_mutation() {
                 // A different Thread is current.
                 _ => {
                     let other = nucleus.create_thread(fixture.source_as).unwrap();
-                    nucleus.current_thread = Some(other);
+                    nucleus.this_core.current_thread = Some(other);
                 }
             }
             let before = snapshot(nucleus, &fixture);
@@ -1001,7 +1001,7 @@ fn call_then_return_restores_the_exact_source_context_and_table() {
         assert_eq!(commit.translation.address_space(), fixture.source_as);
         assert_eq!(commit.translation.root(), SOURCE_ROOT);
         assert_eq!(commit.translation.asid(), 1);
-        assert_eq!(Some(commit.source_thread), nucleus.current_thread);
+        assert_eq!(Some(commit.source_thread), nucleus.this_core.current_thread);
         // Back in the source AS and table, with the prior stack exactly restored.
         assert_eq!(
             nucleus.current_thread_table_addr(),
@@ -1113,7 +1113,7 @@ fn live_but_unready_source_is_rejected_without_pop() {
 fn return_key_form_and_lookup_errors_precede_the_pop() {
     with_call(|nucleus, fixture| {
         committed(call(nucleus, &fixture, &call_frame(fixture.key)));
-        let thread = nucleus.current_thread.unwrap();
+        let thread = nucleus.this_core.current_thread.unwrap();
         let named = nucleus
             .current_thread_table_mut()
             .unwrap()
@@ -1199,7 +1199,7 @@ fn stale_prepared_return_is_rejected_without_mutation() {
                 1 => source_mut(nucleus).address_space = fixture.source_as,
                 _ => {
                     let other = nucleus.create_thread(fixture.source_as).unwrap();
-                    nucleus.current_thread = Some(other);
+                    nucleus.this_core.current_thread = Some(other);
                 }
             }
             let before = snapshot(nucleus, &fixture);
@@ -1438,7 +1438,7 @@ fn expect_unhandled(
         ExecutionContext::Faulted { saved: faulting }
     );
     assert_eq!(thread.fault, None);
-    assert_eq!(nucleus.current_thread, Some(next));
+    assert_eq!(nucleus.this_core.current_thread, Some(next));
 }
 
 #[test_case]
@@ -1574,7 +1574,7 @@ fn a_handler_pool_without_a_fault_area_leaves_the_fault_unhandled() {
     // The frame has nowhere to go: nothing commits.
     with_call(|nucleus, fixture| {
         install_fault_handler_with(nucleus, &fixture, None);
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = nucleus.this_core.current_thread.unwrap();
         let next = queue_next_thread(nucleus, &fixture);
         let faulting = faulting_frame();
         let delivery = deliver(nucleus, faulting, fault_info(0));
@@ -1591,7 +1591,7 @@ fn an_fp_fault_carries_its_registers_and_retry_restores_them() {
         set_fp_frame(nucleus, fixture.source_as, true);
         set_fp_frame(nucleus, fixture.target_as, true);
         install_fault_handler(nucleus, &fixture);
-        let thread = nucleus.current_thread.unwrap();
+        let thread = nucleus.this_core.current_thread.unwrap();
         let faulted_values = fp_tagged(0xF);
         FakeFpUnit::set_registers(faulted_values);
         let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
@@ -1681,7 +1681,7 @@ fn an_ordinary_return_inside_the_handler_does_not_end_the_fault() {
 #[test_case]
 fn a_fault_without_a_handler_parks_the_thread_and_counts_it() {
     with_call(|nucleus, fixture| {
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = nucleus.this_core.current_thread.unwrap();
         let next = queue_next_thread(nucleus, &fixture);
         let faulting = faulting_frame();
         let delivery = deliver(nucleus, faulting, fault_info(0));
@@ -1698,7 +1698,7 @@ fn a_fault_while_the_handler_is_busy_is_unhandled() {
             .address_space_mut(fixture.source_as)
             .unwrap()
             .set_fault_handler_busy(true);
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = nucleus.this_core.current_thread.unwrap();
         let next = queue_next_thread(nucleus, &fixture);
         let faulting = faulting_frame();
         let delivery = deliver(nucleus, faulting, fault_info(0));
@@ -1712,7 +1712,7 @@ fn a_fault_while_the_handler_is_busy_is_unhandled() {
 fn a_fault_inside_the_handler_is_unhandled_and_frees_the_handler() {
     with_call(|nucleus, fixture| {
         install_fault_handler(nucleus, &fixture);
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = nucleus.this_core.current_thread.unwrap();
         let next = queue_next_thread(nucleus, &fixture);
         let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
             panic!("the first fault must reach the handler");
@@ -1733,7 +1733,7 @@ fn a_fault_with_a_full_invocation_stack_is_unhandled() {
     with_call(|nucleus, fixture| {
         install_fault_handler(nucleus, &fixture);
         fill_stack(nucleus, INVOCATION_STACK_DEPTH);
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = nucleus.this_core.current_thread.unwrap();
         let next = queue_next_thread(nucleus, &fixture);
         let faulting = faulting_frame();
         let delivery = deliver(nucleus, faulting, fault_info(16));
@@ -1749,7 +1749,7 @@ fn releasing_a_thread_fault_frees_its_handler() {
         let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
             panic!("the fault must reach the handler");
         };
-        let id = nucleus.current_thread.unwrap();
+        let id = nucleus.this_core.current_thread.unwrap();
         nucleus.release_thread_fault(id);
         assert_eq!(source_mut(nucleus).fault, None);
         assert_eq!(handler_state(nucleus, fixture.source_as), (false, 0));
@@ -2276,7 +2276,7 @@ fn thread_teardown_removes_every_outstanding_borrowed_entry() {
         entry_in(fixture.target_table, borrowed).must("first borrowed entry");
         entry_in(fixture.source_table, second_key).must("second borrowed entry");
 
-        let thread = nucleus.current_thread.unwrap();
+        let thread = nucleus.this_core.current_thread.unwrap();
         // SAFETY: serial fixture; no other access context or guard overlaps.
         let access = unsafe { Access::new() };
         nucleus.release_thread_placements(&access, thread);
@@ -2322,12 +2322,15 @@ impl<T> Must<T> for Result<T, CapError> {
 fn a_return_is_a_preemption_point_like_any_other_kernel_exit() {
     with_call(|nucleus, fixture| {
         fill_stack(nucleus, 2);
-        let source = nucleus.current_thread.expect("the calling Thread");
+        let source = nucleus
+            .this_core
+            .current_thread
+            .expect("the calling Thread");
         let call_saved = call_frame(fixture.key);
         committed(call(nucleus, &fixture, &call_saved));
         // While the callee ran, the dispatcher was activated (its limit
         // elapsed, say); the Thread keeps running until it leaves the kernel.
-        nucleus.preempt_requested = true;
+        nucleus.this_core.preempt_requested = true;
         let next = queue_next_thread(nucleus, &fixture);
 
         let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
@@ -2335,8 +2338,8 @@ fn a_return_is_a_preemption_point_like_any_other_kernel_exit() {
         assert_eq!(commit.source_thread, source);
         // The Return changes nothing about the pending preemption: the
         // timer is asked to fire at once, as after any other exit.
-        assert!(nucleus.preempt_requested);
-        let since = nucleus.current_since_ticks;
+        assert!(nucleus.this_core.preempt_requested);
+        let since = nucleus.this_core.current_since_ticks;
         assert_eq!(nucleus.timer_deadline_ticks(1_000_000), Some(since));
 
         // The tick right after the Return stops the caller in exactly the
@@ -2358,7 +2361,7 @@ fn a_return_is_a_preemption_point_like_any_other_kernel_exit() {
                 saved: commit.resumed
             }
         );
-        assert!(!nucleus.preempt_requested);
+        assert!(!nucleus.this_core.preempt_requested);
     });
 }
 
@@ -2399,7 +2402,7 @@ fn a_call_between_fp_frames_hides_each_side_from_the_other() {
     with_call(|nucleus, fixture| {
         set_fp_frame(nucleus, fixture.source_as, true);
         set_fp_frame(nucleus, fixture.target_as, true);
-        let thread = nucleus.current_thread.unwrap();
+        let thread = nucleus.this_core.current_thread.unwrap();
         let caller = fp_tagged(0xC);
         FakeFpUnit::set_registers(caller);
 
@@ -2440,7 +2443,7 @@ fn a_call_between_fp_frames_hides_each_side_from_the_other() {
 fn an_integer_target_leaves_the_registers_alone_and_return_restores_the_caller() {
     with_call(|nucleus, fixture| {
         set_fp_frame(nucleus, fixture.source_as, true);
-        let thread = nucleus.current_thread.unwrap();
+        let thread = nucleus.this_core.current_thread.unwrap();
         let caller = fp_tagged(0xC);
         FakeFpUnit::set_registers(caller);
 
@@ -2467,7 +2470,7 @@ fn an_integer_target_leaves_the_registers_alone_and_return_restores_the_caller()
 fn an_fp_target_called_from_integer_code_starts_zeroed() {
     with_call(|nucleus, fixture| {
         set_fp_frame(nucleus, fixture.target_as, true);
-        let thread = nucleus.current_thread.unwrap();
+        let thread = nucleus.this_core.current_thread.unwrap();
         // Whatever an earlier FP frame left in the registers.
         FakeFpUnit::set_registers(fp_tagged(0x5));
 
@@ -2493,7 +2496,7 @@ fn an_fp_target_called_from_integer_code_starts_zeroed() {
 #[test_case]
 fn calls_between_integer_frames_never_touch_the_registers() {
     with_call(|nucleus, fixture| {
-        let thread = nucleus.current_thread.unwrap();
+        let thread = nucleus.this_core.current_thread.unwrap();
         let left = fp_tagged(0x5);
         FakeFpUnit::set_registers(left);
         committed(call(nucleus, &fixture, &call_frame(fixture.key)));
@@ -2510,18 +2513,18 @@ fn preempted_fp_threads_keep_their_own_registers() {
     with_call(|nucleus, fixture| {
         // Both Threads run in the source AddressSpace, which allows FP.
         set_fp_frame(nucleus, fixture.source_as, true);
-        let first = nucleus.current_thread.unwrap();
+        let first = nucleus.this_core.current_thread.unwrap();
         let second = queue_next_thread(nucleus, &fixture);
         let first_values = fp_tagged(0xA);
         FakeFpUnit::set_registers(first_values);
-        let totals_before = nucleus.fp_totals;
+        let totals_before = nucleus.this_core.fp_totals;
 
         // A tick that preempts: the dispatcher asked for it. The nucleus keeps
         // no run queue, so the preempted Thread is queued again by the test,
         // as a dispatcher would.
         let tick = |nucleus: &mut Nucleus<ArchObjectsImpl>| {
-            let preempted = nucleus.current_thread.unwrap();
-            nucleus.preempt_requested = true;
+            let preempted = nucleus.this_core.current_thread.unwrap();
+            nucleus.this_core.preempt_requested = true;
             // SAFETY: serial fixture with exclusive nucleus/pool backing; no
             // other access context or object/table guard overlaps this call.
             let access = unsafe { Access::new() };
@@ -2554,11 +2557,11 @@ fn preempted_fp_threads_keep_their_own_registers() {
             assert_eq!(stats.fp_entries, 1);
         }
         assert_eq!(
-            nucleus.fp_totals.thread_switches - totals_before.thread_switches,
+            nucleus.this_core.fp_totals.thread_switches - totals_before.thread_switches,
             2
         );
         assert_eq!(
-            nucleus.fp_totals.fp_thread_switches - totals_before.fp_thread_switches,
+            nucleus.this_core.fp_totals.fp_thread_switches - totals_before.fp_thread_switches,
             2
         );
     });
@@ -2693,7 +2696,7 @@ fn run_model_sequence(fp: [bool; 2], mut code: u32) {
             side: 0,
             owed: FpState::ZERO,
         };
-        let first = nucleus.current_thread.unwrap();
+        let first = nucleus.this_core.current_thread.unwrap();
         let second = queue_next_thread(nucleus, &fixture);
         let mut threads = [
             ModelThread {
@@ -2810,7 +2813,7 @@ fn run_model_sequence(fp: [bool; 2], mut code: u32) {
                     }
                     let thread = &mut threads[running];
                     let preempted = thread.id;
-                    nucleus.preempt_requested = true;
+                    nucleus.this_core.preempt_requested = true;
                     // SAFETY: serial fixture with exclusive nucleus/pool
                     // backing; no other access context or guard overlaps.
                     let access = unsafe { Access::new() };
