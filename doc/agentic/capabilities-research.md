@@ -258,7 +258,7 @@ The latter two and other newer work are listed in the author's [publication cata
 
 ## Event delivery and temporal capabilities (Composite, seL4)
 
-Evidence for the [IRQ delivery](capabilities-contract.md#irq-delivery) contract and the [Time](scheduling-design.md#decisions) rules. Composite read from its repository history; seL4 from a 2026-01 tree (`04db8cebc`).
+Evidence for the [IRQ delivery](irq-design.md#irq-delivery) contract and the [Time](scheduling-design.md#decisions) rules. Composite read from its repository history; seL4 from a 2026-01 tree (`04db8cebc`).
 
 ### Composite: brands, acaps, then asynchronous endpoints with tcaps (source-verified)
 

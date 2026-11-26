@@ -117,9 +117,7 @@ Reference: [communication](capabilities-contract.md#communication-and-deferred-c
 
 ### Interrupt delivery
 
-Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
-
-- [ ] Hand the boot IRQControl to an EL0 `irq-manager` component for good.
+Interrupt delivery and driver-loading work is tracked in [`irq-implementation-plan.md`](irq-implementation-plan.md).
 
 ### Components and interfaces
 
