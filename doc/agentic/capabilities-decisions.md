@@ -71,15 +71,6 @@ plan items.
   components: how a component learns the running kernel's ABI revision and
   supported operations, and what happens on a mismatch. Not needed while
   everything is rebuilt together from one tree.
-- **D1/D6/D9 — DebugConsole byte transport (parked):** how a generally
-  available console receives its bytes. (A) keep the pointer-based Write: the
-  nucleus needs checked user-memory reads (caller-AddressSpace authorization,
-  input snapshot, copy-fault recovery), which no other operation currently
-  needs. (B) a register-inline operation, e.g. a length plus up to 40 bytes in
-  `x3..x7` with client chunking, so the nucleus never reads user memory. Until
-  this is decided the console stays a debug-only prototype. The hardware
-  debugging aid's checked pointer reads (contract, DebugConsole debug-only
-  exception) are temporary and do not answer this question.
 
 ## Future work
 

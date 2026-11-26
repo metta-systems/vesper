@@ -1,7 +1,8 @@
 # Logging implementation plan
 
 Design: [logging-design.md](logging-design.md) (with the answered decisions L1 to L12,
-listed in [logging-completed.md](logging-completed.md)); no logging decision is open.
+listed in [logging-completed.md](logging-completed.md)); open decisions are in
+[logging-decisions.md](logging-decisions.md) (L13, the DebugConsole byte transport).
 This file holds only open
 work and the checks of what was built; mark an item `- [x]` only after its exit check
 has passed.
@@ -185,6 +186,16 @@ chainboot does unless chainboot handed over, and prints its early lines on the U
   `just _test-wood` passes with the early lines ahead of the log server's.
 - [ ] Board: wood-test from the SD card with `just console`, and through
   `just boot-wood-test` (handoff), on the Pi 3 B.
+
+## DebugConsole general availability
+
+**Parked** (maintainer decision): DebugConsole stays a debug-only prototype ([design](logging-design.md#debugconsole-debug-only-exception)). Every item below is console general-availability work. It waits on the byte-transport decision [L13](logging-decisions.md#l13-debugconsole-byte-transport) and the console authority decision under capability D4, and does not block other work.
+
+- [ ] Route user-copy fault recovery through the correct exception path, without recursive capability dispatch. Lands with the console's checked user-memory access below.
+- [ ] Define the console operation's authority, byte/string/NUL behavior, maximum length or chunking policy, and pointer semantics.
+- [ ] Introduce checked user-memory access for the console path, including caller-context authorization, range/length/overflow validation, input stability, and fault behavior. Do not relabel caller virtual addresses as trusted physical addresses.
+- [ ] Bound console copying and terminator handling; return specified errors for malformed inputs rather than panicking.
+- [ ] Test console success, kernel error propagation, invalid/empty slots, excessive raw slot/op values, boundary lengths, invalid/unauthorized pointers, non-SVC faults, and fault recovery without recursive capability dispatch.
 
 ## Verification commands
 
