@@ -59,9 +59,13 @@
 //------------------------------------------------------------------------------
 _boot_cores:
     // Only proceed on the boot core. Park it otherwise.
+    // The core's affinity is Aff3 (bits 39:32) and Aff2..Aff0 (bits 23:0): the
+    // Pi 5 numbers its cores in Aff1, so Aff0 alone does not tell them apart.
     mrs x9, MPIDR_EL1
-    and x9, x9, {CONST_CORE_ID_MASK}
-    mov x10, {CONST_BOOT_CORE_ID}
+    and x10, x9, {CONST_AFFINITY_LOW_MASK}
+    ubfx x9, x9, {CONST_AFF3_SHIFT}, {CONST_AFF3_BITS}
+    orr x9, x10, x9, lsl {CONST_AFF3_SHIFT}
+    mov x10, {CONST_BOOT_CORE_AFFINITY}
     cmp x9, x10
     b.ne .L_parking_loop
 

@@ -68,8 +68,8 @@ All by the maintainer, 2026-11-25.
 
 | Area | Today | Where |
 |---|---|---|
-| Entry | Every core that reaches `_boot_cores` compares `MPIDR_EL1 & 0b11` with 0; the others park on `wfe` forever | `libs/boot/src/arch/aarch64/boot.s`, `boot.rs` (`BOOT_CORE_ID`) |
-| Core id | `libcpu::smp::core_id()` = `MPIDR_EL1 & 0x3` | `libs/cpu/src/arch/aarch64/smp.rs` |
+| Entry | Every core that reaches `_boot_cores` (and chainboot's `_start`) compares its full affinity (Aff3, Aff2..Aff0) with `BOOT_CORE_AFFINITY` (0); the others park on `wfe` forever | `libs/boot/src/arch/aarch64/boot.s`, `boot.rs`; `bin/chainboot/src/boot.s` |
+| Core id | `libcpu::smp::CoreAffinity` (the `MPIDR_EL1` affinity fields, in PSCI `CPU_ON` layout); no logical index yet | `libs/cpu/src/arch/aarch64/smp.rs` |
 | Kernel state machine | `Init → SingleCoreMain → MultiCoreMain`; the last transition does not exist | `libs/kernel-state/src/lib.rs` |
 | Kernel lock | `KERNEL_LOCK: IRQSafeNullLock<()>`, which protects nothing against another core; a TODO asks for the read-only / per-cpu / atomic / locked split | `kernel/nucleus/src/main.rs:58-62`, `libs/locking` |
 | Per-core state | Kept as plain fields of the one `Nucleus`: `current_thread`, `current_since_ticks`, `dispatched`, `dispatch_next`, `preempt_requested`, `interrupt_ticks`, `idle_ticks`; plus statics `IDLING`, `timer::PROGRAMMED`, the FP owner in `fp_unit` | `kernel/nucleus/src/objects/nucleus.rs:89-132`, `main.rs`, `timer.rs`, `objects/arch/fp_unit.rs` |
@@ -97,10 +97,10 @@ The device trees in `targets/` name the method per CPU node:
 
 Consequences:
 
-- **`MPIDR & 0b11` is wrong on the Pi 5**: every core reads Aff0 = 0. The secondaries
-  never reach `_boot_cores` there (they wait in TF-A), so it does not break boot today,
-  but `core_id()` cannot be the CPU number. The kernel needs a logical CPU index, assigned
-  from the order of the `/cpus` nodes and kept in the per-core record.
+- **Aff0 alone is wrong on the Pi 5**: every core reads Aff0 = 0, so a core is named by
+  its full affinity (`CoreAffinity`). The affinity is not the CPU number either: the
+  kernel needs a logical CPU index, assigned from the order of the `/cpus` nodes and kept
+  in the per-core record.
 - The start method is a component Kickstart selects from `enable-method` ([start-method
   components](#start-method-components)).
 - The firmware's spin code and words live in the first page (`/memreserve/ 0 0x1000` on
@@ -175,8 +175,8 @@ allocates), its address in `TPIDR_EL1` (EL1-only, so no user exposure):
 Everything else stays in the shared `Nucleus` (pools, key tables, pending records, IRQ
 table, activations). Each core has its own deadline queue (wait timeouts and dispatcher
 timers of its Schedulers) in its record. The existing scheduler-record
-totals (`interrupt_ns`, `idle_ns`) become per-core fields or sums; the record layout is
-part of D5.
+totals (`interrupt_ns`, `idle_ns`) become per-core fields or sums; where they go is open
+([C11](smp-decisions.md#c11-nucleus-wide-totals-in-the-scheduler-records)).
 
 ### Kernel lock
 

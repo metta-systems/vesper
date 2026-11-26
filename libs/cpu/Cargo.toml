@@ -41,5 +41,9 @@ harness = false
 name = "cache"
 required-features = ["host-tests"]
 
+[[test]]
+name = "smp"
+required-features = ["host-tests"]
+
 [lints]
 workspace = true

@@ -656,6 +656,7 @@ dependencies = [
  "vesper-boot-uart",
  "vesper-chainboot-protocol",
  "vesper-console",
+ "vesper-cpu",
  "vesper-devicetree",
  "vesper-locking",
  "vesper-log",
