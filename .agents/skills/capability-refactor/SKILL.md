@@ -53,7 +53,8 @@ Every document in `doc/agentic/` belongs to one row. **Keep this table current:*
 | `audio` | Audio output (PWM jack, DMA, `cprman` clocks), mixing and synthesis | `-design`, `-implementation-plan`, `-completed`; background `audio-profiling.md` |
 | `logging` | The log server: several components sharing one PL011; the debug-only DebugConsole | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `ui-compositor` | The compositor, windows and surfaces | `-design`, `-implementation-plan`, `-completed`; `multi-display-design.md` (several outputs) |
-| Background only | Prior art and shelved designs; no rules, tasks or decisions | `irq-controller-placement.md`, `future-libmmio-design.md`, `brands-history.md` |
+| `irq` | `IRQControl`/`IRQHandler` semantics, interrupt delivery, receiver Threads, driver matching and loading | `-design`, `-decisions`, `-implementation-plan`, `-completed`; background `-research` (where the interrupt-controller driver runs) |
+| Background only | Prior art and shelved designs; no rules, tasks or decisions | `future-libmmio-design.md`, `brands-history.md` |
 | Maintainer notes | `questions.md`: the maintainer's scratch notes; read, never edit unprompted | `questions.md` |
 
 ## Standing practices

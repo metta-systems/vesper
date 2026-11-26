@@ -65,8 +65,6 @@ plan items.
   budgets; badge width, zero-badge meaning, and mint/rebadge policy.
 - **D4/bootstrap:** ownership of well-known `KeySlot` constants—shared object
   API versus bootstrap/libOS composition layout.
-- **IRQ follow-up:** whether a Thread may bind one Notification for both
-  PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built
   components: how a component learns the running kernel's ABI revision and
   supported operations, and what happens on a mismatch. Not needed while
