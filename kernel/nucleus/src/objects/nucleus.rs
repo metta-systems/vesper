@@ -123,9 +123,14 @@ pub struct Dispatched {
 // ═══════════════════════════════════════════════════════════════════
 
 impl<A: ArchObjects> Nucleus<A> {
-    #[expect(clippy::unused_self)]
+    /// The logical index of the core running the nucleus now: the one in its
+    /// per-core record (SMP C9(a)).
+    #[expect(
+        clippy::unused_self,
+        reason = "the core is the caller's, not the Nucleus's; kept with its peers"
+    )]
     pub fn current_cpu(&self) -> usize {
-        0
+        super::core_record::current().index as usize
     }
 
     /// Monotonic time since the counter started, from the kernel-owned

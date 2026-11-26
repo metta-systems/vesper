@@ -27,7 +27,6 @@ Thread priority in the root dispatcher, the input level between normal and high,
 
 The scheduling part of SMP4 in [`smp-implementation-plan.md`](smp-implementation-plan.md); it starts after SMP3 there (inter-processor interrupts). The rules are in the [SMP design's decisions](smp-design.md#decisions) (C4, C4.1–C4.3, C5, C7, C9).
 
-- [ ] Multicore Times: a Time belongs to one core; Transfer, Merge and dispatch reject another core's Time.
 - [ ] A root Scheduler, root dispatcher and boot Time per core, created by Kickstart; a Scheduler's core field set once (Kickstart for the roots, `Adopt` copies the parent's).
 - [ ] `Scheduler.Dispatch` `x6` checked against the Scheduler's core; the Thread record's `cpu` reports the real core.
 - [ ] Cross-core Reschedule: where a wake makes a dispatcher runnable ahead of what runs (`request_activation`, the top dispatcher's wake in `make_runnable`), the nucleus sets `preempt_requested` on its own core, or sends `IPI_RESCHEDULE` ([SMP design, inter-processor interrupts](smp-design.md#inter-processor-interrupts)) to the Scheduler's core when that is another; a Notification signal or EventCount advance whose waiter is on another core so reaches it.

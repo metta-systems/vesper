@@ -149,15 +149,17 @@ impl Time {
         self.bound = Some(thread);
     }
 
-    /// Move `amount` from `source` into `destination`. Returns the new
-    /// (source, destination) states; the caller commits both or neither.
+    /// Move `amount` from `source` into `destination`, on core `core`: both
+    /// must be that core's Times. Returns the new (source, destination)
+    /// states; the caller commits both or neither.
     pub fn transfer(
         source: &Self,
         destination: &Self,
         amount: Budget,
         frequency: u64,
+        core: usize,
     ) -> Result<(Self, Self), CapError> {
-        if amount == 0 || source.core != destination.core {
+        if amount == 0 || source.core != core || destination.core != core {
             return Err(CapError::InvalidOperation);
         }
         let source_infinite = source.is_infinite();
@@ -179,15 +181,16 @@ impl Time {
         Ok((new_source, new_destination))
     }
 
-    /// Move all of `source` into `destination`. Returns the new
-    /// (destination, source) states; the source is left with nothing
-    /// remaining.
+    /// Move all of `source` into `destination`, on core `core`: both must be
+    /// that core's Times. Returns the new (destination, source) states; the
+    /// source is left with nothing remaining.
     pub fn merge(
         destination: &Self,
         source: &Self,
         frequency: u64,
+        core: usize,
     ) -> Result<(Self, Self), CapError> {
-        if source.core != destination.core {
+        if source.core != core || destination.core != core {
             return Err(CapError::InvalidOperation);
         }
         let amount = source.remaining_ns(frequency);
@@ -257,7 +260,7 @@ mod tests {
     #[test_case]
     fn transfer_from_finite_source_conserves_budget() {
         let root = Time::root(0, 1_000);
-        let (source, destination) = Time::transfer(&root, &Time::empty(0), 400, NS)
+        let (source, destination) = Time::transfer(&root, &Time::empty(0), 400, NS, 0)
             .ok()
             .unwrap();
         assert_eq!(source.remaining_ns(NS), 600);
@@ -267,11 +270,13 @@ mod tests {
     #[test_case]
     fn transfer_from_infinite_source_keeps_it_infinite() {
         let root = Time::root(0, INFINITE_BUDGET);
-        let (source, destination) = Time::transfer(&root, &Time::empty(0), 5, NS).ok().unwrap();
+        let (source, destination) = Time::transfer(&root, &Time::empty(0), 5, NS, 0)
+            .ok()
+            .unwrap();
         assert_eq!(source.remaining_ns(NS), INFINITE_BUDGET);
         assert_eq!(destination.remaining_ns(NS), 5);
 
-        let (_, infinite) = Time::transfer(&root, &Time::empty(0), INFINITE_BUDGET, NS)
+        let (_, infinite) = Time::transfer(&root, &Time::empty(0), INFINITE_BUDGET, NS, 0)
             .ok()
             .unwrap();
         assert_eq!(infinite.remaining_ns(NS), INFINITE_BUDGET);
@@ -281,12 +286,18 @@ mod tests {
     fn transfer_more_than_a_finite_source_holds_reports_its_remaining_budget() {
         let root = Time::root(0, 10);
         assert_eq!(
-            error_code(Time::transfer(&root, &Time::empty(0), 11, NS)),
+            error_code(Time::transfer(&root, &Time::empty(0), 11, NS, 0)),
             (syscall_status::INSUFFICIENT_BUDGET, 10, 0)
         );
         // An infinite amount needs an infinite source.
         assert_eq!(
-            error_code(Time::transfer(&root, &Time::empty(0), INFINITE_BUDGET, NS)),
+            error_code(Time::transfer(
+                &root,
+                &Time::empty(0),
+                INFINITE_BUDGET,
+                NS,
+                0
+            )),
             (syscall_status::INSUFFICIENT_BUDGET, 10, 0)
         );
     }
@@ -296,18 +307,18 @@ mod tests {
         let root = Time::root(0, INFINITE_BUDGET);
         let invalid = (syscall_status::INVALID_OPERATION, 0, 0);
         assert_eq!(
-            error_code(Time::transfer(&root, &Time::empty(0), 0, NS)),
+            error_code(Time::transfer(&root, &Time::empty(0), 0, NS, 0)),
             invalid
         );
         assert_eq!(
-            error_code(Time::transfer(&root, &Time::empty(1), 1, NS)),
+            error_code(Time::transfer(&root, &Time::empty(1), 1, NS, 0)),
             invalid
         );
-        let (_, nearly_full) = Time::transfer(&root, &Time::empty(0), INFINITE_BUDGET - 1, NS)
+        let (_, nearly_full) = Time::transfer(&root, &Time::empty(0), INFINITE_BUDGET - 1, NS, 0)
             .ok()
             .unwrap();
         assert_eq!(
-            error_code(Time::transfer(&root, &nearly_full, 1, NS)),
+            error_code(Time::transfer(&root, &nearly_full, 1, NS, 0)),
             invalid
         );
     }
@@ -318,7 +329,7 @@ mod tests {
         // caller's Times are the unchanged originals.
         let root = Time::root(0, 10);
         let destination = Time::empty(0);
-        assert!(Time::transfer(&root, &destination, 11, NS).is_err());
+        assert!(Time::transfer(&root, &destination, 11, NS, 0).is_err());
         assert_eq!(root.remaining_ns(NS), 10);
         assert_eq!(destination.remaining_ns(NS), 0);
     }
@@ -326,10 +337,10 @@ mod tests {
     #[test_case]
     fn nested_transfers_conserve_the_total() {
         let root = Time::root(0, 1_000);
-        let (root, child) = Time::transfer(&root, &Time::empty(0), 500, NS)
+        let (root, child) = Time::transfer(&root, &Time::empty(0), 500, NS, 0)
             .ok()
             .unwrap();
-        let (child, grandchild) = Time::transfer(&child, &Time::empty(0), 100, NS)
+        let (child, grandchild) = Time::transfer(&child, &Time::empty(0), 100, NS, 0)
             .ok()
             .unwrap();
         assert_eq!(
@@ -341,13 +352,13 @@ mod tests {
     #[test_case]
     fn merge_moves_everything_and_empties_the_source() {
         let root = Time::root(0, 1_000);
-        let (_, first) = Time::transfer(&root, &Time::empty(0), 300, NS)
+        let (_, first) = Time::transfer(&root, &Time::empty(0), 300, NS, 0)
             .ok()
             .unwrap();
-        let (_, second) = Time::transfer(&root, &Time::empty(0), 200, NS)
+        let (_, second) = Time::transfer(&root, &Time::empty(0), 200, NS, 0)
             .ok()
             .unwrap();
-        let (merged, emptied) = Time::merge(&second, &first, NS).ok().unwrap();
+        let (merged, emptied) = Time::merge(&second, &first, NS, 0).ok().unwrap();
         assert_eq!(merged.remaining_ns(NS), 500);
         assert_eq!(emptied.remaining_ns(NS), 0);
     }
@@ -355,33 +366,55 @@ mod tests {
     #[test_case]
     fn merging_back_restores_the_parent_budget() {
         let root = Time::root(0, 1_000);
-        let (root, child) = Time::transfer(&root, &Time::empty(0), 500, NS)
+        let (root, child) = Time::transfer(&root, &Time::empty(0), 500, NS, 0)
             .ok()
             .unwrap();
-        let (child, grandchild) = Time::transfer(&child, &Time::empty(0), 100, NS)
+        let (child, grandchild) = Time::transfer(&child, &Time::empty(0), 100, NS, 0)
             .ok()
             .unwrap();
 
         // Grandchild back into the root, two levels up.
-        let (merged, emptied) = Time::merge(&root, &grandchild, NS).ok().unwrap();
+        let (merged, emptied) = Time::merge(&root, &grandchild, NS, 0).ok().unwrap();
         assert_eq!(merged.remaining_ns(NS), 600);
         assert_eq!(emptied.remaining_ns(NS), 0);
 
         // Child back into the root, one level up.
-        let (merged, _) = Time::merge(&merged, &child, NS).ok().unwrap();
+        let (merged, _) = Time::merge(&merged, &child, NS, 0).ok().unwrap();
         assert_eq!(merged.remaining_ns(NS), 1_000);
     }
 
     #[test_case]
     fn merge_of_an_infinite_source_makes_the_destination_infinite() {
         let root = Time::root(0, INFINITE_BUDGET);
-        let (merged, emptied) = Time::merge(&Time::empty(0), &root, NS).ok().unwrap();
+        let (merged, emptied) = Time::merge(&Time::empty(0), &root, NS, 0).ok().unwrap();
         assert_eq!(merged.remaining_ns(NS), INFINITE_BUDGET);
         assert_eq!(emptied.remaining_ns(NS), 0);
         assert_eq!(
-            error_code(Time::merge(&Time::empty(1), &root, NS)),
+            error_code(Time::merge(&Time::empty(1), &root, NS, 0)),
             (syscall_status::INVALID_OPERATION, 0, 0)
         );
+    }
+
+    #[test_case]
+    fn transfer_and_merge_refuse_times_of_another_core_than_the_callers() {
+        // Two Times of core 1 agree with each other, but the caller is core 0.
+        let root = Time::root(1, 1_000);
+        let destination = Time::empty(1);
+        let invalid = (syscall_status::INVALID_OPERATION, 0, 0);
+        assert_eq!(
+            error_code(Time::transfer(&root, &destination, 1, NS, 0)),
+            invalid
+        );
+        assert_eq!(error_code(Time::merge(&destination, &root, NS, 0)), invalid);
+        // On core 1 they move as usual.
+        let (source, destination) = Time::transfer(&root, &destination, 400, NS, 1)
+            .ok()
+            .unwrap();
+        assert_eq!(source.remaining_ns(NS), 600);
+        assert_eq!(destination.remaining_ns(NS), 400);
+        let (merged, emptied) = Time::merge(&destination, &source, NS, 1).ok().unwrap();
+        assert_eq!(merged.remaining_ns(NS), 1_000);
+        assert_eq!(emptied.remaining_ns(NS), 0);
     }
 
     #[test_case]
@@ -444,13 +477,15 @@ mod tests {
     #[test_case]
     fn a_refill_after_exhaustion_makes_the_time_runnable_again() {
         let root = Time::root(0, INFINITE_BUDGET);
-        let (_, mut thread_time) = Time::transfer(&root, &Time::empty(0), 1_000, NS)
+        let (_, mut thread_time) = Time::transfer(&root, &Time::empty(0), 1_000, NS, 0)
             .ok()
             .unwrap();
         thread_time.charge(1_000);
         assert!(thread_time.is_exhausted(NS));
 
-        let (_, refilled) = Time::transfer(&root, &thread_time, 500, NS).ok().unwrap();
+        let (_, refilled) = Time::transfer(&root, &thread_time, 500, NS, 0)
+            .ok()
+            .unwrap();
         assert!(!refilled.is_exhausted(NS));
         assert_eq!(refilled.remaining_ns(NS), 500);
     }
@@ -458,21 +493,21 @@ mod tests {
     #[test_case]
     fn transfer_and_merge_out_of_a_partly_charged_time_use_what_remains() {
         let root = Time::root(0, INFINITE_BUDGET);
-        let (_, mut time) = Time::transfer(&root, &Time::empty(0), 1_000, NS)
+        let (_, mut time) = Time::transfer(&root, &Time::empty(0), 1_000, NS, 0)
             .ok()
             .unwrap();
         time.charge(300);
         assert_eq!(
-            error_code(Time::transfer(&time, &Time::empty(0), 701, NS)),
+            error_code(Time::transfer(&time, &Time::empty(0), 701, NS, 0)),
             (syscall_status::INSUFFICIENT_BUDGET, 700, 0)
         );
-        let (source, destination) = Time::transfer(&time, &Time::empty(0), 700, NS)
+        let (source, destination) = Time::transfer(&time, &Time::empty(0), 700, NS, 0)
             .ok()
             .unwrap();
         assert_eq!(source.remaining_ns(NS), 0);
         assert_eq!(destination.remaining_ns(NS), 700);
 
-        let (merged, emptied) = Time::merge(&Time::empty(0), &time, NS).ok().unwrap();
+        let (merged, emptied) = Time::merge(&Time::empty(0), &time, NS, 0).ok().unwrap();
         assert_eq!(merged.remaining_ns(NS), 700);
         assert_eq!(emptied.remaining_ns(NS), 0);
         assert!(emptied.is_exhausted(NS));
