@@ -39,5 +39,9 @@ harness = false
 name = "object_type"
 required-features = ["host-tests"]
 
+[[test]]
+name = "scheduler_record"
+required-features = ["host-tests"]
+
 [lints]
 workspace = true

@@ -17,9 +17,8 @@ Done: SMP0 (the decisions); see [smp-completed.md](smp-completed.md).
 
 ## SMP1: cores online, idle
 
-Secondaries run no Threads; the kernel lock is still the null lock because they never
-enter the shared kernel state. Order: QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3
-and Pi 5 boards.
+Secondaries run no Threads and never enter the kernel. Order: QEMU `raspi3b` and
+`raspi4b`, then the Pi 4, Pi 3 and Pi 5 boards.
 
 - [ ] Board runs of `smp-test` (`just boot-smp-test`, or `smp-test-<boards>.bin` on a card)
   on the Pi 4, Pi 3 and Pi 5: `smp-test: PASS`, which checks `SMPEN` coherency with the
@@ -28,9 +27,6 @@ and Pi 5 boards.
 
 ## SMP2: one kernel lock and per-core state
 
-- [ ] Payload publication with Acquire/Release (contract, Notification and EventCount):
-  audit Signal/Advance and record publication for the orderings the lock does not give
-  to userspace readers on another core (scheduler records' sequence lock).
 - [ ] Panic: park the other cores through a flag they poll in idle until SMP3; console and
   semihosting lines under the lock.
 - [ ] All existing e2e tests pass unchanged with the secondaries online and idle.

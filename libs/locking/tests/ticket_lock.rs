@@ -66,6 +66,82 @@ mod tests {
         assert_eq!(guarded.lock.holder(), None);
     }
 
+    /// The capabilities contract's payload rule (D7) on several cores: a producer
+    /// writes its payload, then advances a counter under the lock (its `Advance`); a
+    /// consumer that reads the advanced counter under the lock (its `Read`) then sees
+    /// the payload after releasing it. The payload is written before the producer
+    /// takes the lock and read after the consumer let it go, as user code does around
+    /// its kernel entries.
+    #[test]
+    fn writes_before_a_release_are_seen_after_the_next_acquire() {
+        const ROUNDS: u64 = 50_000;
+        struct Channel {
+            lock: TicketLock,
+            /// The producer's payload, written outside the lock.
+            payload: UnsafeCell<u64>,
+            /// The counter, touched under the lock only.
+            progress: UnsafeCell<u64>,
+        }
+        // SAFETY: `progress` is touched under the lock; `payload` is written by the
+        // producer only before it advances, and read by the consumer only after it saw
+        // that advance.
+        unsafe impl Sync for Channel {}
+        let channel = Arc::new(Channel {
+            lock: TicketLock::new(),
+            payload: UnsafeCell::new(0),
+            progress: UnsafeCell::new(0),
+        });
+        let producer_channel = Arc::clone(&channel);
+        let producer = thread::spawn(move || {
+            for round in 1..=ROUNDS {
+                // Wait until the consumer took the previous round.
+                loop {
+                    producer_channel.lock.acquire(1);
+                    // SAFETY: under the lock.
+                    let taken = unsafe { *producer_channel.progress.get() } % 2 == 0;
+                    producer_channel.lock.release(1);
+                    if taken {
+                        break;
+                    }
+                    thread::yield_now();
+                }
+                // SAFETY: the consumer reads the payload only after this round's advance.
+                unsafe {
+                    *producer_channel.payload.get() = round * 3;
+                }
+                producer_channel.lock.acquire(1);
+                // SAFETY: under the lock.
+                unsafe {
+                    *producer_channel.progress.get() += 1;
+                }
+                producer_channel.lock.release(1);
+            }
+        });
+        for round in 1..=ROUNDS {
+            loop {
+                channel.lock.acquire(2);
+                // SAFETY: under the lock.
+                let advanced = unsafe { *channel.progress.get() } % 2 == 1;
+                channel.lock.release(2);
+                if advanced {
+                    break;
+                }
+                thread::yield_now();
+            }
+            // SAFETY: the producer wrote it before the advance just seen, and writes it
+            // again only after the next acknowledgement.
+            let payload = unsafe { *channel.payload.get() };
+            assert_eq!(payload, round * 3, "payload of round {round} not visible");
+            channel.lock.acquire(2);
+            // SAFETY: under the lock.
+            unsafe {
+                *channel.progress.get() += 1;
+            }
+            channel.lock.release(2);
+        }
+        producer.join().expect("the producer panicked");
+    }
+
     #[test]
     fn waiters_enter_in_the_order_they_asked() {
         let lock = Arc::new(TicketLock::new());

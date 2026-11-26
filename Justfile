@@ -1269,7 +1269,7 @@ _host-test package test features='host-tests': _firmware
     cargo test -p {{ package }} --features={{ features }} --test {{ test }}
 
 # Run the opt-in capability ABI tests on the native host
-_test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
+_test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesper-objects' 'object_type' 'host-tests,debug_kernel') (_host-test 'vesper-objects' 'scheduler_record')
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
@@ -1354,7 +1354,7 @@ _host-clippy package test features='host-tests': _firmware
       -- --deny warnings --allow deprecated
 
 # Lint the opt-in capability ABI tests with their native host harness
-_clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
+_clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel') (_host-clippy 'vesper-objects' 'scheduler_record')
 
 # Lint the boot-platform host tests
 _clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'vesper-device-driver' 'carving') (_host-clippy 'vesper-device-driver' 'pins') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'spi-bcm2835' 'spi') (_host-clippy 'panel-ili9341' 'panel') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'fb-impl' 'edid') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics') (_host-clippy 'vesper-stacktrace' 'stacktrace') (_host-clippy 'vesper-cpu' 'cache') (_host-clippy 'vesper-cpu' 'smp') (_host-clippy 'vesper-cpu-start' 'cpu_start') (_host-clippy 'cpu-start-spin-table' 'spin_table') (_host-clippy 'cpu-start-psci' 'psci') (_host-clippy 'vesper-locking' 'ticket_lock')

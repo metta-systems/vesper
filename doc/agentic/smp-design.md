@@ -223,6 +223,23 @@ found, and released on exit. Rules:
   the lock by another core only where noted (pending IPI bits are atomics).
 - Kickstart keeps `IRQSafeNullLock`: it runs on one core with the MMU off, where an
   exclusive never completes.
+- **It orders what userspace publishes through the kernel.** Its release (the `serving`
+  store) and acquire (the `serving` load) order every access before and after them in
+  program order, EL0 ones included. So a `Signal`/`Advance` and every observation of it
+  (wakeup, satisfied wait, `Poll`, `Await`, `Read`) need no atomics of their own: each
+  runs inside a kernel entry, and the producer's user writes before its entry happen
+  before the consumer's user reads after its own ([contract, payload
+  publication](capabilities-contract.md#notification-and-eventcount)). A fault frame the
+  nucleus writes is read by its handler only after a kernel entry resumes it.
+- **The one publication read without a kernel entry is a scheduler record.** Its sequence
+  lock carries the ordering: the nucleus makes `sequence` odd, issues a release fence,
+  writes the fields and stores the even `sequence` with release; a reader loads
+  `sequence` with acquire, reads the fields, issues an acquire fence and reloads
+  `sequence` ([scheduling design, publication](scheduling-design.md)). Both record kinds
+  are tested with a writer and three reader threads on an Arm host, where the test fails
+  without the two fences. The nucleus writes the records through its cacheable linear
+  map; the ordering also needs the scheduler's own mapping of the pages to be normal
+  cacheable memory, which nothing checks yet.
 
 Finer locking is a later, measured pass.
 
