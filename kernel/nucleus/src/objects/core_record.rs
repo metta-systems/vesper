@@ -67,6 +67,17 @@ pub const IPI_RESCHEDULE: u32 = 1 << 0;
 pub const IPI_STOP: u32 = 1 << 1;
 /// IPI kind: another core panicked; the core parks.
 pub const IPI_HALT: u32 = 1 << 2;
+/// IPI kind, `smp-test` only: the core answers the boot core with [`IPI_PONG`].
+#[cfg(feature = "smp_test")]
+pub const IPI_PING: u32 = 1 << 3;
+/// IPI kind, `smp-test` only: the answer to [`IPI_PING`]; taking it is all it does.
+#[cfg(feature = "smp_test")]
+pub const IPI_PONG: u32 = 1 << 4;
+/// `smp-test` only: the SVC immediate with which the boot Thread asks the nucleus to
+/// send [`IPI_PING`] to the logical CPU in `x0`. `x0` returns 0 once the controller sent
+/// it, 1 if it refused (the core has not run `init_cpu` yet).
+#[cfg(feature = "smp_test")]
+pub const SMP_TEST_PING_SVC: u16 = 0x5309;
 
 impl CoreRecord {
     /// The record of a core that has run nothing yet: logical CPU `index` of

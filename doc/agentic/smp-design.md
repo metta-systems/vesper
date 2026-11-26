@@ -273,10 +273,10 @@ Mechanism per controller:
 - **BCM2836 local controller (Pi 3):** per-core mailboxes. Write-set at
   `0x4000_0080 + 0x10·core + 4·mailbox`, read/write-clear at `0x4000_00C0 + ...`, enable
   in `CORE_MAILBOX_INT_CONTROL` (`0x4000_0050 + 4·core`). Local lines 4..7 are already
-  numbered `LINE_MAILBOX0..3` in the component. The per-core control and source
-  registers are confirmed by the BCM2711 manual (§6.5.2, Table 104, the same ARM_LOCAL
-  layout); the mailbox set/clear offsets are from QEMU's `bcm2836_control.c` and still
-  to be checked against QA7.
+  numbered `LINE_MAILBOX0..3` in the component. Checked against the QA7 datasheet
+  (`doc/bcm2836-peripherals.pdf`, rev 3.4): §4 and §4.8 for the addresses, §4.7 and
+  §4.10 for the control and source bits, §3.3 for a mailbox interrupting while
+  non-zero.
 - **GIC-400 (Pi 4, Pi 5):** SGIs through `GICD_SGIR` (target list bits 23:16, INTID
   bits 3:0). SGI/PPI enables, priorities and the CPU interface (`GICC_CTLR`, `GICC_PMR`)
   are banked, so each core initialises its own.

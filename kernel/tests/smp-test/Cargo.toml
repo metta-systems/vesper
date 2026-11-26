@@ -22,6 +22,10 @@ jtag = ["kickstart/jtag"]
 noserial = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = ["kickstart/qemu", "libkicktest/qemu", "nucleus/qemu"]
+# The nucleus binary's IPI round-trip hook: the test-kernel recipes pass one feature list
+# to this crate and to the separately built nucleus, which needs it (`just _test-smp`,
+# `boot-smp-test`); the library side is always on through the dependency.
+smp_test = ["nucleus/smp_test"]
 
 [dependencies]
 kickstart = { workspace = true, features = ["smp_test"] }
@@ -31,7 +35,7 @@ libkicktest = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
 libqemu = { workspace = true }
-nucleus = { workspace = true }
+nucleus = { workspace = true, features = ["smp_test"] }
 
 [[bin]]
 name = "smp-test"
