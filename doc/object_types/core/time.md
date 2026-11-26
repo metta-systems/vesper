@@ -44,7 +44,7 @@ Returns the remaining budget in `x1`, rounded down to a whole nanosecond; `x2` i
 | Error | Cause |
 |---|---|
 | `InsufficientBudget` (36) | A finite source holds less than the amount; `x1` is its remaining budget |
-| `InvalidOperation` | Amount 0, the same Time as both operands, Times on different cores, a nonzero unused argument, a finite destination sum reaching `u64::MAX`, or budget taken out of a Time bound to a live Thread |
+| `InvalidOperation` | Amount 0, the same Time as both operands, a Time on another core than the caller's, a nonzero unused argument, a finite destination sum reaching `u64::MAX`, or budget taken out of a Time bound to a live Thread |
 | `InsufficientRights` | Missing `Write` on either Time, or `Read` for Query |
 | `TypeMismatch` | A key does not name a Time |
 

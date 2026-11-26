@@ -829,7 +829,7 @@ fn budget_arriving_clears_the_wait_for_budget_without_queueing_anything() {
         unsafe {
             let bound = Carved::<Time>::validate(time).ok().expect("Time carved");
             let (_, refilled) =
-                Time::transfer(&Time::root(0, u64::MAX), &*bound, 50_000_000, frequency)
+                Time::transfer(&Time::root(0, u64::MAX), &*bound, 50_000_000, frequency, 0)
                     .ok()
                     .expect("refill");
             *bound = refilled;
@@ -1306,6 +1306,41 @@ fn dispatch_refuses_a_stranger_a_stale_generation_and_a_thread_that_cannot_run()
                 0
             ],
         )));
+        // The Thread's own Time, but of another core than the dispatcher's
+        // (core 0): refused, named or implied by a zero Time key.
+        let remote = test_arena::carve(Time::root(1, 1_000)).expect("arena exhausted");
+        let remote_key = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(54),
+                KeyEntry::new_carved(remote, Rights::all(), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|f| panic!("install: {:?}", f.error.code()));
+        let own_time = nucleus.thread(waits.tail).unwrap().time;
+        nucleus.thread_mut(waits.tail).unwrap().time = Some(remote);
+        assert!(invalid(dispatch_call(
+            nucleus,
+            &dispatching,
+            Some(dispatching.tail_key),
+            1_000,
+            0
+        )));
+        assert!(invalid(cap_invoke(
+            nucleus,
+            dispatching.scheduler,
+            SchedulerOp::Dispatch as u64,
+            &[
+                dispatching.tail_key.to_wire(),
+                remote_key.to_wire(),
+                1_000,
+                0,
+                0,
+                0
+            ],
+        )));
+        nucleus.thread_mut(waits.tail).unwrap().time = own_time;
         // Only the dispatcher dispatches.
         nucleus.this_core.current_thread = Some(waits.tail);
         assert!(invalid(dispatch_call(

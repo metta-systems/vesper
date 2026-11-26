@@ -107,7 +107,7 @@ The named Thread must belong to this Scheduler, not be the dispatcher, be runnab
 | Error | Cause |
 |---|---|
 | `StaleGeneration` (42) | The Thread's generation differs from `x5`; the current generation is returned so the dispatcher can retry |
-| `InvalidOperation` | The caller is not the bound dispatcher; a Thread of another Scheduler or the dispatcher itself; a Thread that cannot run now; a zero limit; a nonzero CPU or reserved register; a Time that is not the Thread's own |
+| `InvalidOperation` | The caller is not the bound dispatcher; a Thread of another Scheduler or the dispatcher itself; a Thread that cannot run now; a zero limit; a nonzero CPU or reserved register; a Time that is not the Thread's own; a Thread whose Time belongs to another core than the caller's |
 | `TypeMismatch`, `InsufficientRights` | A key names the wrong kind or lacks `Write` (Time) |
 
 ### ArmTimer

@@ -10,7 +10,8 @@
 //! - `Query` `2`: no arguments; `READ`. Returns the remaining budget in `x1`
 //!   and zero in `x2`.
 //!
-//! The same Time as both operands, Times of different cores, a zero amount,
+//! The same Time as both operands, a Time of another core than the caller's, a
+//! zero amount,
 //! nonzero reserved words, and a source bound
 //! to a live Thread (by `Scheduler.ConfigureThread`) fail with
 //! `InvalidOperation`. Both new states are computed before either is
@@ -39,6 +40,8 @@ pub fn invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let op = TimeOp::try_from(op)?;
     let frequency = nucleus.counter_frequency();
+    // Transfer and Merge move budget between Times of the calling core only.
+    let core = nucleus.current_cpu();
     match op {
         TimeOp::Transfer => {
             if args[2..].iter().any(|&arg| arg != 0) {
@@ -61,7 +64,7 @@ pub fn invoke<A: ArchObjects>(
                     return Err(CapError::InvalidOperation);
                 }
                 let (new_source, new_destination) =
-                    Time::transfer(&source, &destination, amount, frequency)?;
+                    Time::transfer(&source, &destination, amount, frequency, core)?;
                 *source = new_source;
                 *destination = new_destination;
                 destination.bound_thread()
@@ -90,7 +93,8 @@ pub fn invoke<A: ArchObjects>(
                 if source.is_bound() {
                     return Err(CapError::InvalidOperation);
                 }
-                let (new_destination, new_source) = Time::merge(&destination, &source, frequency)?;
+                let (new_destination, new_source) =
+                    Time::merge(&destination, &source, frequency, core)?;
                 *destination = new_destination;
                 *source = new_source;
                 (

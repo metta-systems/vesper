@@ -454,6 +454,17 @@ fn dispatch<A: ArchObjects>(
                 return Err(CapError::InvalidOperation);
             }
         }
+        // The Thread runs on its Time's core: a Time of another core is
+        // refused.
+        if let Some(time_id) = thread.time {
+            let core = access
+                .resolve_object::<Time>(time_id)
+                .map_err(|_retired| CapError::InvalidOperation)?
+                .core();
+            if core != nucleus.current_cpu() {
+                return Err(CapError::InvalidOperation);
+            }
+        }
     }
     let frequency = nucleus.counter_frequency();
     let now = nucleus.counter_ticks();
