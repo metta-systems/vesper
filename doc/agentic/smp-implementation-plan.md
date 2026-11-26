@@ -28,10 +28,6 @@ and Pi 5 boards.
 
 ## SMP2: one kernel lock and per-core state
 
-- [ ] Move the per-core fields of `Nucleus` and the per-core statics (`IDLING`,
-  `timer::PROGRAMMED`, the `fp_unit` owner) into the per-core record, reached through
-  `TPIDR_EL1`. The nucleus totals become per-core and each core publishes its own in its
-  root Scheduler record (C11(a)).
 - [ ] Replace `KERNEL_LOCK`'s `IRQSafeNullLock` with a ticket spinlock taken on every
   kernel entry; host model tests of the lock, and a debug check that no path waits for
   another core while holding it.

@@ -106,19 +106,12 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     }
 
     let nucleus = Nucleus::<A> {
-        current_thread: None,
+        this_core: nucleus::core_record::ThisCore::running(),
         pending: PendingPool::new(),
         activations: Activations::new(),
-        idle_ticks: 0,
-        fp_totals: libobject::scheduler_record::FpTotals::ZERO,
         irq_table: IrqTable::empty(),
         ticks: 0,
-        current_since_ticks: 0,
-        dispatched: None,
-        dispatch_next: None,
-        preempt_requested: false,
         timers: nucleus::objects::timers::SchedulerTimers::new(),
-        interrupt_ticks: 0,
         pools: NucleusPools::<A> {
             // SAFETY: the architecture pool backings were carved above from
             // the boot Untyped's unused watermark range and are exclusively
@@ -333,7 +326,7 @@ pub fn bootstrap_nucleus() -> BootState {
         )
     };
     // The boot Thread is the first allocation; make it current.
-    nucleus.current_thread = Some(boot_thread_id);
+    nucleus.this_core.current_thread = Some(boot_thread_id);
 
     // Install the boot Thread's self-table capability, its AddressSpace
     // (the bootstrap-era mapping context for `PageTable.Map`/`Frame.Map`),

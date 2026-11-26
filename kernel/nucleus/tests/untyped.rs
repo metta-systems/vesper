@@ -115,27 +115,24 @@ static mut TIME_MEM: TimeBacking = TimeBacking([0; 4096]);
 /// re-initializes the same static storage before use.
 fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
     static mut NUCLEUS_MEM: MaybeUninit<Nucleus<ArchObjectsImpl>> = MaybeUninit::uninit();
-    // SAFETY: POOL_MEM and NUCLEUS_MEM are exclusively owned by the fixture;
-    // initialization happens before any use, and tests are sequential. Raw
-    // pointers avoid mutable references to statics (edition 2024).
+    static mut CORE_STATE: crate::objects::core_record::CoreState =
+        crate::objects::core_record::CoreState::new();
+    // SAFETY: POOL_MEM, NUCLEUS_MEM and CORE_STATE are exclusively owned by the
+    // fixture; initialization happens before any use, and tests are sequential.
+    // Raw pointers avoid mutable references to statics (edition 2024).
     unsafe {
         let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
         let pool_ptr = (&raw mut POOL_MEM).cast::<u8>();
         assert!(ObjectPool::<AArch64ASIDPool>::carve_size(0) <= core::mem::size_of::<[u128; 8]>());
+        let core_state = &raw mut CORE_STATE;
+        core_state.write(crate::objects::core_record::CoreState::new());
         nucleus_ptr.write(Nucleus {
-            current_thread: None,
+            this_core: crate::objects::core_record::ThisCore::fixture(core_state),
             pending: crate::objects::PendingPool::new(),
             activations: crate::objects::Activations::new(),
-            idle_ticks: 0,
-            fp_totals: libobject::scheduler_record::FpTotals::ZERO,
             irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
-            current_since_ticks: 0,
-            dispatched: None,
-            dispatch_next: None,
-            preempt_requested: false,
             timers: crate::objects::timers::SchedulerTimers::new(),
-            interrupt_ticks: 0,
             pools: NucleusPools {
                 arch: ArchPools::new(ObjectPool::initialize(pool_ptr, 0)),
             },

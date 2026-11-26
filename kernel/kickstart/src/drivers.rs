@@ -2238,7 +2238,7 @@ pub fn load_drivers(
         // dispatched like the others. (It usually parks for good; a test
         // kernel's boot Thread goes on running the test.)
         if let Some(root) = builder.entry(keys.root_scheduler).carved_id().ok()
-            && let Some(boot) = nucleus.current_thread
+            && let Some(boot) = nucleus.this_core.current_thread
             && managed_count < MAX_MANAGED_THREADS
         {
             nucleus

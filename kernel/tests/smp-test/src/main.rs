@@ -95,9 +95,8 @@ pub fn run() -> ! {
 fn finish(passed: bool) -> ! {
     if passed {
         libqemu::semihosting::exit_success()
-    } else {
-        libqemu::semihosting::exit_failure()
     }
+    libqemu::semihosting::exit_failure()
 }
 
 #[cfg(not(feature = "qemu"))]

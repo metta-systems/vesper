@@ -344,7 +344,10 @@ extern "C" fn current_elx_irq(e: &mut ExceptionContext) {
     // The nucleus runs with interrupts masked, except where it waits for one
     // while idle: an IRQ taken on SP_EL1 anywhere else means kernel code
     // unmasked them, which is a bug.
-    if IDLING.load(Ordering::Acquire) {
+    if nucleus::core_record::current()
+        .idling
+        .load(Ordering::Acquire)
+    {
         handle_irq(e);
     } else {
         default_exception_handler(e);
@@ -645,10 +648,6 @@ fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
 /// controller cannot keep the nucleus in the handler.
 const MAX_CLAIMS_PER_ENTRY: usize = 64;
 
-/// Whether the kernel is waiting for an interrupt with nothing to run, the
-/// one place kernel code is interruptible.
-static IDLING: AtomicBool = AtomicBool::new(false);
-
 /// Interrupt entry from an interruptible Thread: claim and handle every
 /// pending line through the interrupt-controller component, then, on a
 /// timer tick (or when a dispatcher was activated), preempt the current
@@ -706,7 +705,7 @@ fn handle_irq(frame: &mut ExceptionContext) {
             // Whatever is due wakes: timed-out waits, dispatcher timers.
             nucleus.expire_deadlines();
         }
-        if nested || (!ticked && !nucleus.preempt_requested) {
+        if nested || (!ticked && !nucleus.this_core.preempt_requested) {
             return Ok(None);
         }
         // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other
@@ -758,12 +757,15 @@ fn idle_until_runnable() -> PreparedResume {
             Ok(None) => {}
             Err(error) => panic!("idle scheduling invariant failed: {:?}", error.code()),
         }
-        IDLING.store(true, Ordering::Release);
+        // Whether this core waits for an interrupt with nothing to run, the
+        // one place kernel code is interruptible.
+        let idling = &nucleus::core_record::current().idling;
+        idling.store(true, Ordering::Release);
         aarch64_cpu::asm::wfi();
         libexception::asynchronous::local_irq_unmask();
         aarch64_cpu::asm::barrier::isb(aarch64_cpu::asm::barrier::SY);
         libexception::asynchronous::local_irq_mask();
-        IDLING.store(false, Ordering::Release);
+        idling.store(false, Ordering::Release);
     }
 }
 

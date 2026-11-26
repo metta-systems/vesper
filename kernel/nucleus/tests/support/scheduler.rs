@@ -63,7 +63,7 @@ fn setup(
     nucleus
         .create_console_thread(fixture_as)
         .expect("caller Thread");
-    nucleus.current_thread = nucleus.fixture_thread(0);
+    nucleus.this_core.current_thread = nucleus.fixture_thread(0);
     let address_space = nucleus.address_space_mut(fixture_as).unwrap();
     address_space.set_translation_root(Some(ROOT));
     address_space.set_asid(Some(3));
@@ -1004,7 +1004,7 @@ fn interrupt_time_is_published_in_the_scheduler_record_of_the_interrupted_thread
         // refreshes the total, without counting an event.
         let frequency = nucleus.counter_frequency();
         let events = scheduler_record().try_snapshot(1).unwrap().events;
-        nucleus.current_thread = Some(keys.thread_id);
+        nucleus.this_core.current_thread = Some(keys.thread_id);
         nucleus.account_interrupts(&[(5, frequency / 1_000)], frequency / 1_000);
         let published = scheduler_record().try_snapshot(1).unwrap();
         assert_eq!(published.interrupt_ns, 1_000_000);

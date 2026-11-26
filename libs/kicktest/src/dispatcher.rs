@@ -162,7 +162,10 @@ pub fn init(
         .bind_dispatcher(scheduler, thread)
         .unwrap_or_else(|error| panic!("fixture BindDispatcher failed: {:?}", error.code()));
 
-    let boot = nucleus.current_thread.expect("a boot Thread is running");
+    let boot = nucleus
+        .this_core
+        .current_thread
+        .expect("a boot Thread is running");
     register(nucleus, builder, boot);
 }
 
@@ -203,7 +206,7 @@ pub fn register(nucleus: &mut Nucleus<ArchObjectsImpl>, builder: &Builder<'_>, t
 
     // A Thread that is not the one running is runnable now (the boot Thread
     // runs, and is dispatched when it next blocks).
-    if nucleus.current_thread != Some(thread) {
+    if nucleus.this_core.current_thread != Some(thread) {
         nucleus.make_runnable(thread);
     }
 }

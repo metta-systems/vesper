@@ -485,7 +485,7 @@ fn dispatch<A: ArchObjects>(
         .resolve_object::<Scheduler>(scheduler)
         .map_err(|error| error.for_key(key, 0))?
         .park_dispatcher(record, target.is_none());
-    nucleus.dispatch_next = next;
+    nucleus.this_core.dispatch_next = next;
     if let Some(child) = child_domain {
         nucleus.set_child_grant(child, deadline_ticks);
     }
