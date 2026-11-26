@@ -222,10 +222,14 @@ const fn holds_data(cache_type: u64) -> bool {
         || cache_type == CLIDR_EL1::Ctype1::UnifiedCache.value
 }
 
-/// Run `operation` on the operand of every set and way of every data or
-/// unified cache level up to the Point of Coherency, L1 first.
-fn each_set_way(mut operation: impl FnMut(u64)) {
-    let levels = usize::try_from(CLIDR_EL1.read(CLIDR_EL1::LoC)).unwrap_or(0);
+/// The data cache levels up to the Point of Coherency.
+fn levels_to_coherency() -> usize {
+    usize::try_from(CLIDR_EL1.read(CLIDR_EL1::LoC)).unwrap_or(0)
+}
+
+/// Run `operation` on the operand of every set and way of the first `levels`
+/// data or unified cache levels, L1 first.
+fn each_set_way(levels: usize, mut operation: impl FnMut(u64)) {
     for (level, cache_type) in (0..).zip(CACHE_TYPES).take(levels) {
         if !holds_data(CLIDR_EL1.read(cache_type)) {
             continue;
@@ -259,14 +263,29 @@ fn each_set_way(mut operation: impl FnMut(u64)) {
 /// then can come from a stale line, and the dirty lines of whoever ran with
 /// caches on before (firmware resident at EL3) reach memory instead of being
 /// lost.
+///
+/// Set/way maintenance is local to this core: levels shared with other cores
+/// (the Pi 3 and 4's L2) are walked too, so run it while no other core has
+/// its caches on.
 pub fn clean_invalidate_data_caches() {
-    each_set_way(|operand| {
-        // SAFETY: cleaning and invalidating by set/way keeps every value in
-        // memory or cache; it changes no memory contents.
-        unsafe {
-            core::arch::asm!("dc cisw, {operand}", operand = in(reg) operand, options(nostack, preserves_flags));
-        }
-    });
+    each_set_way(levels_to_coherency(), clean_invalidate_set_way);
+}
+
+/// Write back and discard every line of this core's L1 data cache (`DC
+/// CISW`), the level private to the core on every supported Arm core: for a
+/// secondary core before it turns its caches on, while other cores already
+/// run with theirs, without walking the levels they share.
+pub fn clean_invalidate_l1_data_cache() {
+    each_set_way(1, clean_invalidate_set_way);
+}
+
+/// `DC CISW` of one set/way operand.
+fn clean_invalidate_set_way(operand: u64) {
+    // SAFETY: cleaning and invalidating by set/way keeps every value in
+    // memory or cache; it changes no memory contents.
+    unsafe {
+        core::arch::asm!("dc cisw, {operand}", operand = in(reg) operand, options(nostack, preserves_flags));
+    }
 }
 
 /// Discard every line of every data and unified cache level up to the Point
@@ -276,7 +295,7 @@ pub fn clean_invalidate_data_caches() {
 /// Nothing the caches hold dirty is needed any more: their dirty lines are
 /// lost, whoever wrote them.
 pub unsafe fn invalidate_data_caches() {
-    each_set_way(|operand| {
+    each_set_way(levels_to_coherency(), |operand| {
         // SAFETY: the caller's contract.
         unsafe {
             core::arch::asm!("dc isw, {operand}", operand = in(reg) operand, options(nostack, preserves_flags));

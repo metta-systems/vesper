@@ -21,14 +21,10 @@ Secondaries run no Threads; the kernel lock is still the null lock because they 
 enter the shared kernel state. Order: QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3
 and Pi 5 boards.
 
-- [ ] Nucleus: a secondary idle loop (`wfi`, interrupts masked, no Thread) and the
-  `MultiCoreMain` state transition in `libkernel-state`. The secondaries' EL1 entry
-  (`secondary::secondary_el1`, after it sets its `ONLINE` bit) goes on into it instead of
-  parking in Kickstart's image, which must not stay their code once Kickstart's droppable
-  memory and its identity map (their `TTBR0_EL1`) are reclaimed.
-- [ ] Test kernel `smp-test` (`just _test-smp`, `-rpi4`): every core reports online with
-  its MPIDR and logical index; the boot core waits with a timeout. Board runs on the Pi 4,
-  Pi 3 and Pi 5, checking `SMPEN` coherency with a cross-core cacheable counter.
+- [ ] Board runs of `smp-test` (`just boot-smp-test`, or `smp-test-<boards>.bin` on a card)
+  on the Pi 4, Pi 3 and Pi 5: `smp-test: PASS`, which checks `SMPEN` coherency with the
+  cross-core counter; the Pi 5 is the first run of the PSCI component and of the
+  `no-map` reservation.
 
 ## SMP2: one kernel lock and per-core state
 

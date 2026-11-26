@@ -427,6 +427,11 @@ _boot-midi-test: _build-midi-test-hw chainofcommand
 _build-board-test-hw board=boards features='': (_build-components board '' features) (_build-log-probe board '' features) (_build-test-kernel 'board-test' board features)
 
 # Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or put it on a card image as kernel8.img (`just sdimage board-test-<boards>.bin`); `just boot-board-test debug_kernel` builds a debug kernel, where a component's panic message shows on the UART too (`board-test-<boards>-debug_kernel.bin` for `sdimage`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived; on the Raspberry Pi 4 `xhci:` lines with the VL805's firmware load, its bring-up, a No Op command completing on its MSI and the USB 2 ports a device is on, reset
+# Build smp-test for the boards and boot it via chainofcommand (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-smp-test`), or put it on a card image as kernel8.img (`just sdimage smp-test-<boards>.bin`): the UART shows each secondary core's affinity, the coherency counter and `smp-test: PASS` or `smp-test: FAIL`
+[group("hw")]
+boot-smp-test features='': (_build-test-kernel 'smp-test' boards features) chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'smp-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
+
 [group("hw")]
 boot-board-test features='': (_build-board-test-hw boards features) chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
@@ -757,7 +762,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-display _test-every _test-layout _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-spi _test-board _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-smp _test-smp-rpi4 _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-display _test-every _test-layout _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-spi _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -797,6 +802,12 @@ _test-sync: (_run-test-kernel 'sync-test')
 
 # Boot memory-test: PageTable/Frame mapping, alias policy, ASIDs, activation and TLB invalidation, AddressSpace.Retire
 _test-memory: (_run-test-kernel 'memory-test')
+
+# Boot smp-test: the secondary cores come online through the spin table, report their affinity and logical index, and pass a cross-core cacheable counter
+_test-smp: (_run-test-kernel 'smp-test')
+
+# Boot smp-test on the Raspberry Pi 4 machine
+_test-smp-rpi4: (_run-test-kernel 'smp-test' '_build-test-kernel smp-test' 'rpi4')
 
 # Boot preempt-test: interrupt-controller component, kernel timer tick and round-robin preemption of Threads that never yield
 _test-preempt: (_run-test-kernel 'preempt-test' '_build-preempt-test' 'rpi3' test_kernel_features qemu_icount_opts)

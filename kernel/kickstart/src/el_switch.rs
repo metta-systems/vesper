@@ -98,6 +98,9 @@ fn configure_el0_visible_state() {
 /// `core_record` belong to: the boot core, or a secondary core from
 /// [`crate::secondary`], which shares the boot core's tables and vectors. The body takes
 /// no lock and logs nothing, so a secondary core can run it with its MMU off.
+/// The data caches hold no line older than the tables and images they reach: the
+/// caller cleaned and invalidated them (the whole hierarchy on the boot core, before any
+/// other core turned its caches on).
 /// The translation tables must remain live and map the entry executable, the
 /// vectors executable, and both distinct stack extents writable. Both stack
 /// pointers must be 16-byte aligned tops of sufficiently sized, retained backing.
@@ -188,13 +191,10 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     TTBR0_EL1.set(ttbr0);
     TTBR1_EL1.set(ttbr1);
 
-    // The data caches may hold lines from before: the firmware's, out of
-    // reset UNKNOWN. Kickstart wrote the tables and loaded the nucleus with
-    // caches off, so a stale line would hide them once caches are on. Clean
-    // as well as invalidate: the firmware resident at EL3 (the Raspberry Pi 4
-    // and 5's Arm Trusted Firmware) ran with caches on, and its dirty lines
-    // must reach memory, not be lost.
-    libcpu::cache::clean_invalidate_data_caches();
+    // The data caches were cleaned and invalidated by the caller
+    // (`clean_invalidate_data_caches` on the boot core before it released the
+    // others, the L1 on a secondary): set/way maintenance of the shared levels
+    // is not safe once another core runs with its caches on.
 
     // The EL1 TLBs and the instruction cache may hold entries from before
     // (the firmware's, out of reset UNKNOWN): drop them before the first walk

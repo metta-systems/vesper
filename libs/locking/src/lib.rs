@@ -116,7 +116,7 @@ impl<T> InitStateLock<T> {
 // OS Interface Code
 //------------------------------------------------------------------------------
 
-use {libkernel_state::state_manager, liblocal_irq::arch::aarch64::exception};
+use liblocal_irq::arch::aarch64::exception;
 
 impl<T> interface::Mutex for IRQSafeNullLock<T> {
     type Data = T;
@@ -137,7 +137,7 @@ impl<T> interface::ReadWriteEx for InitStateLock<T> {
 
     fn write<R>(&self, f: impl FnOnce(&mut Self::Data) -> R) -> R {
         assert!(
-            state_manager().is_init(),
+            libkernel_state::is_init(),
             "InitStateLock::write called after kernel init phase"
         );
         assert!(

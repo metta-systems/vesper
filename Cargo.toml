@@ -3,6 +3,7 @@ members = [
   "kernel/nucleus",
   "kernel/kickstart",
   "kernel/tests/memory-test",
+  "kernel/tests/smp-test",
   "kernel/tests/ppc-test",
   "kernel/tests/sync-test",
   "kernel/tests/capability-test",

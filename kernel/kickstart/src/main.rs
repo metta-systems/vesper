@@ -228,9 +228,6 @@ pub fn kickstart_run() -> ! {
     // Unmask interrupts on the boot CPU core.
     // libexception::exception::asynchronous::local_irq_unmask();
 
-    // Announce conclusion of the kernel_init() phase.
-    // libkernel_state::state_manager().transition_to_single_core_main();
-
     // libconsole::init_logger();
 
     // info!("🧠 {}", libkernel::version());

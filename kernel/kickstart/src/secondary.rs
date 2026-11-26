@@ -86,7 +86,23 @@ pub static SECONDARY_BOOT: SecondaryBootTable =
 
 /// Bit `index` is set by core `index` once it is at EL1 with its MMU and caches on.
 /// Zeroed with Kickstart's BSS by the boot core.
-static ONLINE: AtomicU64 = AtomicU64::new(0);
+///
+/// Alone in its cache line (64 bytes, the writeback granule of the Cortex-A53, A72 and
+/// A76): a secondary holds the line dirty in its cache, and its writeback would overwrite
+/// whatever the boot core stored in the same line with its caches off after the release
+/// ([`RELEASED`], `RUN_ENTRY`).
+#[repr(C, align(64))]
+struct OnlineCores {
+    /// Bit `index` set by core `index`.
+    mask: AtomicU64,
+    /// The affinity core `index` read from its own `MPIDR_EL1`, stored before its bit.
+    affinity: [AtomicU64; MAX_CPUS],
+}
+
+static ONLINE: OnlineCores = OnlineCores {
+    mask: AtomicU64::new(0),
+    affinity: [const { AtomicU64::new(0) }; MAX_CPUS],
+};
 
 /// The cores whose release the start method accepted, by logical index. Stored at EL2,
 /// read at EL1 by the boot core only.
@@ -175,10 +191,10 @@ pub fn wait_online() -> u64 {
     let released = RELEASED.load(Ordering::Relaxed);
     let ticks = CNTFRQ_EL0.get() * ONLINE_TIMEOUT_MS / 1000;
     let start = CNTPCT_EL0.get();
-    let mut online = ONLINE.load(Ordering::Acquire);
+    let mut online = ONLINE.mask.load(Ordering::Acquire);
     while online & released != released && CNTPCT_EL0.get() - start < ticks {
         core::hint::spin_loop();
-        online = ONLINE.load(Ordering::Acquire);
+        online = ONLINE.mask.load(Ordering::Acquire);
     }
     if online & released == released {
         crate::early_println!("🥾 Cores online {online:#06b}");
@@ -188,6 +204,77 @@ pub fn wait_online() -> u64 {
         );
     }
     online
+}
+
+/// The cores whose release the start method accepted, by logical index (at EL1).
+pub fn released_cores() -> u64 {
+    RELEASED.load(Ordering::Relaxed)
+}
+
+/// The secondary cores online, by logical index (at EL1).
+pub fn online_cores() -> u64 {
+    ONLINE.mask.load(Ordering::Acquire)
+}
+
+/// The affinity online core `index` read from its own `MPIDR_EL1` (at EL1).
+pub fn reported_affinity(index: usize) -> u64 {
+    ONLINE.affinity[index].load(Ordering::Acquire)
+}
+
+/// Rounds each core adds one to the coherency counter.
+#[cfg(feature = "smp_test")]
+pub const COHERENCY_ROUNDS: u64 = 100_000;
+
+/// The cross-core coherency check of `smp-test`, in a cache line of its own: every core
+/// adds one to `counter` [`COHERENCY_ROUNDS`] times with cacheable atomics, at the same
+/// time. A lost update means the cores' caches are not coherent (`SMPEN`).
+#[cfg(feature = "smp_test")]
+#[repr(C, align(64))]
+struct CoherencyRound {
+    /// Set by the boot core to start the round.
+    go: AtomicU64,
+    counter: AtomicU64,
+    /// Bit `index` set by core `index` once it is done.
+    done: AtomicU64,
+}
+
+#[cfg(feature = "smp_test")]
+static COHERENCY: CoherencyRound = CoherencyRound {
+    go: AtomicU64::new(0),
+    counter: AtomicU64::new(0),
+    done: AtomicU64::new(0),
+};
+
+/// A secondary core's part of the coherency round: wait for the start, add, report.
+#[cfg(feature = "smp_test")]
+fn coherency_round(index: u32) {
+    while COHERENCY.go.load(Ordering::Acquire) == 0 {
+        aarch64_cpu::asm::wfe();
+    }
+    for _ in 0..COHERENCY_ROUNDS {
+        COHERENCY.counter.fetch_add(1, Ordering::Relaxed);
+    }
+    COHERENCY.done.fetch_or(1 << index, Ordering::Release);
+}
+
+/// The boot core's part of the coherency round, at EL1 with the online cores waiting:
+/// start it, add its own share, wait for `online` to finish (at most
+/// [`ONLINE_TIMEOUT_MS`]). Returns the cores that finished and the counter.
+#[cfg(feature = "smp_test")]
+pub fn coherency_check(online: u64) -> (u64, u64) {
+    COHERENCY.go.store(1, Ordering::Release);
+    aarch64_cpu::asm::sev();
+    for _ in 0..COHERENCY_ROUNDS {
+        COHERENCY.counter.fetch_add(1, Ordering::Relaxed);
+    }
+    let ticks = CNTFRQ_EL0.get() * ONLINE_TIMEOUT_MS / 1000;
+    let start = CNTPCT_EL0.get();
+    let mut done = COHERENCY.done.load(Ordering::Acquire);
+    while done & online != online && CNTPCT_EL0.get() - start < ticks {
+        core::hint::spin_loop();
+        done = COHERENCY.done.load(Ordering::Acquire);
+    }
+    (done, COHERENCY.counter.load(Ordering::Acquire))
 }
 
 /// Physical address a secondary core is released to.
@@ -246,6 +333,9 @@ extern "C" fn secondary_el2(boot: &SecondaryBoot) -> ! {
     if CurrentEL.get() != CurrentEL::EL::EL2.value {
         endless_sleep()
     }
+    // The shared levels were cleaned by the boot core before the release, and other
+    // cores may already run with caches on: only this core's own L1 is walked.
+    libcpu::cache::clean_invalidate_l1_data_cache();
     // SAFETY: at EL2 on SP_EL2 on the core `boot` names (its affinity matched); the
     // tables, vectors and stacks are the boot core's live ones and this core's own,
     // published before its release; this core's EL2 call chain is abandoned here.
@@ -263,12 +353,23 @@ extern "C" fn secondary_el2(boot: &SecondaryBoot) -> ! {
 }
 
 /// A secondary core's first code at EL1 (`EL1h`, on its trap stack, interrupts masked):
-/// check its record, report online, park. It prints nothing: the console is the boot
-/// core's.
+/// check its record, report online, then wait in the nucleus, out of Kickstart's
+/// memory. It prints nothing: the console is the boot core's. A core whose record names
+/// another core stays here.
 extern "C" fn secondary_el1() -> ! {
     let record = nucleus::core_record::current();
-    if record.affinity == CoreAffinity::current().bits() {
-        ONLINE.fetch_or(1 << record.index, Ordering::Release);
+    if record.affinity != CoreAffinity::current().bits() {
+        endless_sleep()
     }
-    endless_sleep()
+    let index = record.index as usize;
+    ONLINE.affinity[index].store(CoreAffinity::current().bits(), Ordering::Relaxed);
+    ONLINE.mask.fetch_or(1 << index, Ordering::Release);
+    #[cfg(feature = "smp_test")]
+    coherency_round(record.index);
+    // SAFETY: the nucleus is loaded and mapped in the kernel half, and exports its
+    // secondary wait as an `extern "C" fn() -> !`.
+    let idle = unsafe {
+        core::mem::transmute::<u64, extern "C" fn() -> !>(crate::embed::NUCLEUS_SECONDARY_IDLE_VIRT)
+    };
+    idle()
 }

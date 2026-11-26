@@ -21,6 +21,9 @@ debug_kernel = ["libobject/debug_kernel", "nucleus/debug_kernel"]
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["libmachine/jtag"]
 noserial = [] #"libplatform/noserial"
+# smp-test's cross-core coherency round: each secondary core takes part in it before it
+# idles.
+smp_test = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = [
   # "libconsole/qemu",

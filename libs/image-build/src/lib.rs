@@ -638,6 +638,9 @@ pub fn generate_kernel(manifest: &str) {
     let (nucleus_set_board_console_virt, _) = image
         .symbol("nucleus_set_board_console")
         .expect("the nucleus must export nucleus_set_board_console");
+    let (nucleus_secondary_idle_virt, _) = image
+        .symbol("nucleus_secondary_idle")
+        .expect("the nucleus must export nucleus_secondary_idle");
 
     render(
         "kernel_sections.rs",
@@ -654,6 +657,7 @@ pub fn generate_kernel(manifest: &str) {
             nucleus_set_anchor_virt,
             nucleus_set_platform_virt,
             nucleus_set_board_console_virt,
+            nucleus_secondary_idle_virt,
         },
     );
 }

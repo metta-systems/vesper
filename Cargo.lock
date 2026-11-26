@@ -4544,6 +4544,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "smp-test"
+version = "0.0.1"
+dependencies = [
+ "kickstart",
+ "nucleus",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-kicktest",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "snafu"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
