@@ -7,8 +7,9 @@ driver as clients, and Wood's music summary) is built and checked in QEMU; the b
 check is pending. In L-B the three USB components became clients too (section USB log
 volume). Stage L-D, panic and fault reports, was taken up on 2026-10-29 ("keep 32k
 stacks, add panic reporting through the serial console too"); the `PANICKED:` and
-`FAULT:` lines are built and checked in QEMU (section Panics and faults). No logging
-question is open; the answered ones are listed in
+`FAULT:` lines are built and checked in QEMU (section Panics and faults). The one open
+logging question, the DebugConsole byte transport, is in
+[logging-decisions.md](logging-decisions.md); the answered ones are listed in
 [logging-completed.md](logging-completed.md). Stages are in [logging-implementation-plan.md](logging-implementation-plan.md).
 `log_v1` is a prototype interface and is edited in place.
 
@@ -150,6 +151,14 @@ question to the maintainer.
     from the SD card is stuck at 115 200, or at whatever the firmware left); (b) a
     fixed rate chosen at build time (the host must match it by hand, and a rate the
     line cannot carry loses the console with no way back).
+
+### DebugConsole debug-only exception
+
+DebugConsole is **not a generally available capability**. Its handler, bootstrap grant, and boot demonstration require the opt-in Cargo feature `debug_kernel`, disabled by default. The userspace wrapper (`DebugConsoleKey`) is always built, so components need no feature of their own; without a `debug_kernel` kernel no component holds a console key. This feature identifies a debug kernel independently of Cargo's optimization profile: the embedded build recipes use `--release` even for debugging. Neither `qemu` nor `jtag` implicitly enables it. Build nucleus and kickstart together, for example with `just build rpi3 qemu,debug_kernel`; production kernels must omit `debug_kernel`.
+
+Keep the current pointer-based Write mechanism for trusted debugging only; do not add an inline-byte operation or change the wire schema in this slice. **Hardware debugging aid (maintainer decision, 2026-11-15):** until a kernel monitor component exists, a `debug_kernel` kernel gives every component Kickstart loads a `WRITE` copy of the console at `KeySlot::DEBUG_CONSOLE`, named in `DriverInit::debug_console`; the userspace runtime's panic handler prints on it outside QEMU, and the nucleus prints Write's bytes on the board's console UART outside QEMU (semihosting under QEMU). Write reads `x2` as a virtual address in the caller's active AddressSpace, after checking every page of the range with `AT S1E0R` (EL0 caller) or `AT S1E1R` (EL1 boot code), copies the bytes out, and prints at most `WRITE_LIMIT` (1024) of them. This is a temporary debugging aid: it does **not** settle the parked DebugConsole byte-transport decision ([L13](logging-decisions.md#l13-debugconsole-byte-transport)), which the maintainer will revisit once the aid has been used. The canonical type ID `127` and operation ID `0` remain reserved/defined regardless of feature availability. Without the kernel feature, no console capability is installed and DebugConsole dispatch is unsupported (an absent slot still returns the normal lookup error).
+
+Temporary debug-only leeway is not a safety or isolation guarantee. The existing EL1 bootstrap caller, the broad grant, the translation check standing in for copy-fault recovery, silent truncation, and missing rights enforcement remain migration gaps. Client errors now propagate through the shared decoder. The domain-zero fallback has been removed: the boot fixture explicitly selects its first domain after creation, while absent runtime caller identity fails lookup. The stateless console handler now validates the capability's type through a shared entry borrow without deriving an object reference from its payload; this removes the console-specific mutable casts, not the general storage/lifetime gaps. Deferred improvements and alternatives are recorded beside `kernel/nucleus/src/api/debug_console.rs::invoke`. General availability requires the normal supported-operation criteria, including explicit caller/rights, bounded caller-authorized memory access with fault recovery, defined byte/length/partial-output semantics, checked exception/argument decoding, and observable results. D1/D3/D4/D6/D9 remain open beyond this limited availability decision.
 
 ## Current state before the log server
 

@@ -79,15 +79,7 @@ Reference: [type numbering](capabilities-contract.md#object-type-numbering), [wi
 
 ## Phase 3 — Repair the debug console path
 
-Reference: [wire contracts](capabilities-contract.md#invocation-and-wire-contracts), [authorization](capabilities-contract.md#authorization). Prerequisites: relevant Phase 2 definitions; console authority decision under D4.
-
-**Parked** (maintainer decision): DebugConsole stays a debug-only prototype. Every remaining item below is console general-availability work. It waits on the console byte-transport decision parked in [`capabilities-decisions.md`](capabilities-decisions.md) under D1/D6/D9 and does not block later phases.
-
-- [ ] Route user-copy fault recovery through the correct exception path, without recursive capability dispatch. Lands with the console's checked user-memory access below.
-- [ ] Define the console operation's authority, byte/string/NUL behavior, maximum length or chunking policy, and pointer semantics.
-- [ ] Introduce checked user-memory access for the console path, including caller-context authorization, range/length/overflow validation, input stability, and fault behavior. Do not relabel caller virtual addresses as trusted physical addresses.
-- [ ] Bound console copying and terminator handling; return specified errors for malformed inputs rather than panicking.
-- [ ] Test console success, kernel error propagation, invalid/empty slots, excessive raw slot/op values, boundary lengths, invalid/unauthorized pointers, non-SVC faults, and fault recovery without recursive capability dispatch.
+DebugConsole general-availability work is tracked in [`logging-implementation-plan.md`](logging-implementation-plan.md#debugconsole-general-availability).
 
 ## Phase 4 — Capability storage and Thread lifetime
 

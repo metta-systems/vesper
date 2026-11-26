@@ -51,7 +51,7 @@ Every document in `doc/agentic/` belongs to one row. **Keep this table current:*
 | `usb` | USB host controllers and the USB stack | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `input` | Input devices and events | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `audio` | Audio output (PWM jack, DMA, `cprman` clocks), mixing and synthesis | `-design`, `-implementation-plan`, `-completed`; background `audio-profiling.md` |
-| `logging` | The log server: several components sharing one PL011 | `-design`, `-implementation-plan`, `-completed` |
+| `logging` | The log server: several components sharing one PL011; the debug-only DebugConsole | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `ui-compositor` | The compositor, windows and surfaces | `-design`, `-implementation-plan`, `-completed`; `multi-display-design.md` (several outputs) |
 | Background only | Prior art and shelved designs; no rules, tasks or decisions | `irq-controller-placement.md`, `future-libmmio-design.md`, `brands-history.md` |
 | Maintainer notes | `questions.md`: the maintainer's scratch notes; read, never edit unprompted | `questions.md` |

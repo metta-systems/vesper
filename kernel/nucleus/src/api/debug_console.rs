@@ -10,7 +10,7 @@ use {
 // Debug-only prototype: compiled only with the opt-in `debug_kernel` feature.
 // This is not a generally available service or a safe interface for untrusted
 // callers. The maintainer has explicitly retained the current mechanism for now;
-// see doc/capabilities-contract.md, "DebugConsole debug-only exception".
+// see doc/agentic/logging-design.md, "DebugConsole debug-only exception".
 //
 // Write reads the caller's virtual memory: each page of the range must
 // translate for a read at the caller's exception level in the active

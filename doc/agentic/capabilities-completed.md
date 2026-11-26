@@ -25,8 +25,6 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 
 ## Phase 3 — Repair the active syscall/console path
 
-- [x] DebugConsole gated behind `debug_kernel` (handler, grant, boot use); its results are propagated and its wrapper no longer prints.
-- [x] Hardware debugging aid: in a `debug_kernel` kernel every component Kickstart loads gets a `WRITE` console key (`DriverInit::debug_console`, slot 15) its panic handler prints on, and Write reads caller-virtual memory checked by `AT` at the caller's level and prints on the board UART outside QEMU (`kernel/nucleus/src/objects/debug_console.rs`, `kernel/nucleus/src/board_console.rs`, `userspace/runtime`); exercised by the nucleus `debug_console` suite, `capability-test` and `ppc-test`, and on the Raspberry Pi 5 by board-test's log probe (`just boot-board-test debug_kernel`); EL0 bytes are read with `LDTRB` because the Pi 5's Cortex-A76 sets PAN on exception entry.
 - [x] Explicit caller context: an absent current Thread is rejected, never defaulted to Thread zero.
 - [x] Entry checks the exception class and origin; non-SVC EL0 exceptions go to fault delivery; the SVC immediate is ignored.
 - [x] No panicking register conversions on the entry path.

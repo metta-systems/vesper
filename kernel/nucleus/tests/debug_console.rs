@@ -78,7 +78,7 @@ use {
 
 // The debug console is a stateless singleton, not a pool object; its entry
 // carries a null identity and is validated by type only (see the debug-only
-// exception in doc/capabilities-contract.md).
+// exception in doc/agentic/logging-design.md).
 fn console_entry(rights: Rights, badge: u64) -> KeyEntry {
     KeyEntry::from_id(
         ObjectType::DEBUG_CONSOLE,
