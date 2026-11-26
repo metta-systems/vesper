@@ -44,7 +44,7 @@
 //------------------------------------------------------------------------------
 /// Entrypoint of the processor.
 ///
-/// Parks all cores except core0 and checks if we started in EL2/EL3. If
+/// Parks all cores except core0 and checks if we started in EL2. If
 /// so, init BSS and enter Rust code.
 ///
 /// This is invoked from the linker script, does arch-specific init

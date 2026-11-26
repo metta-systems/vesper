@@ -68,6 +68,10 @@ All by the maintainer, 2026-11-25.
   `fp_thread_switches`, `fp_entry_toggles`), written only by that core. A whole-machine
   report is the client's own sum or average over the per-core reports; the nucleus keeps
   no machine-wide total.
+- **Secondary EL1 stack (C12(a), 2026-11-26).** A secondary core enters EL1h on its own
+  trap stack (`SP_EL1`) with no execution stack: `el_switch` takes the EL1 mode from its
+  caller (EL1t on `SP_EL0` for the boot core, EL1h for a secondary). It runs no Thread, so
+  its code runs as the nucleus's idle path does, and no other stack is carved for it.
 
 ## 1. What exists today
 
@@ -78,8 +82,9 @@ All by the maintainer, 2026-11-25.
 | Kernel state machine | `Init → SingleCoreMain → MultiCoreMain`; the last transition does not exist | `libs/kernel-state/src/lib.rs` |
 | Kernel lock | `KERNEL_LOCK: IRQSafeNullLock<()>`, which protects nothing against another core; a TODO asks for the read-only / per-cpu / atomic / locked split | `kernel/nucleus/src/main.rs:58-62`, `libs/locking` |
 | Per-core state | Kept as plain fields of the one `Nucleus`: `current_thread`, `current_since_ticks`, `dispatched`, `dispatch_next`, `preempt_requested`, `interrupt_ticks`, `idle_ticks`; plus statics `IDLING`, `timer::PROGRAMMED`, the FP owner in `fp_unit` | `kernel/nucleus/src/objects/nucleus.rs:89-132`, `main.rs`, `timer.rs`, `objects/arch/fp_unit.rs` |
-| Kernel stack | One 512 KiB trap stack per core in `SP_EL1`, mapped by Kickstart in slots after the nucleus's `__STACK_VIRT_BOTTOM` with guard pages; a per-core record (`nucleus::core_record`) in `TPIDR_EL1`, set for the boot core only; the boot Thread runs EL1t on the init stack after the image | `kernel/kickstart/src/cores.rs`, `paging.rs`, `el_switch.rs` |
-| EL2 → EL1 | Kickstart runs at EL2 with the MMU off, builds the tables, then `el_switch` sets VBAR, MAIR, TCR (inner shareable), SCTLR and drops to EL1t | `kernel/kickstart/src/el_switch.rs` |
+| Kernel stack | One 512 KiB trap stack per core in `SP_EL1`, mapped by Kickstart in slots after the nucleus's `__STACK_VIRT_BOTTOM` with guard pages; a per-core record (`nucleus::core_record`) in `TPIDR_EL1` on every core; the boot Thread runs EL1t on the init stack after the image, the secondaries EL1h on their trap stacks | `kernel/kickstart/src/cores.rs`, `paging.rs`, `el_switch.rs` |
+| EL2 → EL1 | Kickstart runs at EL2 with the MMU off, builds the tables, releases the secondaries, then `el_switch` sets VBAR, MAIR, TCR (inner shareable), SCTLR and drops to EL1t; each secondary runs the same `el_switch` into EL1h | `kernel/kickstart/src/el_switch.rs`, `secondary.rs` |
+| Secondary cores | Released by the start-method component at EL2; at EL1 each sets its bit in `ONLINE` and parks in Kickstart's image on `wfe` (no idle loop in the nucleus yet); the boot core waits for them for at most 1 s in `el1_entry` | `kernel/kickstart/src/secondary.rs`, `lib.rs` |
 | TLB maintenance | Nucleus already uses broadcast forms (`tlbi vae1is`, `tlbi aside1is`, `dsb ish`); Kickstart's boot flush is local `tlbi vmalle1` | `objects/arch/aarch64_objects.rs`, `el_switch.rs` |
 | Interrupt controller ABI | `IrqChipOps`: `init`, `claim` (on the calling CPU), `complete`, `mask`, `unmask`, `set_trigger`, `xlate`. No per-CPU init, no IPI, no routing | `libs/irqchip/src/lib.rs` |
 | BCM2836 component | Drives core 0's local registers only; core 1–3 timer, mailbox and source registers are reserved fields | `drivers/irqchip-bcm2836/src/lib.rs` |
@@ -98,7 +103,7 @@ The device trees in `targets/` name the method per CPU node:
 | Pi 3 (BCM2837, Cortex-A53) | 4, MPIDR Aff0 = 0..3 | `spin-table`, `cpu-release-addr` 0xd8, 0xe0, 0xe8, 0xf0 | Write the entry's physical address to the core's 64-bit word, clean it to PoC, `dsb sy`, `sev` | The firmware stub (`armstub8`) left the core at EL2, MMU and caches off, `x0` = 0 |
 | Pi 4 (BCM2711, Cortex-A72) | 4, Aff0 = 0..3 | `spin-table`, same addresses | Same | Same |
 | Pi 5 (BCM2712, Cortex-A76) | 4, **Aff1** = 0..3 (`reg` 0x000, 0x100, 0x200, 0x300) | `psci`, `method = "smc"`, PSCI 1.0 | `SMC` with `x0 = 0xC400_0003` (`CPU_ON`, SMC64), `x1` target MPIDR, `x2` entry physical address, `x3` context id; `x0` = 0 on success | Entered by TF-A (bl31) with the MMU off and the context id in `x0`; the entry EL (expected EL2, as the boot core) is to be checked against DEN0022 and on the board |
-| QEMU `raspi3b`/`raspi4b` | 4 | spin table at the same addresses, written by QEMU's own boot stub (`hw/arm/raspi.c`, `write_smpboot64`) | Same as Pi 3 | QEMU starts the cores at EL3 (the boot core's `qemu` path already drops EL3 → EL2) |
+| QEMU `raspi3b`/`raspi4b` | 4 | spin table at the same addresses, written by QEMU's own boot stub (`hw/arm/raspi.c`, `write_smpboot64`) | Same as Pi 3 | QEMU starts every core at EL2, as the firmware does |
 
 Consequences:
 
@@ -114,10 +119,14 @@ Consequences:
   (`BootInfo::insert_reserved_region`), and nothing of Vesper's lives below the image
   base `0x80000`: Kickstart's init stack follows its image (`linker/kickstart.ld`) and
   chainboot's stack its relocated BSS above 32 MiB (`bin/chainboot/src/link.ld`).
-- A secondary core starts with its own EL2 registers unset. `_startup_in_rust`'s EL2
-  setup (`CNTHCTL_EL2`, `CNTVOFF_EL2`, `SCTLR_EL2`, `HCR_EL2`, `CPTR_EL2`) and, under
-  `qemu`, the EL3 → EL2 step, must run on every core, followed by `el_switch` with the
-  same `TTBR1_EL1`, `TCR_EL1`, `MAIR_EL1`, `VBAR_EL1` and the core's own `SP_EL1`.
+- A secondary core starts with its own EL2 registers unset. `libboot`'s `configure_el2`
+  (`CNTHCTL_EL2`, `CNTVOFF_EL2`, `SCTLR_EL1`/`SCTLR_EL2`, `HCR_EL2`, `CPTR_EL2`) runs on
+  every core, followed by `el_switch` with the same `TTBR0_EL1`, `TTBR1_EL1`, `TCR_EL1`,
+  `MAIR_EL1`, `VBAR_EL1` and the core's own `SP_EL1` and `TPIDR_EL1`. Kickstart's
+  `_secondary_entry` (`kernel/kickstart/src/secondary.rs`) finds the core's parameters by
+  its affinity in a table Kickstart publishes before the release, for the spin table and
+  PSCI alike, and runs at EL2 on the physical top of the core's trap stack, which is
+  otherwise unused until the core is at EL1.
 - Cache coherency: Cortex-A53/A72 need `CPUECTLR_EL1.SMPEN` set before caches and MMU
   are enabled. The Pi firmware stub sets it at EL3 on every core and TF-A does so on the
   Pi 5; Vesper cannot write it from EL2 (`ACTLR_EL3` gates it). Verify on the board; QEMU

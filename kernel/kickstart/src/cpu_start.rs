@@ -89,7 +89,6 @@ pub struct LoadedCpuStart {
 impl LoadedCpuStart {
     /// Release core `cpu` (its logical index) to start at the physical address `entry`,
     /// with `context` the physical address of its boot parameters.
-    #[expect(dead_code, reason = "the release of the cores (SMP1) calls it")]
     pub fn start(&self, cpu: u32, entry: u64, context: u64) -> StartStatus {
         let Some(found) = self.config.cpu(cpu) else {
             return StartStatus::NoSuchCpu;

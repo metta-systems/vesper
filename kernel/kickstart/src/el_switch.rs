@@ -83,7 +83,8 @@ fn configure_el0_visible_state() {
 /// * `ttbr1` - Translation table base for high addresses (kernel)
 /// * `vbar` - Exception vector base address (physical, must be 2KB aligned)
 /// * `entry_point` - Kernel entry point (virtual address)
-/// * `execution_stack_pointer` - Initial execution stack pointer in `SP_EL0` (`EL1t`)
+/// * `execution_stack_pointer` - Initial execution stack pointer in `SP_EL0`, entering
+///   `EL1t`; `None` enters `EL1h` on the trap stack
 /// * `trap_stack_pointer` - This core's kernel trap stack pointer in `SP_EL1`
 /// * `core_record` - Kernel virtual address of this core's record, for `TPIDR_EL1`
 ///
@@ -93,7 +94,10 @@ fn configure_el0_visible_state() {
 /// # Safety
 ///
 /// This function never returns to the caller.
-/// The caller must run at EL2 with `SP_EL2` selected and only the boot core active.
+/// The caller must run at EL2 with `SP_EL2` selected, on the core the stacks and
+/// `core_record` belong to: the boot core, or a secondary core from
+/// [`crate::secondary`], which shares the boot core's tables and vectors. The body takes
+/// no lock and logs nothing, so a secondary core can run it with its MMU off.
 /// The translation tables must remain live and map the entry executable, the
 /// vectors executable, and both distinct stack extents writable. Both stack
 /// pointers must be 16-byte aligned tops of sufficiently sized, retained backing.
@@ -106,7 +110,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     ttbr1: u64,
     vbar: u64,
     entry_point: u64,
-    execution_stack_pointer: u64,
+    execution_stack_pointer: Option<u64>,
     trap_stack_pointer: u64,
     core_record: u64,
 ) -> ! {
@@ -140,8 +144,6 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
 
     // Force VBAR update to complete before next instruction.
     barrier::isb(barrier::SY);
-
-    liblog::info!("[!] Exception traps set up");
 
     // ═══════════════════════════════════════════════════════════
     // STEP 3: Configure EL1 MMU settings
@@ -235,16 +237,21 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     // Set Saved Program Status Register (EL2)
     // Set up a simulated exception return.
     //
-    // Fake a saved program status, where all interrupts were
-    // masked and SP_EL1 was used as a stack pointer.
-    // Implementation status: trusted fixture execution now returns to EL1t
-    // using SP_EL0; exception entry selects the separate shared SP_EL1.
+    // Fake a saved program status, where all interrupts were masked. With an
+    // execution stack the entry runs EL1t on SP_EL0 (the boot core's linked
+    // fixture), exception entry selecting SP_EL1; without one it runs EL1h on
+    // the trap stack (a secondary core, which runs no Thread).
+    let mode = if execution_stack_pointer.is_some() {
+        SPSR_EL2::M::EL1t
+    } else {
+        SPSR_EL2::M::EL1h
+    };
     SPSR_EL2.write(
         SPSR_EL2::D::Masked
             + SPSR_EL2::A::Masked
             + SPSR_EL2::I::Masked
             + SPSR_EL2::F::Masked
-            + SPSR_EL2::M::EL1t, // Use SP_EL0, Return to EL1
+            + mode,
     );
 
     // TODO: Mask interrupts in EL1
@@ -260,7 +267,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
 
     // Set return address and stack
     ELR_EL2.set(entry_point);
-    SP_EL0.set(execution_stack_pointer);
+    SP_EL0.set(execution_stack_pointer.unwrap_or(0));
     SP_EL1.set(trap_stack_pointer);
     // This core's record (`nucleus::core_record`), EL1-only: no component reads it.
     TPIDR_EL1.set(core_record);
