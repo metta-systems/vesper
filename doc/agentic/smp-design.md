@@ -84,7 +84,7 @@ All by the maintainer, 2026-11-25.
 | Entry | Every core that reaches `_boot_cores` (and chainboot's `_start`) compares its full affinity (Aff3, Aff2..Aff0) with `BOOT_CORE_AFFINITY` (0); the others park on `wfe` forever | `libs/boot/src/arch/aarch64/boot.s`, `boot.rs`; `bin/chainboot/src/boot.s` |
 | Core id | `libcpu::smp::CoreAffinity` (the `MPIDR_EL1` affinity fields, in PSCI `CPU_ON` layout); no logical index yet | `libs/cpu/src/arch/aarch64/smp.rs` |
 | Kernel state | Only an init-phase flag per image, for `InitStateLock`; nothing ends the phase, and SMP keeps no lifecycle state (C13(a)) | `libs/kernel-state/src/lib.rs` |
-| Kernel lock | `KERNEL_LOCK: IRQSafeNullLock<()>`, which protects nothing against another core; a TODO asks for the read-only / per-cpu / atomic / locked split | `kernel/nucleus/src/main.rs:58-62`, `libs/locking` |
+| Kernel lock | `KERNEL_LOCK`, a ticket spinlock (`liblocking::TicketLock`) held by core index + 1: every kernel entry from a Thread (`current_el0_*`, the SVC path of `current_elx_synchronous`, `lower_aarch64_*`) and the idle-path interrupt take it once (`KernelLock::enter`) and release it on return; the idle loop releases it around `wfi`; each section on the `Nucleus` asserts this core holds it (`KernelLock::held`), and a core taking it again panics | `kernel/nucleus/src/main.rs`, `libs/locking/src/ticket.rs` |
 | Per-core state | In each core's `CoreRecord`: the scheduling state and totals (`CoreState`: `current_thread`, `current_since_ticks`, `dispatched`, `dispatch_next`, `preempt_requested`, `interrupt_ticks`, `idle_ticks`, `fp_totals`), which the `Nucleus` reaches through its `this_core` field (`ThisCore`, by `TPIDR_EL1`), under the kernel lock; and, touched by their own core without the lock, `idling`, the programmed timer deadline and the FP entry guard's exit flag and toggle count | `kernel/nucleus/src/objects/core_record.rs`, `nucleus.rs`, `main.rs`, `timer.rs`, `objects/arch/fp_unit.rs` |
 | Kernel stack | One 512 KiB trap stack per core in `SP_EL1`, mapped by Kickstart in slots after the nucleus's `__STACK_VIRT_BOTTOM` with guard pages; a per-core record (`nucleus::core_record`) in `TPIDR_EL1` on every core; the boot Thread runs EL1t on the init stack after the image, the secondaries EL1h on their trap stacks | `kernel/kickstart/src/cores.rs`, `paging.rs`, `el_switch.rs` |
 | EL2 → EL1 | Kickstart runs at EL2 with the MMU off, builds the tables, releases the secondaries, then `el_switch` sets VBAR, MAIR, TCR (inner shareable), SCTLR and drops to EL1t; each secondary runs the same `el_switch` into EL1h | `kernel/kickstart/src/el_switch.rs`, `secondary.rs` |
@@ -218,7 +218,7 @@ found, and released on exit. Rules:
 - **Never wait for another core while holding it.** A core spinning on the lock has
   interrupts masked and cannot take an IPI.
 - **The idle loop releases it around `wfi`**, and the interrupt taken there re-takes it
-  before claiming. Today the idle loop runs inside the trap with the kernel state held.
+  before claiming.
 - Per-core record fields are touched only by their own core, without the lock, or under
   the lock by another core only where noted (pending IPI bits are atomics).
 - Kickstart keeps `IRQSafeNullLock`: it runs on one core with the MMU off, where an
