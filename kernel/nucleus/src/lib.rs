@@ -38,6 +38,8 @@
 pub mod api;
 /// The board's console UART.
 pub mod board_console;
+/// The per-core record each core's `TPIDR_EL1` names.
+pub mod core_record;
 /// Nucleus object implementations.
 pub mod objects;
 /// The privileged interrupt-controller component.

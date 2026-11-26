@@ -18,6 +18,7 @@
 
 mod boot_info;
 pub mod bootstrap;
+mod cores;
 mod cpu_start;
 pub mod device_tree;
 pub mod drivers;
@@ -431,6 +432,9 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
         })
         .ok();
 
+    // The cores `/cpus` lists, each to get a record and a trap stack.
+    let core_plan = cores::plan(&device_tree);
+
     // Pick the start-method component the same way; without one the system runs on
     // the boot core alone.
     let cpu_start_plan = cpu_start::plan(&device_tree, embed::cpu_start::CPU_START)
@@ -486,15 +490,9 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     // PHASE 2: Set up page tables
     // ═══════════════════════════════════════════════════════════════
 
-    let (el1_stack, el1_stack_size) = {
-        // Allocate EL1 stack
-        let el1_stack_size = 128; // pages
-        let el1_stack = allocator
-            .alloc_pages(el1_stack_size, ("🧠 Nucleus stack", Alloc::Persistent))
-            .expect("🥾 Failed to allocate EL1 stack");
-        let el1_stack_size = el1_stack_size * 4096; // 512 KiB stack
-        (el1_stack, el1_stack_size)
-    };
+    // A trap stack and a record per core.
+    let cores = cores::allocate(core_plan, &mut allocator)
+        .expect("🥾 Failed to allocate the per-core trap stacks and records");
 
     // Mark kernel memory used.
     //
@@ -543,17 +541,22 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     semi::println!("🥾 Identity mapped the Kickstart");
 
     // Create kernel mapping with per-section permissions
-    let (el1_stack_top,) = paging::create_kernel_mapping(
+    paging::create_kernel_mapping(
         &mut mmu_setup,
         &kernel_layout,
         device_tree
             .memory()
             .map(|region| (region.start, region.size)),
-        el1_stack.as_u64(),
-        el1_stack_size,
+        cores.stacks(),
+        cores::TRAP_STACK_BYTES,
     )
     .expect("🥾 Failed to create kernel mapping");
     crate::early_println!("🥾 Higher-half mapped the nucleus");
+    let trap_stack_top =
+        |index| paging::trap_stack_top(&kernel_layout, index, cores::TRAP_STACK_BYTES);
+    cores.write_records(trap_stack_top);
+    let el1_stack_top = trap_stack_top(cores.boot_index());
+    let boot_core_record = cores.record_virt(cores.boot_index());
 
     // The console UART's register page in the kernel half too: a panic at EL1
     // or in the nucleus takes the UART over through it.
@@ -650,6 +653,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             // stack, leaving the linked fixture's execution stack in SP_EL0.
             execution_stack_top,
             el1_stack_top,
+            boot_core_record,
         );
     }
 }
@@ -668,6 +672,19 @@ fn el1_entry() -> ! {
         early_console::move_to_kernel_half();
     }
     crate::early_println!("🥾 At EL1 with the MMU on");
+    // This core's record, named by `TPIDR_EL1`: the identity the nucleus uses.
+    let record = nucleus::core_record::current();
+    assert_eq!(
+        record.affinity,
+        libcpu::smp::CoreAffinity::current().bits(),
+        "the boot core's record names another core"
+    );
+    crate::early_println!(
+        "🥾 Core {} (affinity {:#x}), trap stack top {:#x}",
+        record.index,
+        record.affinity,
+        record.trap_stack_top
+    );
     if let Some(base) = early_console::uart_kernel_half() {
         // SAFETY: the paired nucleus is mapped; the setter is a boot-only
         // store, and `base` is the PL011 mapped as device memory for good.
