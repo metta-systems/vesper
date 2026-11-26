@@ -31,13 +31,7 @@ Secondaries run no Threads and never enter the kernel. Order: QEMU `raspi3b` and
 - [ ] Check the BCM2836 mailbox write-set (`0x80`) and read/write-clear (`0xc0`)
   register offsets, and the mailbox interrupt semantics, against the QA7 datasheet; it is
   not in the repository and the sandbox cannot fetch it.
-- [ ] Device lines stay on the boot core; a Notification signal or EventCount advance
-  whose waiter's core is another sends Reschedule.
-- [ ] Synchronous retirement of a Thread running on another core and of an AddressSpace
-  current on other cores: Stop IPIs, the kernel lock released until every core
-  acknowledged, an "active on" core mask in the AddressSpace before its ASID is reused.
-- [ ] `smp-test` cases: IPI round trip on each core, retirement of a Thread running on
-  another core, AddressSpace retirement while current on two cores.
+- [ ] `smp-test` case: an IPI round trip on each core.
 
 ## SMP4: Threads on secondary cores
 

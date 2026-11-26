@@ -55,12 +55,22 @@ All by the maintainer, 2026-11-25.
   or the dispatcher.
 - **Device interrupts (C6: (a) now, (b) later).** Every device line goes to the boot
   core; a Notification or EventCount whose waiter is on another core sends that core an
-  inter-processor interrupt. Routing a line to its receiver's core comes later.
+  inter-processor interrupt. Routing a line to its receiver's core comes later. The
+  device lines reach the boot core today: the GIC component targets every SPI at the CPU
+  interface of the core running its `init` (the boot core, at the platform install), the
+  BCM2836 component routes the cascaded block to that core, and a secondary unmasks only
+  its IPI line. The IPI to a waiter on another core is built with the Scheduler's core
+  field, in Phase 11 of
+  [scheduling-implementation-plan.md](scheduling-implementation-plan.md) (maintainer,
+  2026-11-26): before it, every waiter is on the boot core.
 - **Retiring what runs elsewhere (C8: (a) now, (b) later).** Retiring a Thread, or an
   AddressSpace current on other cores, stays one synchronous call: the retiring core
   marks the object dying, interrupts the cores using it, releases the kernel lock until
   each has switched away and acknowledged, then completes. Asynchronous retirement with
-  quiescence detection comes later.
+  quiescence detection comes later. It is built in Phase 11 of
+  [scheduling-implementation-plan.md](scheduling-implementation-plan.md), once Threads
+  run on other cores (maintainer, 2026-11-26): before that nothing runs, and no
+  AddressSpace is current, anywhere but the boot core.
 - **Bring-up order (C10(a)).** QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3 and Pi 5
   boards.
 - **Record totals per core (C11(a), 2026-11-26).** Each core's root Scheduler record
