@@ -108,7 +108,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     let nucleus = Nucleus::<A> {
         this_core: nucleus::core_record::ThisCore::running(),
         pending: PendingPool::new(),
-        activations: Activations::new(),
+        activations: [const { Activations::new() }; libirqchip::MAX_CPUS],
         irq_table: IrqTable::empty(),
         ticks: 0,
         timers: nucleus::objects::timers::SchedulerTimers::new(),
@@ -412,8 +412,11 @@ pub fn bootstrap_nucleus() -> BootState {
         .unwrap_or_else(|failure| panic!("boot Time install failed: {:?}", failure.error.code()));
 
     // The root Scheduler, carved from the boot Untyped: the only authority
-    // that configures and starts Threads created by `Untyped.Retype`.
-    let root_scheduler_id = carve_object(keytable_addr, boot_untyped_key, Scheduler::root());
+    // that configures and starts Threads created by `Untyped.Retype`. It runs
+    // on the boot core, this one.
+    let boot_core = nucleus::core_record::current().index as usize;
+    let root_scheduler_id =
+        carve_object(keytable_addr, boot_untyped_key, Scheduler::root(boot_core));
     let root_scheduler_key = boot_table
         .insert(
             KeySlot::ROOT_SCHEDULER,

@@ -114,9 +114,10 @@ impl KernelLock {
     }
 }
 
-/// The kernel-lock holder id of the core whose timer the nucleus programs: the
-/// boot core, which installed the interrupt controller. 0 before that.
-static TIMER_CORE: AtomicU32 = AtomicU32::new(0);
+/// `smp-test` only: the logical CPU whose ping SVC sent the last `IPI_PING`,
+/// which the pinged core answers with `IPI_PONG`.
+#[cfg(feature = "smp_test")]
+static PINGING_CORE: AtomicU32 = AtomicU32::new(0);
 
 /// Send IPI `kind` (a `core_record::IPI_*` bit) to every logical CPU of
 /// `cpu_mask`: set the kind in each core's record, then raise their IPI line.
@@ -147,10 +148,8 @@ fn take_ipis() -> bool {
     }
     #[cfg(feature = "smp_test")]
     if kinds & nucleus::core_record::IPI_PING != 0 {
-        let boot_core = TIMER_CORE.load(Ordering::Relaxed);
-        if boot_core != 0 {
-            send_ipis(1 << (boot_core - 1), nucleus::core_record::IPI_PONG);
-        }
+        let pinging = PINGING_CORE.load(Ordering::Relaxed);
+        send_ipis(1 << pinging, nucleus::core_record::IPI_PONG);
     }
     kinds & nucleus::core_record::IPI_RESCHEDULE != 0
 }
@@ -269,7 +268,6 @@ pub unsafe extern "C" fn nucleus_set_platform(handoff: *const libirqchip::Platfo
             // whenever a Thread runs with interrupts unmasked.
             nucleus::platform::unmask(line);
             let record = nucleus::core_record::current();
-            TIMER_CORE.store(record.index + 1, Ordering::Relaxed);
             if !nucleus::platform::init_cpu(record.index) {
                 warn!("Interrupt controller refused core {}", record.index);
             }
@@ -529,6 +527,8 @@ fn smp_test_ping(e: &mut ExceptionContext) -> bool {
         return false;
     }
     let cpu = e.gpr[0];
+    // The kinds' Release in `send_ipis` publishes this to the pinged core.
+    PINGING_CORE.store(nucleus::core_record::current().index, Ordering::Relaxed);
     let sent = cpu < u64::from(u32::BITS) && send_ipis(1 << cpu, nucleus::core_record::IPI_PING);
     e.gpr[0] = u64::from(!sent);
     true
@@ -1008,16 +1008,12 @@ fn idle_until_runnable() -> PreparedResume {
     }
 }
 
-/// Program the timer for the next instant the nucleus needs it, from the
-/// state the kernel entry just left: the end of the current slice when
-/// another Thread is runnable, or the exhaustion of the current Thread's
-/// budget. Every kernel exit that can change either calls this.
+/// Program this core's timer for the next instant the nucleus needs it here,
+/// from the state the kernel entry just left: the end of the current slice
+/// when another Thread is runnable, the dispatcher's limit, the exhaustion of
+/// the current Thread's budget, or a wait timeout or dispatcher timer this
+/// core counts. Every kernel exit that can change one of them calls this.
 fn reprogram_timer() {
-    // Only the boot core's timer is the nucleus's until each core has its
-    // own deadline queue (SMP4).
-    if TIMER_CORE.load(Ordering::Relaxed) != this_core_holder() {
-        return;
-    }
     let deadline = KERNEL_LOCK.held(|()| {
         let nucleus_ptr = nucleus_anchor()?;
         // SAFETY: the anchor names the retained boot-carved Nucleus, and the

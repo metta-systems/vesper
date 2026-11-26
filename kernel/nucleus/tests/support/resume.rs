@@ -99,8 +99,8 @@ fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
             address_space.set_translation_root(Some(ROOT));
             address_space.set_asid(Some(2));
             nucleus.this_core.current_thread = Some(source);
-            assert!(nucleus.activations.push(target));
-            assert!(nucleus.activations.push(tail));
+            assert!(nucleus.local_activations().push(target));
+            assert!(nucleus.local_activations().push(tail));
             test(
                 nucleus,
                 Waits {
@@ -162,10 +162,10 @@ fn reject_unchanged(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits, expec
             .unwrap_or_else(|e| panic!("terminal preserved: {:?}", e.code())),
         terminal_before
     );
-    assert_eq!(nucleus.activations.len(), 2);
-    assert_eq!(nucleus.activations.peek(), Some(waits.target));
-    assert_eq!(nucleus.activations.pop(), Some(waits.target));
-    assert_eq!(nucleus.activations.pop(), Some(waits.tail));
+    assert_eq!(nucleus.local_activations().len(), 2);
+    assert_eq!(nucleus.local_activations().peek(), Some(waits.target));
+    assert_eq!(nucleus.local_activations().pop(), Some(waits.target));
+    assert_eq!(nucleus.local_activations().pop(), Some(waits.tail));
 }
 
 #[test_case]
@@ -389,8 +389,8 @@ fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result(
         );
         assert!(nucleus.pending.state(waits.terminal).is_err());
         assert_eq!(nucleus.pending.len(), 1);
-        assert_eq!(nucleus.activations.pop(), Some(waits.tail));
-        assert!(nucleus.activations.is_empty());
+        assert_eq!(nucleus.local_activations().pop(), Some(waits.tail));
+        assert!(nucleus.local_activations().is_empty());
     });
 }
 
@@ -458,7 +458,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
         }
         assert_eq!(nucleus.this_core.current_thread, Some(waits.source));
         assert_eq!(nucleus.pending.len(), 2);
-        assert_eq!(nucleus.activations.len(), 2);
+        assert_eq!(nucleus.local_activations().len(), 2);
         // Same prepared helper also rejects missing metadata through Activate.
         nucleus.address_space_mut(source_as).unwrap().set_asid(None);
         assert!(matches!(
@@ -547,8 +547,8 @@ fn preemption_switches_to_the_next_activation_and_resumes_a_preempted_thread_unc
         );
         // The preempted Thread belongs to no Scheduler, so nothing queues it
         // again; the other activation still waits.
-        assert_eq!(nucleus.activations.pop(), Some(waits.tail));
-        assert!(nucleus.activations.is_empty());
+        assert_eq!(nucleus.local_activations().pop(), Some(waits.tail));
+        assert!(nucleus.local_activations().is_empty());
         // Unrelated pending records are untouched.
         assert_eq!(nucleus.pending.len(), 2);
         // The switch charged the interval since the fixture started the
@@ -563,7 +563,7 @@ fn preemption_switches_to_the_next_activation_and_resumes_a_preempted_thread_unc
 #[test_case]
 fn preemption_with_nothing_runnable_keeps_the_current_thread() {
     with_resume(|nucleus, waits| {
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
         let resumed = {
             let access = unsafe { Access::new() };
@@ -577,7 +577,7 @@ fn preemption_with_nothing_runnable_keeps_the_current_thread() {
             nucleus.thread(waits.source).unwrap().context,
             ExecutionContext::Running
         );
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         // No switch happened, but the tick charged the interval the Thread
         // ran alone and restarted the clock.
         assert!(nucleus.run_time_ticks(waits.source).unwrap() > 0);
@@ -602,7 +602,7 @@ fn preemption_rejects_kernel_mode_state_without_changes() {
             CapError::InvalidThread.code()
         );
         assert_eq!(nucleus.this_core.current_thread, Some(waits.source));
-        assert_eq!(nucleus.activations.len(), 2);
+        assert_eq!(nucleus.local_activations().len(), 2);
     });
 }
 
@@ -610,7 +610,7 @@ fn preemption_rejects_kernel_mode_state_without_changes() {
 fn parking_with_nothing_runnable_idles_and_the_next_runnable_thread_ends_it() {
     with_resume(|nucleus, waits| {
         map_source_address_space(nucleus, &waits);
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
         let access = unsafe { Access::new() };
         let switch = nucleus
@@ -637,7 +637,7 @@ fn parking_with_nothing_runnable_idles_and_the_next_runnable_thread_ends_it() {
         nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
             saved: target_saved(),
         };
-        assert!(nucleus.activations.push(waits.target));
+        assert!(nucleus.local_activations().push(waits.target));
         let resumed = nucleus
             .select_after_idle(&access)
             .unwrap_or_else(|e| panic!("leave idle: {:?}", e.code()))
@@ -646,7 +646,7 @@ fn parking_with_nothing_runnable_idles_and_the_next_runnable_thread_ends_it() {
         assert_eq!(resumed.next, waits.target);
         assert_eq!(resumed.saved, target_saved());
         assert_eq!(nucleus.this_core.current_thread, Some(waits.target));
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
     });
 }
 
@@ -654,7 +654,7 @@ fn parking_with_nothing_runnable_idles_and_the_next_runnable_thread_ends_it() {
 fn idle_time_is_metered_apart_from_interrupt_time() {
     with_resume(|nucleus, waits| {
         map_source_address_space(nucleus, &waits);
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
         let access = unsafe { Access::new() };
         let switch = nucleus
@@ -672,7 +672,7 @@ fn idle_time_is_metered_apart_from_interrupt_time() {
         nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
             saved: target_saved(),
         };
-        assert!(nucleus.activations.push(waits.target));
+        assert!(nucleus.local_activations().push(waits.target));
         nucleus
             .select_after_idle(&access)
             .unwrap_or_else(|e| panic!("leave idle: {:?}", e.code()))
@@ -726,7 +726,7 @@ fn remaining_ns(nucleus: &Nucleus<ArchObjectsImpl>, id: crate::objects::carved::
 #[test_case]
 fn a_tick_charges_a_thread_running_alone_to_its_bound_time() {
     with_resume(|nucleus, waits| {
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         let time = bind_time(nucleus, waits.source, 1_000_000_000);
         run_for_ms(nucleus, 3);
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
@@ -751,7 +751,7 @@ fn a_tick_charges_a_thread_running_alone_to_its_bound_time() {
 fn an_exhausted_thread_is_switched_away_from_and_kept_off_the_queue() {
     with_resume(|nucleus, waits| {
         map_source_address_space(nucleus, &waits);
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         bind_time(nucleus, waits.source, 1_000_000);
         run_for_ms(nucleus, 5);
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
@@ -766,7 +766,7 @@ fn an_exhausted_thread_is_switched_away_from_and_kept_off_the_queue() {
         assert_eq!(resumed, Switch::Idle);
         assert_eq!(nucleus.this_core.current_thread, None);
         // It stays runnable but waits for budget instead of queueing.
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         let source = nucleus.thread(waits.source).unwrap();
         assert!(source.awaiting_budget);
         assert_eq!(
@@ -797,8 +797,8 @@ fn an_exhausted_thread_with_a_queue_behind_it_is_not_requeued() {
         };
         assert_eq!(resumed.next, waits.target);
         // Only the former tail remains queued; the exhausted source waits.
-        assert_eq!(nucleus.activations.pop(), Some(waits.tail));
-        assert!(nucleus.activations.is_empty());
+        assert_eq!(nucleus.local_activations().pop(), Some(waits.tail));
+        assert!(nucleus.local_activations().is_empty());
         assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
     });
 }
@@ -815,9 +815,9 @@ fn budget_arriving_clears_the_wait_for_budget_without_queueing_anything() {
             saved: PREEMPTED_SAVED,
         };
         nucleus.this_core.current_thread = Some(waits.target);
-        let queued_before = nucleus.activations.len();
+        let queued_before = nucleus.local_activations().len();
         nucleus.make_runnable(waits.source);
-        assert_eq!(nucleus.activations.len(), queued_before);
+        assert_eq!(nucleus.local_activations().len(), queued_before);
         assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
         // Budget has not arrived yet.
         nucleus.budget_arrived(waits.source);
@@ -838,10 +838,10 @@ fn budget_arriving_clears_the_wait_for_budget_without_queueing_anything() {
         assert!(!nucleus.thread(waits.source).unwrap().awaiting_budget);
         // Nothing is queued: only a dispatcher runs Threads, and a Thread
         // outside every Scheduler has none.
-        assert_eq!(nucleus.activations.len(), queued_before);
-        assert_eq!(nucleus.activations.pop(), Some(waits.target));
-        assert_eq!(nucleus.activations.pop(), Some(waits.tail));
-        assert_eq!(nucleus.activations.pop(), None);
+        assert_eq!(nucleus.local_activations().len(), queued_before);
+        assert_eq!(nucleus.local_activations().pop(), Some(waits.target));
+        assert_eq!(nucleus.local_activations().pop(), Some(waits.tail));
+        assert_eq!(nucleus.local_activations().pop(), None);
     });
 }
 
@@ -855,18 +855,18 @@ fn a_thread_with_no_bound_time_is_never_exhausted_and_its_run_time_is_metered() 
         assert!(!nucleus.thread_exhausted(waits.source));
         assert!(nucleus.run_time_ticks(waits.source).unwrap() >= ticks_for_ms(nucleus, 4));
         assert!(nucleus.run_time_ns(waits.source).unwrap() >= 4_000_000);
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         // A woken Thread outside every Scheduler is published and waits: no
         // queue runs it.
         nucleus.make_runnable(waits.target);
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
     });
 }
 
 #[test_case]
 fn interrupt_time_is_not_charged_to_the_interrupted_thread() {
     with_resume(|nucleus, waits| {
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         let time = bind_time(nucleus, waits.source, 1_000_000_000);
         // The Thread started 10 ms ago, and 4 ms of that went to interrupts.
         run_for_ms(nucleus, 10);
@@ -916,7 +916,7 @@ fn budget_ticks(nucleus: &Nucleus<ArchObjectsImpl>, budget_ns: u64) -> u64 {
 #[test_case]
 fn a_thread_running_alone_on_unlimited_time_needs_no_timer() {
     with_resume(|nucleus, waits| {
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         nucleus.this_core.current_since_ticks = 5_000;
         let slice = slice(nucleus);
         assert_eq!(nucleus.timer_deadline_ticks(slice), None);
@@ -932,7 +932,7 @@ fn an_idle_nucleus_needs_no_timer_unless_a_deadline_is_pending() {
         nucleus.this_core.current_thread = None;
         let slice = slice(nucleus);
         // Idle waits for an interrupt, whatever is queued.
-        assert!(!nucleus.activations.is_empty());
+        assert!(!nucleus.local_activations().is_empty());
         assert_eq!(nucleus.timer_deadline_ticks(slice), None);
     });
 }
@@ -942,7 +942,7 @@ fn a_queued_thread_bounds_the_slice_from_when_the_current_thread_started() {
     with_resume(|nucleus, _waits| {
         nucleus.this_core.current_since_ticks = 5_000;
         let slice = slice(nucleus);
-        assert!(!nucleus.activations.is_empty());
+        assert!(!nucleus.local_activations().is_empty());
         assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + slice));
         // A later start moves the deadline with it.
         nucleus.this_core.current_since_ticks = 9_000;
@@ -953,7 +953,7 @@ fn a_queued_thread_bounds_the_slice_from_when_the_current_thread_started() {
 #[test_case]
 fn a_finite_budget_sets_a_deadline_at_exhaustion_even_when_alone() {
     with_resume(|nucleus, waits| {
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         nucleus.this_core.current_since_ticks = 5_000;
         bind_time(nucleus, waits.source, 2_000_000);
         let slice = slice(nucleus);
@@ -982,7 +982,7 @@ fn the_earlier_of_the_slice_and_the_exhaustion_wins() {
 fn an_exhausted_thread_with_nothing_to_switch_to_still_asks_for_a_timer() {
     with_resume(|nucleus, waits| {
         // Nothing is queued, but it stops all the same: the nucleus idles.
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         bind_time(nucleus, waits.source, 1);
         run_for_ms(nucleus, 1);
         nucleus.charge_current(waits.source);
@@ -995,7 +995,7 @@ fn an_exhausted_thread_with_nothing_to_switch_to_still_asks_for_a_timer() {
 #[test_case]
 fn interrupt_time_pushes_the_exhaustion_deadline_out() {
     with_resume(|nucleus, waits| {
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         nucleus.this_core.current_since_ticks = 5_000;
         bind_time(nucleus, waits.source, 2_000_000);
         let slice = slice(nucleus);
@@ -1020,13 +1020,22 @@ struct Dispatching {
 }
 
 fn with_dispatcher(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> Dispatching {
-    let scheduler_id = test_arena::carve(Scheduler::root()).expect("arena exhausted");
+    with_dispatcher_on(nucleus, waits, 0)
+}
+
+/// [`with_dispatcher`] for a root Scheduler of logical CPU `core`.
+fn with_dispatcher_on(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    waits: &Waits,
+    core: usize,
+) -> Dispatching {
+    let scheduler_id = test_arena::carve(Scheduler::root(core)).expect("arena exhausted");
     // The dispatcher and its Threads belong to the Scheduler; its Threads
     // are not in the first-in, first-out queue.
     for thread in [waits.source, waits.target, waits.tail] {
         nucleus.thread_mut(thread).unwrap().scheduler = Some(scheduler_id);
     }
-    while nucleus.activations.pop().is_some() {}
+    while nucleus.local_activations().pop().is_some() {}
     let source_as = nucleus.thread(waits.source).unwrap().address_space;
     let address_space = nucleus.address_space_mut(source_as).unwrap();
     address_space.set_translation_root(Some(ROOT + 0x1000));
@@ -1127,7 +1136,7 @@ fn dispatch_parks_the_dispatcher_and_runs_the_named_thread() {
             ExecutionContext::Parked { .. }
         ));
         // The dispatched Thread is not in the queue.
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
     });
 }
 
@@ -1161,7 +1170,7 @@ fn the_dispatched_thread_blocking_activates_the_dispatcher() {
         assert_eq!(completion.result0, activation_reason::BLOCKED);
         assert!(nucleus.this_core.dispatched.is_none());
         assert!(scheduler_of(&dispatching).parked().is_none());
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
     });
 }
 
@@ -1192,7 +1201,7 @@ fn reaching_the_limit_or_the_budget_activates_the_dispatcher() {
             activation_reason::LIMIT
         );
         // The stopped Thread is runnable but not queued: it waits for a dispatch.
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         assert!(!nucleus.thread(waits.tail).unwrap().queued);
     });
     // The budget.
@@ -1242,6 +1251,27 @@ fn an_activation_with_nobody_waiting_makes_the_next_dispatch_return_at_once() {
             dispatch_call(nucleus, &dispatching, Some(dispatching.tail_key), 1_000, 0),
             Ok(InvokeOutcome::Blocked(_))
         ));
+    });
+}
+
+#[test_case]
+fn dispatch_runs_only_on_its_schedulers_core() {
+    with_resume(|nucleus, waits| {
+        // The tests run on core 0; this Scheduler is core 1's.
+        let dispatching = with_dispatcher_on(nucleus, &waits, 1);
+        for cpu in [0, 1] {
+            assert!(matches!(
+                cap_invoke(
+                    nucleus,
+                    dispatching.scheduler,
+                    SchedulerOp::Dispatch as u64,
+                    &[dispatching.tail_key.to_wire(), 0, 1_000, 0, cpu, 0],
+                ),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        assert!(scheduler_of(&dispatching).parked().is_none());
+        assert!(nucleus.this_core.dispatch_next.is_none());
     });
 }
 
@@ -1379,7 +1409,7 @@ fn the_mask_decides_which_wakeups_preempt_the_dispatched_thread() {
         nucleus.make_runnable(target);
         assert!(scheduler_of(&dispatching).parked().is_none());
         assert!(nucleus.this_core.preempt_requested);
-        assert_eq!(nucleus.activations.peek(), Some(waits.source));
+        assert_eq!(nucleus.local_activations().peek(), Some(waits.source));
         // The timer is asked to fire at once.
         let since = nucleus.this_core.current_since_ticks;
         assert_eq!(nucleus.timer_deadline_ticks(1_000_000), Some(since));
@@ -1424,16 +1454,16 @@ fn a_dispatcher_waiting_with_nothing_dispatched_wakes_for_any_runnable_thread() 
         // The mask is empty, but nothing is running: any runnable Thread wakes it.
         nucleus.make_runnable(waits.target);
         assert!(scheduler_of(&dispatching).parked().is_none());
-        assert_eq!(nucleus.activations.peek(), Some(waits.source));
+        assert_eq!(nucleus.local_activations().peek(), Some(waits.source));
     });
 }
 
 #[test_case]
 fn binding_a_dispatcher_runs_it_next() {
     with_resume(|nucleus, waits| {
-        let scheduler_id = test_arena::carve(Scheduler::root()).expect("arena exhausted");
+        let scheduler_id = test_arena::carve(Scheduler::root(0)).expect("arena exhausted");
         // Nothing else is waiting to run.
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         let source_as = nucleus.thread(waits.source).unwrap().address_space;
         let dispatcher = nucleus.create_thread(source_as).expect("dispatcher Thread");
         {
@@ -1448,8 +1478,8 @@ fn binding_a_dispatcher_runs_it_next() {
             .ok()
             .expect("bind");
         // The dispatcher runs first, and it is the only one waiting.
-        assert_eq!(nucleus.activations.len(), 1);
-        assert_eq!(nucleus.activations.pop(), Some(dispatcher));
+        assert_eq!(nucleus.local_activations().len(), 1);
+        assert_eq!(nucleus.local_activations().pop(), Some(dispatcher));
         assert!(matches!(
             nucleus.thread(dispatcher).unwrap().context,
             ExecutionContext::NotStarted { .. }
@@ -1480,7 +1510,7 @@ fn arm_timer_belongs_to_the_dispatcher_and_replaces_its_deadline() {
 
         // A Scheduler whose dispatcher is not the caller, or a nonzero
         // reserved register: refused.
-        let other = test_arena::carve(Scheduler::root()).expect("arena exhausted");
+        let other = test_arena::carve(Scheduler::root(0)).expect("arena exhausted");
         let other_key = nucleus
             .current_thread_table_mut()
             .unwrap()
@@ -1744,7 +1774,7 @@ fn a_thread_retiring_itself_switches_away_and_is_gone() {
 #[test_case]
 fn the_last_thread_exiting_leaves_the_nucleus_idle() {
     with_resume(|nucleus, waits| {
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
         let switch = {
             let access = unsafe { Access::new() };
@@ -1814,7 +1844,7 @@ fn with_domain(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> Domain 
     nucleus.thread_mut(t).unwrap().scheduler = Some(child_id);
     {
         let child = nucleus.scheduler_mut(child_id).unwrap();
-        child.set_parent(root.scheduler_id, 1);
+        child.set_parent(root.scheduler_id, 1, Some(0));
         child.bind_dispatcher(dc).ok().expect("bind");
     }
     nucleus.join_scheduler(t, child_id);

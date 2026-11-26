@@ -42,6 +42,19 @@ All by the maintainer, 2026-11-25.
   a Scheduler and its direct child, it moves a Thread between Schedulers of different
   cores, taking the destination Time key, with `WRITE` on both Schedulers, the Thread and
   the destination Time.
+- **Scheduler queues (maintainer, 2026-11-27).** The root scheduler's run queues are its
+  own: it carves the queues it carved for one core once per core, owns them, and the
+  kernel knows nothing of them.
+- **Kernel run state per core (maintainer, 2026-11-27, (c)).** The kernel's queue of
+  dispatchers made runnable ahead of what runs (`activations`) is split per core: fixed
+  per-core lists in the `Nucleus`, a Scheduler's dispatcher on its core's list, which
+  another core may push onto under the kernel lock before it sends `IPI_RESCHEDULE`. The
+  table of armed `ArmTimer` deadlines stays one table, each entry tagged with its
+  Scheduler's core; each core programs its own timer from its own entries.
+- **Root dispatcher layout (maintainer, 2026-11-27).** One root dispatcher component, one
+  AddressSpace, with one Thread per core. Each Thread works its own core's area of the
+  scheduler's memory; operations across cores (moving a Thread to another core, pinning
+  it) are done cooperatively inside that AddressSpace.
 - **Placement (C5(b)).** A pinned component runs on its core; an unpinned one is placed by
   dispatcher policy at run time.
 - **Pin declaration (C5.1(c)).** A component declares its core next to its priority (a
@@ -103,7 +116,8 @@ All by the maintainer, 2026-11-25.
 | Interrupt controller ABI | `IrqChipOps`: `init`, `claim` (on the calling CPU), `complete`, `mask`, `unmask`, `set_trigger`, `xlate`. No per-CPU init, no IPI, no routing | `libs/irqchip/src/lib.rs` |
 | BCM2836 component | Drives core 0's local registers only; core 1–3 timer, mailbox and source registers are reserved fields | `drivers/irqchip-bcm2836/src/lib.rs` |
 | GIC-400 component | Routes every SPI to the CPU interface of the core running `init` (from banked `GICD_ITARGETSR0-7`) | `drivers/irqchip-gicv2/src/lib.rs` |
-| Scheduling ABI | `Scheduler.Dispatch` `x6` is the CPU and must be 0; the Thread record has a `cpu` field (`0` or `NO_CPU`); a Time "belongs to one core" and Transfer/Merge already carry per-core checks | [scheduling design](scheduling-design.md#decisions); `objects/time.rs` |
+| Scheduling ABI | A Scheduler has a core (the boot core for the root, the parent's from `Adopt`); `Scheduler.Dispatch` `x6` must name it and the caller must run on it; the Thread record's `cpu` is the running Thread's Scheduler's core; a Time belongs to the core that created it, and Transfer, Merge and Dispatch refuse another core's | [scheduling design](scheduling-design.md#decisions); `objects/scheduler.rs`, `objects/time.rs`, `api/scheduler.rs` |
+| Run state | `Nucleus::activations` is one list per core, a Scheduler's dispatcher on its core's list; a core selects from its own (`local_activations`) and preempts its running Thread only for an activation on its own list. The dispatcher-timer table and the wait timeouts are tagged by core, and each core programs and expires only its own; the secondaries still run no Thread and leave their timer line masked | `objects/nucleus.rs`, `objects/timers.rs`, `objects/completion.rs`, `main.rs` |
 | Payload ordering | The contract states that multicore needs real Acquire/Release kernel atomics for Signal/Advance publication | [contract, Notification and EventCount](capabilities-contract.md#notification-and-eventcount) |
 | Reserved memory | Kickstart removes `/memreserve/` entries and the `no-map` nodes of `/reserved-memory` from the Untypeds | `kernel/kickstart/src/lib.rs`, `libdevicetree::DeviceTree::no_map_reserved_memory` |
 | QEMU | `raspi3b` and `raspi4b` always model four cores | `Justfile` |
@@ -216,8 +230,9 @@ allocates), its address in `TPIDR_EL1` (EL1-only, so no user exposure):
 - the pending IPI bits.
 
 Everything else stays in the shared `Nucleus` (pools, key tables, pending records, IRQ
-table, activations). Each core has its own deadline queue (wait timeouts and dispatcher
-timers of its Schedulers) in its record. The existing scheduler-record
+table), which also holds the per-core run state: one `activations` list per core, and
+one dispatcher-timer table whose entries carry their Scheduler's core, as wait timeouts
+in the pending records carry the core of the waiting Thread's Scheduler. The existing scheduler-record
 totals (`interrupt_ns`, `idle_ns` and the FP totals) become per-core fields, published in
 each core's root Scheduler record (C11(a)).
 
@@ -294,8 +309,6 @@ enough. As built:
 - Reschedule sets the core's `preempt_requested`, so the exit path of an interrupt that
   stopped a Thread selects again; Halt parks; Stop has no work until synchronous
   retirement.
-- Only the boot core's timer is programmed (`TIMER_CORE`) until each core has its own
-  deadline queue (SMP4).
 
 ### Interrupt-controller ABI
 
@@ -323,10 +336,12 @@ enough. As built:
 ### Timers
 
 `CNTP` is per core and the counter is common, so the clock contract is unchanged. Each
-core programs its own one-shot for its running Thread's dispatch limit and budget. Wait
-timeouts and `Scheduler.ArmTimer` deadlines go in the per-core queue of the core that
-owns the Scheduler, and that core's one-shot is programmed to the earliest of its limit,
-budget and queue head.
+core programs its own one-shot on every kernel exit (`reprogram_timer`) to the earliest
+of its running Thread's dispatch limit, budget and slice, and the wait timeouts and
+`Scheduler.ArmTimer` deadlines tagged with its core; its timer interrupt expires only
+those (`Nucleus::expire_deadlines`). A wait timeout takes its core when it is set, from
+the waiting Thread's Scheduler (this core for a Thread outside every Scheduler); a
+dispatcher timer takes its Scheduler's core when it is armed.
 
 ### Memory management
 

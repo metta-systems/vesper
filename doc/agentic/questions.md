@@ -1,3 +1,12 @@
+- A Time is a budget of CPU time, and each Time belongs to one core.                                  [-]
+  - The scheduling rule says Transfer, Merge and Dispatch "reject a Time of another core". The main agent read "another core" as any core except the one making the call. Before, the check only required the two Times to be on the same core.
+  - So a dispatcher running on core 0 can't hand budget to a Time that belongs to core 1. Each core's budget can only be refilled by code running on that core.
+  - This shapes how the per-core boot Times and root dispatchers (the next items) can be funded.
+  - Confirm this reading is what you meant, or ask for "both Times on the same core" instead.
+
+---
+
+
 - Image size per board set: an rpi4+rpi5 image still carries every driver, including the RPi3 interrupt controller.
 - Devicetree pointer: the kernel entry still takes it as a 32-bit value. That's fine while the firmware puts the tree below 4 GB.
 

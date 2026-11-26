@@ -120,7 +120,7 @@ fn start(nucleus: &mut Nucleus<ArchObjectsImpl>, keys: &Keys) -> Result<(), CapE
 #[test_case]
 fn configure_then_start_makes_an_inert_thread_runnable() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         // Starting before configuring is refused.
         assert!(matches!(
             start(nucleus, &keys),
@@ -139,7 +139,7 @@ fn configure_then_start_makes_an_inert_thread_runnable() {
                 saved: SavedContext::el0(ENTRY, STACK, ARGUMENT)
             }
         );
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         // A configured Thread cannot be configured again.
         assert!(matches!(
             configure(nucleus, &keys, ENTRY, STACK),
@@ -163,20 +163,20 @@ fn configure_then_start_makes_an_inert_thread_runnable() {
             }
         );
         // Nothing runs it: only a dispatcher does.
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         // Starting twice is refused.
         assert!(matches!(
             start(nucleus, &keys),
             Err(CapError::InvalidOperation)
         ));
-        while nucleus.activations.pop().is_some() {}
+        while nucleus.local_activations().pop().is_some() {}
     });
 }
 
 #[test_case]
 fn configure_rejects_bad_start_state_and_leaves_the_thread_inert() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         for (entry, stack) in [
             (ENTRY + 2, STACK),
             (ENTRY, STACK + 8),
@@ -199,7 +199,12 @@ fn configure_rejects_bad_start_state_and_leaves_the_thread_inert() {
 fn configure_requires_rights_and_a_mapped_address_space() {
     // Missing WRITE/MAP on the Thread, AddressSpace and Time keys.
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let keys = setup(nucleus, fixture_as, Rights(Rights::READ), Scheduler::root());
+        let keys = setup(
+            nucleus,
+            fixture_as,
+            Rights(Rights::READ),
+            Scheduler::root(0),
+        );
         assert!(matches!(
             configure(nucleus, &keys, ENTRY, STACK),
             Err(CapError::InsufficientRights)
@@ -207,7 +212,7 @@ fn configure_requires_rights_and_a_mapped_address_space() {
     });
     // An AddressSpace without an ASID.
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         nucleus
             .address_space_mut(fixture_as)
             .unwrap()
@@ -219,7 +224,7 @@ fn configure_requires_rights_and_a_mapped_address_space() {
     });
     // A Thread key in the AddressSpace operand is the wrong kind.
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         keys.address_space = keys.thread;
         assert!(matches!(
             configure(nucleus, &keys, ENTRY, STACK),
@@ -253,7 +258,7 @@ fn time_op(
 #[test_case]
 fn a_bound_time_is_its_threads_own() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let root = install_root_time(nucleus, 24);
         let spare = {
             let id = test_arena::carve(Time::empty(0)).expect("arena exhausted");
@@ -335,14 +340,14 @@ fn a_bound_time_is_its_threads_own() {
 #[test_case]
 fn a_thread_started_on_an_unfunded_time_waits_until_a_transfer_arrives() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let root = install_root_time(nucleus, 24);
         configure(nucleus, &keys, ENTRY, STACK)
             .unwrap_or_else(|error| panic!("ConfigureThread: {:?}", error.code()));
 
         // The Time is empty: the Thread starts but stays off the run queue.
         start(nucleus, &keys).unwrap_or_else(|error| panic!("StartThread: {:?}", error.code()));
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         let thread = nucleus.thread(keys.thread_id).unwrap();
         assert!(thread.awaiting_budget);
         assert_eq!(
@@ -360,7 +365,7 @@ fn a_thread_started_on_an_unfunded_time_waits_until_a_transfer_arrives() {
             [keys.time.to_wire(), 1_000_000, 0, 0, 0, 0],
         )
         .unwrap_or_else(|error| panic!("fund the Time: {:?}", error.code()));
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         assert!(!nucleus.thread(keys.thread_id).unwrap().awaiting_budget);
 
         // A second Transfer changes nothing.
@@ -371,7 +376,7 @@ fn a_thread_started_on_an_unfunded_time_waits_until_a_transfer_arrives() {
             [keys.time.to_wire(), 1_000, 0, 0, 0, 0],
         )
         .unwrap_or_else(|error| panic!("top up the Time: {:?}", error.code()));
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
     });
 }
 
@@ -474,7 +479,7 @@ fn scheduler_record() -> &'static SchedulerRecord {
 fn share_region_checks_authority_and_the_frame() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let rw = Rights::READ | Rights::WRITE;
         let mapped = Some(fixture_as);
 
@@ -518,7 +523,7 @@ fn share_region_checks_authority_and_the_frame() {
 fn share_region_shapes_the_table() {
     with_nucleus(|nucleus, _table, _second, fixture_as, second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let rw = Rights::READ | Rights::WRITE;
         let first = frame_key(nucleus, 30, 0, rw, false, Some(fixture_as));
         let second = frame_key(nucleus, 31, 1, rw, false, Some(fixture_as));
@@ -568,7 +573,7 @@ fn share_region_shapes_the_table() {
 fn assign_record_links_a_thread_and_publishes_its_state() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,
@@ -615,10 +620,41 @@ fn assign_record_links_a_thread_and_publishes_its_state() {
 }
 
 #[test_case]
+fn the_record_reports_the_core_a_running_thread_runs_on() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        clear_pages();
+        // The Thread's Scheduler is core 3's.
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(3));
+        let frame = frame_key(
+            nucleus,
+            30,
+            0,
+            Rights::READ | Rights::WRITE,
+            false,
+            Some(fixture_as),
+        );
+        share(nucleus, &keys, frame, 0, 128).expect_ok();
+        configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+        assign(nucleus, &keys, 5).unwrap_or_else(|e| panic!("AssignRecord: {:?}", e.code()));
+        assert_eq!(
+            thread_snapshot(5, 128).cpu,
+            libobject::scheduler_record::NO_CPU,
+            "not running"
+        );
+        nucleus.thread_mut(keys.thread_id).unwrap().context = ExecutionContext::Running;
+        nucleus.publish_thread(keys.thread_id, false);
+        let snapshot = thread_snapshot(5, 128);
+        assert_eq!(snapshot.thread_state(), Some(ThreadState::Running));
+        assert_eq!(snapshot.cpu, 3);
+        nucleus.thread_mut(keys.thread_id).unwrap().context = ExecutionContext::Inactive;
+    });
+}
+
+#[test_case]
 fn records_follow_a_thread_from_start_through_exhaustion_to_retirement() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,
@@ -676,7 +712,7 @@ fn records_follow_a_thread_from_start_through_exhaustion_to_retirement() {
 fn the_bound_event_count_advances_with_each_published_state_change() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,
@@ -778,7 +814,7 @@ fn queried_budget(nucleus: &mut Nucleus<ArchObjectsImpl>, key: RawKey) -> u64 {
 fn the_budget_in_a_record_matches_time_query() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,
@@ -815,7 +851,7 @@ fn the_budget_in_a_record_matches_time_query() {
 fn a_reused_slot_starts_a_fresh_record_for_the_new_thread() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,
@@ -874,7 +910,7 @@ fn a_reused_slot_starts_a_fresh_record_for_the_new_thread() {
 fn a_published_change_wakes_the_agent_waiting_on_the_bound_event_count() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,
@@ -911,12 +947,12 @@ fn a_published_change_wakes_the_agent_waiting_on_the_bound_event_count() {
         let Ok(crate::objects::event_count::AwaitOutcome::Blocked(record)) = outcome else {
             panic!("the agent should block on an unadvanced EventCount");
         };
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
 
         // A published change advances the count and wakes the agent.
         assign(nucleus, &keys, 1).expect_ok();
         // The agent belongs to no Scheduler: nothing queues it, its wait is done.
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         assert!(matches!(
             nucleus.pending.state(record),
             Ok(crate::objects::completion::PendingState::Completed { .. })
@@ -928,7 +964,7 @@ fn a_published_change_wakes_the_agent_waiting_on_the_bound_event_count() {
 fn a_woken_waiter_is_published_runnable_not_blocked() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,
@@ -987,7 +1023,7 @@ fn a_woken_waiter_is_published_runnable_not_blocked() {
 fn interrupt_time_is_published_in_the_scheduler_record_of_the_interrupted_thread() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,
@@ -1061,7 +1097,7 @@ fn adopt(
 #[test_case]
 fn adopt_makes_a_fresh_scheduler_a_child_once() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let (child_key, child) = install_scheduler(nucleus, 30, Scheduler::inert());
         let (other_key, other) = install_scheduler(nucleus, 31, Scheduler::inert());
         // An inert Scheduler is fresh; the root never is.
@@ -1111,9 +1147,27 @@ fn adopt_makes_a_fresh_scheduler_a_child_once() {
 }
 
 #[test_case]
+fn adopt_gives_the_child_its_parents_core() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        // A root of core 2: its subtree runs on core 2.
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(2));
+        let (child_key, child) = install_scheduler(nucleus, 30, Scheduler::inert());
+        let (grandchild_key, grandchild) = install_scheduler(nucleus, 31, Scheduler::inert());
+        // A fresh Scheduler has no core yet.
+        assert_eq!(scheduler_object(child).core(), None);
+        adopt(nucleus, keys.scheduler, child_key)
+            .unwrap_or_else(|error| panic!("Adopt: {:?}", error.code()));
+        assert_eq!(scheduler_object(child).core(), Some(2));
+        adopt(nucleus, child_key, grandchild_key)
+            .unwrap_or_else(|error| panic!("Adopt: {:?}", error.code()));
+        assert_eq!(scheduler_object(grandchild).core(), Some(2));
+    });
+}
+
+#[test_case]
 fn adopt_refuses_a_scheduler_that_has_children_threads_or_a_dispatcher() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let root_key = keys.scheduler;
         let (busy_key, busy) = install_scheduler(nucleus, 30, Scheduler::inert());
         // A Thread configured on it: not fresh.
@@ -1148,7 +1202,7 @@ fn adopt_refuses_a_scheduler_that_has_children_threads_or_a_dispatcher() {
 #[test_case]
 fn the_tree_is_at_most_four_levels_deep() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let mut parent = keys.scheduler;
         // The root plus three levels.
         for level in 1..=Scheduler::MAX_DEPTH {
@@ -1170,7 +1224,7 @@ fn the_tree_is_at_most_four_levels_deep() {
 #[test_case]
 fn a_child_scheduler_has_no_authority_to_run_threads_until_it_has_a_dispatcher() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
-        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let root_key = keys.scheduler;
         let (child_key, child) = install_scheduler(nucleus, 30, Scheduler::inert());
         adopt(nucleus, root_key, child_key).expect_ok();
@@ -1184,10 +1238,10 @@ fn a_child_scheduler_has_no_authority_to_run_threads_until_it_has_a_dispatcher()
             Err(CapError::InvalidOperation)
         ));
         keys.scheduler = child_key;
-        let queued_before = nucleus.activations.len();
+        let queued_before = nucleus.local_activations().len();
         start(nucleus, &keys).expect_ok();
         // Started, but nothing queues it: its Scheduler has no dispatcher.
-        assert_eq!(nucleus.activations.len(), queued_before);
+        assert_eq!(nucleus.local_activations().len(), queued_before);
         assert!(!nucleus.thread(keys.thread_id).unwrap().queued);
         // Retiring the Thread releases it from the child.
         assert_eq!(scheduler_object(child).thread_count(), 1);
@@ -1222,7 +1276,7 @@ fn move_thread_call(
 fn a_thread_moves_down_to_a_child_and_back_and_the_old_record_reads_donated() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let root_key = keys.scheduler;
         let rw = Rights::READ | Rights::WRITE;
         let (child_key, child) = install_scheduler(nucleus, 30, Scheduler::inert());
@@ -1315,7 +1369,7 @@ fn a_thread_moves_down_to_a_child_and_back_and_the_old_record_reads_donated() {
 fn only_a_started_thread_that_is_not_running_or_a_dispatcher_moves() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let root_key = keys.scheduler;
         let rw = Rights::READ | Rights::WRITE;
         let (child_key, _child) = install_scheduler(nucleus, 30, Scheduler::inert());
@@ -1366,7 +1420,7 @@ fn fund(nucleus: &mut Nucleus<ArchObjectsImpl>, keys: &Keys) {
 fn a_dispatchers_record_carries_the_dispatcher_flag() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
         let frame = frame_key(
             nucleus,
             30,

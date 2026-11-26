@@ -129,7 +129,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
         nucleus_ptr.write(Nucleus {
             this_core: crate::objects::core_record::ThisCore::fixture(core_state),
             pending: crate::objects::PendingPool::new(),
-            activations: crate::objects::Activations::new(),
+            activations: [const { crate::objects::Activations::new() }; libirqchip::MAX_CPUS],
             irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
             timers: crate::objects::timers::SchedulerTimers::new(),
