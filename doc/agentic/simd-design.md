@@ -1,6 +1,6 @@
 # FP/SIMD design
 
-Status: the contract is recorded in `capabilities-contract.md` (S0), and the plain eager
+Status: the selected rules are in [FP/SIMD per AddressSpace](#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19) below (S0), and the plain eager
 design (S1–S4) is implemented and checked in QEMU and on the Pi 4; see
 [simd-completed.md](simd-completed.md).
 
@@ -43,10 +43,25 @@ design (S1–S4) is implemented and checked in QEMU and on the Pi 4; see
   [simd-implementation-plan.md](simd-implementation-plan.md).
 - The work order is in [simd-implementation-plan.md](simd-implementation-plan.md).
 
+## FP/SIMD per AddressSpace (maintainer decisions, 2026-11-18 and 2026-11-19)
+
+The selected rules. FP/SIMD is opt-in, chosen per component. The design discussion and correctness argument follow in the rest of this document, and the work is in [`simd-implementation-plan.md`](simd-implementation-plan.md).
+
+- **The right to use FP.** An AddressSpace carries an FP flag, set at creation (bit 8 of `Untyped.Retype`'s `x3` for an AddressSpace; the bit is reserved zero for every other kind) and never changed.
+- **Access control.** Every installation of a translation context also sets `CPACR_EL1.FPEN`. An FP AddressSpace runs untrapped; any other traps FP/SIMD at EL0 and EL1, and a use there is an execution fault, as before. SVE stays trapped everywhere. The kernel and integer-only components still build soft-float. FP components build for a hard-float target.
+- **State.** The register state is per Thread: V0–V31, FPCR and FPSR (528 B), held in `Thread.fp` while the Thread is off the CPU. A Thread starts with it zero. Switching is eager and skips integer-only frames: leaving an FP frame saves what that frame needs back, and entering one first writes the whole register file, from saved state or zeros. Transitions between integer-only frames cost nothing.
+- **Invariants.** I1: `FPEN` permits FP only in an FP frame. I2: before an FP frame is entered, the whole register file has been written in that kernel entry, with values belonging to that frame (its saved state, its preserved call-record registers with the rest zero, or its validated fault frame) or zeros. I3: the kernel executes FP instructions only in its save, load and zero routines; the soft-float build and `_audit-fp-simd` enforce it, and an optional entry guard (below) adds a hardware check. I4: when an FP frame stops, everything it may need back is copied out in the same kernel entry, before anything overwrites the register file.
+- **Calls and faults.** Call and Return follow the [register table](capabilities-contract.md#call-invocationcall-op-0); a fault follows [fault delivery](capabilities-contract.md#fault-delivery).
+- **Statistics.** The nucleus counts FP transitions per Thread and publishes them in the Thread's scheduler record, with totals in the root Scheduler's record (see the record layouts in [`scheduling-design.md`](scheduling-design.md#scheduler-shared-records-maintainer-decision-2026-10-17)). The counters are scheduling information that schedulers may act on.
+- **Entry guard (maintainer decision, 2026-11-21, F11(c)).** A nucleus feature `fp_entry_trap` turns FP off at every kernel entry from an FP frame and back on before the `eret` into one, so a stray kernel FP instruction traps at EL1. `debug_kernel` turns it on; release kernels run without it ("we expect the privileged nucleus to be small and simple enough to never use fp/simd, so the overhead is actually a waste there"). Measured on the Pi 4 at 0.3 % of a Signal and 1.3 to 2.4 % of a Call from an FP frame (`doc/simd-performance.md`). In release kernels I3 rests on the build and the audit, which therefore must not pass while checking nothing: `_audit-fp-simd` finds every soft-float image the build produced by itself, the release kernels included, and fails when an image has no code to scan, when a function the allow-list names holds no FP instruction (each image linking the nucleus thus shows the scan sees its routines), and when `fp-probe`, which executes FP on purpose, shows none. Debug kernels, which the test kernels are, check the audit at run time: a kernel FP instruction it missed traps on any tested path.
+- **Later.** A per-Thread usage flag with a decaying budget and owner tracking, with a first-use trap, replace plain eager switching only after the eager baseline has been measured.
+- Implementation status: the nucleus side is implemented. The flag, `FPEN` set by every translation install, eager save/restore through the nucleus's only FP routines (`kernel/nucleus/src/objects/arch/fp_unit.rs`, allow-listed by `_audit-fp-simd`), the counters, and the entry guard behind `fp_entry_trap`. Exercised by the nucleus tests (transition logic against a fake unit, the routines against the hardware registers) and by `fp-trap-test`, whose FP AddressSpace executes FP at EL0 (`_test-fp-trap`, `_test-fp-entry-trap`). The build side is implemented too: the hard-float target, the Justfile's `fp_components`, `tools/fp-scan` deciding `ComponentImage::fp_simd` in image-build and running `_audit-fp-simd`, `Builder::component` taking the flag from the image, and the `libsyscall` FP clobbers. `fp-test` exercises it end to end in QEMU (`_test-fp`): two FP components preempted with sentinels in every V register, FPCR and FPSR, a Call from one into the other, a Call into an integer-only component whose FP instruction traps, and a handled fault. It passes on the Pi 4 too (`just boot-fp-test`).
+
 ## Scope
 
-Today execution is integer-only, as `capabilities-contract.md` says under
-"Architectural state → FP/SIMD". It is enforced at four points:
+Execution in an AddressSpace without the FP flag is integer-only, as
+[FP/SIMD per AddressSpace](#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19)
+says. It is enforced at four points:
 
 - The kernel and every component build soft-float (`targets/aarch64-metta-none-eabi.json`,
   `-neon,-fp-armv8`).
@@ -537,10 +552,11 @@ Each of these satisfies I1 to I4.
 
 ## Where the selected contract lives
 
-The selected contract is in `capabilities-contract.md`. This document is the design
-discussion behind it.
+FP per AddressSpace and invariants I1 to I4 are in
+[FP/SIMD per AddressSpace](#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19)
+above; the rest of this document is the design discussion behind them. The parts that
+are capability wire rules stay in `capabilities-contract.md`:
 
-- **"Architectural state":** FP per AddressSpace and invariants I1 to I4.
 - **The Retype `x3` schema:** the AddressSpace flag in bit 8.
 - **The Call register table:** the FP rows, and the call-record size.
 - **"Fault delivery":** the fault frame.

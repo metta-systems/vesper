@@ -619,7 +619,7 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
 
 ### Constraints that shape the options
 
-- **Integer-only execution** (capabilities contract, "Architectural state"): components
+- **Integer-only execution** ([FP/SIMD design](simd-design.md#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19)): components
   build soft-float, `CPACR_EL1` traps FP/SIMD at EL0 and EL1, no FP state is saved. An
   `f32` operation compiles to a `compiler-builtins` call (tens of cycles each). FP/SIMD
   per AddressSpace is designed but not implemented ([simd-design.md](simd-design.md)).

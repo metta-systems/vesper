@@ -45,3 +45,7 @@ Not decisions to make now and not planned work; revisit only if the project need
   scheduler component, as the nucleus has no periods or deadlines. Audio is the first user
   that needs it; USB isochronous pipes, and display, would use it too. HID interrupt pipes
   do not need it.
+- **Kernel-published identity in `TPIDRRO_EL0`:** using the EL0 read-only,
+  EL1-writable register to publish per-Thread identity to userspace, as Linux
+  does for per-CPU data. Today it is always zero
+  ([per-Thread architectural state](scheduling-design.md#per-thread-architectural-state)).

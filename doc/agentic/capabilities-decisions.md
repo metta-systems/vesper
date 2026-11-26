@@ -107,9 +107,6 @@ needs them.
   re-carved at a different offset or as a different kind, and a check that it
   adds protection beyond the retire-time bump and completed cleanup that the
   contract already relies on.
-- **Kernel-published identity in `TPIDRRO_EL0`:** using the EL0 read-only,
-  EL1-writable register to publish per-Thread identity to userspace, as Linux
-  does for per-CPU data. Today it is always zero.
 - **Count ranges on CopyDerive and Move:** an optional count that copies or moves a run of consecutive slots in one operation, like NOVA's `ctrl_pd` selector order. The framebuffer hand-off needs only two to four 2 MiB Frames, so single-slot CopyDerive is enough today; ranges would matter for hand-offs of hundreds of small Frames.
 - **Keys in call results:** letting `Thread.Return` carry a key back to the caller, and letting `CallWithKey` lend more than one key. Today a call lends one key and results carry data only.
 - **Releasing the stacks of a faulted Thread:** a Thread that faults inside a

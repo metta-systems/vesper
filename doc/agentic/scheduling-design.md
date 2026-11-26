@@ -71,6 +71,15 @@ A Scheduler capability authorizes scheduling. Only the root scheduler configures
 - **Bound Times are the Thread's own.** ConfigureThread refuses a Time already bound to a live Thread, and while its Thread is live no Transfer or Merge takes budget out of a bound Time (budget can still be transferred or merged into it); both refusals are `INVALID_OPERATION`. Once the Thread is retired the binding no longer validates and the Time can be drained or bound again. A scheduler therefore gives budget from Times that are not bound to a Thread.
 - **StartThread.** `Scheduler.StartThread` (`2`): `x2` Thread key; `WRITE` on the Scheduler and the Thread; the Thread must be configured and not yet started, and then becomes runnable. During boot, scheduling begins only after Kickstart establishes the root scheduler; there is no pre-scheduler kernel fallback.
 
+### Per-Thread architectural state
+
+- **`TPIDR_EL0`:** saved per Thread; zero at target entry, restored on Return, zero for a never-run Thread.
+- **`TPIDRRO_EL0`:** zero; nothing writes it.
+- **Timer and counter (`CNTKCTL_EL1`):** EL0 may read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) only; physical counter and all timers are kernel-owned. `CNTVOFF_EL2 = 0`, so virtual equals physical.
+- **Interrupts (`SPSR_EL1.I`):** EL0 Threads run with IRQs unmasked, so the nucleus can preempt them; D, A and F stay masked. The nucleus itself and trusted `EL1t` Threads run masked, except Threads created interruptible, and except the kernel's own idle wait.
+
+FP/SIMD state is in the [FP/SIMD design](simd-design.md#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19); EL0 access to the PMU and debug registers is in the [capabilities contract](capabilities-contract.md#protection-requirements-and-boundaries).
+
 ### Scheduler-shared records (maintainer decision, 2026-10-17)
 
 Scheduling records live in pages owned by a user-space scheduler and explicitly shared with the kernel through `Scheduler.ShareRegion`. The scheduler must map the Frame into its own AddressSpace before sharing it; the kernel accesses the shared backing through its kernel mapping. Visibility is limited to schedulers that receive the shared pages; there is no global view or export of the records.
