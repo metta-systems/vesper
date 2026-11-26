@@ -17,11 +17,16 @@ publish = false
 [badges]
 maintenance = { status = "experimental" }
 
+[features]
+# Opt in to the standard host tests of the ticket lock.
+host-tests = []
+
 [dependencies]
 libkernel-state = { workspace = true }
 liblocal-irq = { workspace = true }
 
-[dev-dependencies]
+# The bare-metal test kernel `tests/locking.rs`; the host tests need none of these.
+[target.'cfg(target_os = "vesper")'.dev-dependencies]
 libboot = { workspace = true }
 libconsole = { workspace = true }
 liblog = { workspace = true }
@@ -31,6 +36,10 @@ libtest = { workspace = true }
 [lib]
 test = false
 harness = false
+
+[[test]]
+name = "ticket_lock"
+required-features = ["host-tests"]
 
 [lints]
 workspace = true

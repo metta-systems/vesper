@@ -28,10 +28,6 @@ and Pi 5 boards.
 
 ## SMP2: one kernel lock and per-core state
 
-- [ ] Replace `KERNEL_LOCK`'s `IRQSafeNullLock` with a ticket spinlock taken on every
-  kernel entry; host model tests of the lock, and a debug check that no path waits for
-  another core while holding it.
-- [ ] Release the lock around the idle `wfi`, and re-take it in the idle-path interrupt.
 - [ ] Payload publication with Acquire/Release (contract, Notification and EventCount):
   audit Signal/Advance and record publication for the orderings the lock does not give
   to userspace readers on another core (scheduler records' sequence lock).

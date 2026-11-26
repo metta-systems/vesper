@@ -31,7 +31,7 @@ use {
     },
     libcpu::endless_sleep,
     libexception::arch::aarch64::{ExceptionContext, ExceptionOrigin, SavedContext},
-    liblocking::{IRQSafeNullLock, interface::Mutex},
+    liblocking::TicketLock,
     liblog::{info, println, warn},
     libmapping::AccessPermissions,
     libobject::{
@@ -58,8 +58,62 @@ use {
 // TODO: Split this into read-only part, that does not need locks, per-cpu mutable part that does not need locks,
 // TODO: Shared atomic counters that do not need locks and shared mutable collections that DO need locks (but should be minority)
 
-/// The Great Kernel Lock. The boot-carved [`Nucleus`] is accessed under it.
-static KERNEL_LOCK: IRQSafeNullLock<()> = IRQSafeNullLock::new(());
+/// The Great Kernel Lock (SMP C2(c)). The boot-carved [`Nucleus`] is accessed under it.
+static KERNEL_LOCK: KernelLock = KernelLock(TicketLock::new());
+
+/// The one kernel lock: a ticket spinlock every kernel entry from a Thread takes on
+/// arrival ([`KernelLock::enter`]) and releases when it returns, held by the core's
+/// logical index plus one. The idle loop releases it around `wfi`, and the interrupt
+/// that ends the wait takes it again as an entry of its own.
+///
+/// Per-core state outside the [`Nucleus`] (the core's record atomics) is not under it.
+/// A core holding it never waits for another core: the only wait is taking it, and a
+/// core that already holds it panics there instead of waiting for itself.
+struct KernelLock(TicketLock);
+
+impl KernelLock {
+    /// Take the lock for this kernel entry, until the returned guard drops.
+    fn enter(&'static self) -> KernelEntry {
+        self.0.acquire(this_core_holder());
+        KernelEntry
+    }
+
+    /// Run `section` on the Nucleus state the lock guards.
+    ///
+    /// # Panics
+    ///
+    /// If this core does not hold the lock: every caller runs inside a kernel entry.
+    fn held<R>(&self, section: impl FnOnce(&mut ()) -> R) -> R {
+        assert!(
+            self.0.is_held_by(this_core_holder()),
+            "kernel state touched without the kernel lock"
+        );
+        section(&mut ())
+    }
+
+    /// Let other cores in while this core waits for an interrupt, and take the lock
+    /// again after.
+    fn release_around(&self, wait: impl FnOnce()) {
+        let holder = this_core_holder();
+        self.0.release(holder);
+        wait();
+        self.0.acquire(holder);
+    }
+}
+
+/// The kernel lock held for one kernel entry; dropping it releases the lock.
+struct KernelEntry;
+
+impl Drop for KernelEntry {
+    fn drop(&mut self) {
+        KERNEL_LOCK.0.release(this_core_holder());
+    }
+}
+
+/// This core's kernel-lock holder id: its logical index plus one.
+fn this_core_holder() -> u32 {
+    nucleus::core_record::current().index + 1
+}
 
 /// Anchor to the boot-carved [`Nucleus`].
 ///
@@ -283,6 +337,7 @@ extern "C" fn current_el0_synchronous(e: &mut ExceptionContext) {
 extern "C" fn current_el0_irq(e: &mut ExceptionContext) {
     // An interruptible trusted `EL1t` Thread (e.g. idle).
     let _fp_guard = FpEntryGuard::enter();
+    let _kernel = KERNEL_LOCK.enter();
     handle_irq(e);
 }
 
@@ -311,6 +366,7 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
     if !is_aarch64_svc() {
         default_exception_handler(e);
     }
+    let _kernel = KERNEL_LOCK.enter();
     cap_invoke_handler(e);
 }
 
@@ -348,6 +404,9 @@ extern "C" fn current_elx_irq(e: &mut ExceptionContext) {
         .idling
         .load(Ordering::Acquire)
     {
+        // The idle loop let the lock go around its wait: this interrupt is an entry
+        // of its own.
+        let _kernel = KERNEL_LOCK.enter();
         handle_irq(e);
     } else {
         default_exception_handler(e);
@@ -370,6 +429,7 @@ extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
     if run_kernel_fp_probe(e) {
         return;
     }
+    let _kernel = KERNEL_LOCK.enter();
     // Only an SVC is a capability invocation; every other synchronous
     // exception from EL0 is a fault, delivered to the fault handler.
     if !is_aarch64_svc() {
@@ -394,7 +454,7 @@ extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
 /// The current Thread's invocation depth, for fault reports (0 if unknown).
 fn current_invocation_depth() -> u64 {
     KERNEL_LOCK
-        .lock(|()| {
+        .held(|()| {
             let nucleus = nucleus_anchor()?;
             // SAFETY: the anchor names the live Nucleus; the lock serializes
             // this read.
@@ -408,6 +468,7 @@ fn current_invocation_depth() -> u64 {
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_irq(e: &mut ExceptionContext) {
     let _fp_guard = FpEntryGuard::enter();
+    let _kernel = KERNEL_LOCK.enter();
     handle_irq(e);
 }
 
@@ -537,7 +598,7 @@ fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
     // SAFETY: Unsafe.
     let outcome = unsafe {
         #[allow(static_mut_refs)]
-        KERNEL_LOCK.lock(|()| {
+        KERNEL_LOCK.held(|()| {
             let Some(ptr) = nucleus_anchor() else {
                 panic!("nucleus not booted by Kickstart")
             };
@@ -692,7 +753,7 @@ fn handle_irq(frame: &mut ExceptionContext) {
     let interrupt_ticks = nucleus::timer::counter().saturating_sub(entered);
 
     let saved = frame.save();
-    let resumed = KERNEL_LOCK.lock(|()| {
+    let resumed = KERNEL_LOCK.held(|()| {
         let Some(nucleus_ptr) = nucleus_anchor() else {
             panic!("nucleus not booted by Kickstart")
         };
@@ -740,7 +801,7 @@ fn idle_until_runnable() -> PreparedResume {
     loop {
         // The timer runs only for a wait timeout or a dispatcher's timer.
         reprogram_timer();
-        let selected = KERNEL_LOCK.lock(|()| {
+        let selected = KERNEL_LOCK.held(|()| {
             let Some(nucleus_ptr) = nucleus_anchor() else {
                 panic!("nucleus not booted by Kickstart")
             };
@@ -761,10 +822,14 @@ fn idle_until_runnable() -> PreparedResume {
         // one place kernel code is interruptible.
         let idling = &nucleus::core_record::current().idling;
         idling.store(true, Ordering::Release);
-        aarch64_cpu::asm::wfi();
-        libexception::asynchronous::local_irq_unmask();
-        aarch64_cpu::asm::barrier::isb(aarch64_cpu::asm::barrier::SY);
-        libexception::asynchronous::local_irq_mask();
+        // Other cores may enter the kernel while this one waits; the interrupt
+        // taken in the window below takes the lock as an entry of its own.
+        KERNEL_LOCK.release_around(|| {
+            aarch64_cpu::asm::wfi();
+            libexception::asynchronous::local_irq_unmask();
+            aarch64_cpu::asm::barrier::isb(aarch64_cpu::asm::barrier::SY);
+            libexception::asynchronous::local_irq_mask();
+        });
         idling.store(false, Ordering::Release);
     }
 }
@@ -774,7 +839,7 @@ fn idle_until_runnable() -> PreparedResume {
 /// another Thread is runnable, or the exhaustion of the current Thread's
 /// budget. Every kernel exit that can change either calls this.
 fn reprogram_timer() {
-    let deadline = KERNEL_LOCK.lock(|()| {
+    let deadline = KERNEL_LOCK.held(|()| {
         let nucleus_ptr = nucleus_anchor()?;
         // SAFETY: the anchor names the retained boot-carved Nucleus, and the
         // kernel lock gives exclusive access.
@@ -787,7 +852,7 @@ fn reprogram_timer() {
 /// Signal the Notification bound to the claimed `line`, if any; whether
 /// one was signalled.
 fn deliver_irq(line: u32) -> bool {
-    KERNEL_LOCK.lock(|()| {
+    KERNEL_LOCK.held(|()| {
         let Some(nucleus_ptr) = nucleus_anchor() else {
             panic!("nucleus not booted by Kickstart")
         };
@@ -822,7 +887,7 @@ fn park_and_resume(frame: &mut ExceptionContext, record: ObjectId) {
         "kernel-mode execution cannot retain a continuation on SP_EL1"
     );
     let saved = frame.save();
-    let resumed = KERNEL_LOCK.lock(|()| {
+    let resumed = KERNEL_LOCK.held(|()| {
         let Some(nucleus_ptr) = nucleus_anchor() else {
             panic!("nucleus not booted by Kickstart")
         };
@@ -940,7 +1005,7 @@ fn resume_selected(
 /// state (for a Return fault, with PC at its `svc`).
 fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: FaultInfo) {
     let thread = KERNEL_LOCK
-        .lock(|()| {
+        .held(|()| {
             // SAFETY: the anchor names the live Nucleus; the lock serializes
             // this read.
             let nucleus = unsafe { &*nucleus_anchor()? };
@@ -962,7 +1027,7 @@ fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: Fa
             Backtrace::new(Some(info.pc), faulting.gpr[29], user_memory::read_el0_word)
         );
     }
-    let delivery = KERNEL_LOCK.lock(|()| {
+    let delivery = KERNEL_LOCK.held(|()| {
         let Some(nucleus_ptr) = nucleus_anchor() else {
             panic!("nucleus not booted by Kickstart")
         };
@@ -993,7 +1058,7 @@ fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: Fa
 /// tear the caller down. `None` once it has switched; the error words when
 /// nothing could run and the caller continues.
 fn exit_current(frame: &mut ExceptionContext) -> Option<(u64, u64, u64)> {
-    let resumed = KERNEL_LOCK.lock(|()| {
+    let resumed = KERNEL_LOCK.held(|()| {
         let Some(nucleus_ptr) = nucleus_anchor() else {
             panic!("nucleus not booted by Kickstart")
         };
@@ -1018,7 +1083,7 @@ fn exit_current(frame: &mut ExceptionContext) -> Option<(u64, u64, u64)> {
 /// A fault handler returned with the terminate action: park the Thread as
 /// faulted with its faulting state and resume the next one.
 fn terminate_faulted(frame: &mut ExceptionContext, faulting: &SavedContext) {
-    let resumed = KERNEL_LOCK.lock(|()| {
+    let resumed = KERNEL_LOCK.held(|()| {
         let Some(nucleus_ptr) = nucleus_anchor() else {
             panic!("nucleus not booted by Kickstart")
         };
