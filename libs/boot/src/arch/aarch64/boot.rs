@@ -21,9 +21,6 @@ use {
     tock_registers::{Read, Write},
 };
 
-/// The core that boots; the others park.
-pub const BOOT_CORE_ID: u64 = 0;
-
 /// `x1` and `x2` at the kernel's entry. Written once, by plain stores, before
 /// anything reads them: the MMU is off, where an atomic read-modify-write never
 /// completes on the board.
@@ -58,8 +55,10 @@ macro_rules! entry {
 
 global_asm!(
     include_str!("boot.s"),
-    CONST_CORE_ID_MASK = const 0b11,
-    CONST_BOOT_CORE_ID = const BOOT_CORE_ID,
+    CONST_AFFINITY_LOW_MASK = const libcpu::smp::LOW_AFFINITY_MASK,
+    CONST_AFF3_SHIFT = const MPIDR_EL1::Aff3.shift,
+    CONST_AFF3_BITS = const MPIDR_EL1::Aff3.mask.count_ones(),
+    CONST_BOOT_CORE_AFFINITY = const libcpu::smp::BOOT_CORE_AFFINITY,
 );
 
 /// Entrypoint of the Rust code.

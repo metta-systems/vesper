@@ -6,8 +6,10 @@
 
 core::arch::global_asm!(
     core::include_str!("boot.s"),
-    CONST_BOOT_CORE_ID = const 0,
-    CONST_CORE_ID_MASK = const 0b11,
+    CONST_AFFINITY_LOW_MASK = const libcpu::smp::LOW_AFFINITY_MASK,
+    CONST_AFF3_SHIFT = const aarch64_cpu::registers::MPIDR_EL1::Aff3.shift,
+    CONST_AFF3_BITS = const aarch64_cpu::registers::MPIDR_EL1::Aff3.mask.count_ones(),
+    CONST_BOOT_CORE_AFFINITY = const libcpu::smp::BOOT_CORE_AFFINITY,
 );
 
 mod platform;

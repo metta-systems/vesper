@@ -21,9 +21,6 @@ Secondaries run no Threads; the kernel lock is still the null lock because they 
 enter the shared kernel state. Order: QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3
 and Pi 5 boards.
 
-- [ ] `libcpu`: replace `core_id()`'s `MPIDR & 0x3` with an MPIDR-affinity read, and give
-  the kernel the logical index from the per-core record. Fix `boot.s`'s boot-core check
-  to compare the full affinity (Aff0..Aff2) with the boot core's.
 - [ ] `libdevicetree`: parse `/cpus` (count, `reg`, `enable-method`, `cpu-release-addr`)
   and the PSCI node, with host tests on the three board trees in `targets/`.
 - [ ] Start-method ABI crate (working name `libs/cpu-start`): operation table, version,
@@ -38,7 +35,9 @@ and Pi 5 boards.
   `/memreserve/`, if the firmware's memory node does not already exclude them; check that
   chainboot leaves the first page alone.
 - [ ] Kickstart: carve a trap stack and a per-core record per core from accounted memory,
-  sized from `/cpus`, and map the stacks in the kernel half next to the boot core's.
+  sized from `/cpus`, and map the stacks in the kernel half next to the boot core's. The
+  record holds the core's logical index (its `/cpus` order) and `CoreAffinity`; the kernel
+  reads its index from there, not from `MPIDR_EL1`.
 - [ ] A secondary entry: the EL2 prologue factored out of `_startup_in_rust` (and the
   `qemu` EL3 → EL2 step), then `el_switch` with the shared `TTBR1`/`TCR`/`MAIR`/`VBAR`,
   its own `SP_EL1` and `TPIDR_EL1`, no BSS clear, no atomics before its MMU is on.
@@ -55,7 +54,8 @@ and Pi 5 boards.
 
 - [ ] Move the per-core fields of `Nucleus` and the per-core statics (`IDLING`,
   `timer::PROGRAMMED`, the `fp_unit` owner) into the per-core record, reached through
-  `TPIDR_EL1`. Update the scheduler-record totals as D5 selects.
+  `TPIDR_EL1`. Update the scheduler-record totals as
+  [C11](smp-decisions.md#c11-nucleus-wide-totals-in-the-scheduler-records) selects.
 - [ ] Replace `KERNEL_LOCK`'s `IRQSafeNullLock` with a ticket spinlock taken on every
   kernel entry; host model tests of the lock, and a debug check that no path waits for
   another core while holding it.

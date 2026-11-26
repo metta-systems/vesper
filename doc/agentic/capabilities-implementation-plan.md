@@ -136,7 +136,7 @@ Memory-attribute and cache-maintenance work is tracked in [`memory-implementatio
 
 ## SMP
 
-Secondary-core bring-up, the kernel lock, IPIs and Threads on several cores are tracked in [`smp-implementation-plan.md`](smp-implementation-plan.md), design in [`smp-design.md`](smp-design.md). The decisions are in the design; no SMP decision is open.
+Secondary-core bring-up, the kernel lock, IPIs and Threads on several cores are tracked in [`smp-implementation-plan.md`](smp-implementation-plan.md), design in [`smp-design.md`](smp-design.md). The decisions are in the design; open ones are in [`smp-decisions.md`](smp-decisions.md).
 
 ## Final integration
 

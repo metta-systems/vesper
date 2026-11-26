@@ -54,9 +54,13 @@
 // x0 contains DTB address on entry, preserve it until the call to Rust.
 _start:
     // Only proceed on the boot core. Park it otherwise.
+    // The core's affinity is Aff3 (bits 39:32) and Aff2..Aff0 (bits 23:0): the
+    // Pi 5 numbers its cores in Aff1, so Aff0 alone does not tell them apart.
     mrs x1, MPIDR_EL1
-    and x1, x1, {CONST_CORE_ID_MASK}
-    mov x2, {CONST_BOOT_CORE_ID}
+    and x2, x1, {CONST_AFFINITY_LOW_MASK}
+    ubfx x1, x1, {CONST_AFF3_SHIFT}, {CONST_AFF3_BITS}
+    orr x1, x2, x1, lsl {CONST_AFF3_SHIFT}
+    mov x2, {CONST_BOOT_CORE_AFFINITY}
     cmp x1, x2
     b.ne .L_parking_loop
 
