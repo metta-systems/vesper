@@ -303,15 +303,15 @@ impl<A: ArchObjects> Nucleus<A> {
                 .filter(|scheduler| scheduler.grant().is_some())
                 .map(|scheduler| scheduler.dispatcher());
             if let Some(child_dispatcher) = child_dispatcher
-                && !self.activations.is_empty()
-                && self.activations.peek() != child_dispatcher
+                && !self.local_activations().is_empty()
+                && self.local_activations().peek() != child_dispatcher
             {
                 self.end_grant(dispatched.scheduler);
             }
         }
         // An exhausted Thread must stop even when nothing is queued: the
         // nucleus idles.
-        let can_switch = !self.activations.is_empty() || self.thread_exhausted(current);
+        let can_switch = !self.local_activations().is_empty() || self.thread_exhausted(current);
         if !can_switch {
             return Ok(None);
         }
@@ -334,7 +334,7 @@ impl<A: ArchObjects> Nucleus<A> {
         access: &Access,
     ) -> Result<Option<PreparedResume>, CapError> {
         debug_assert!(self.this_core.current_thread.is_none(), "not idle");
-        let Some(next) = self.activations.peek() else {
+        let Some(next) = self.local_activations().peek() else {
             return Ok(None);
         };
         let entry = self.prepare_entry(access, next)?;
@@ -436,7 +436,7 @@ impl<A: ArchObjects> Nucleus<A> {
         };
         if queued {
             assert_eq!(
-                self.activations.pop(),
+                self.local_activations().pop(),
                 Some(next),
                 "validated scheduler front changed"
             );
@@ -588,7 +588,7 @@ impl<A: ArchObjects> Nucleus<A> {
         let queued = if forced.is_some() {
             None
         } else {
-            self.activations.peek()
+            self.local_activations().peek()
         };
         let Some(next) = forced.or(queued) else {
             // Nothing is runnable: commit the stop and idle. Publishing the

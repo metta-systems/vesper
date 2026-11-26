@@ -97,6 +97,9 @@ pub struct PendingInvocation {
     /// the kernel's deadline queue, which the pool's bounded size keeps
     /// small enough to scan.
     deadline_ticks: Option<u64>,
+    /// The logical core whose timer counts the deadline: the core of the
+    /// waiting Thread's Scheduler (SMP C7(a)).
+    deadline_core: usize,
 }
 
 impl PendingInvocation {
@@ -186,6 +189,7 @@ impl PendingPool {
             kind,
             state: PendingState::Waiting,
             deadline_ticks: None,
+            deadline_core: 0,
         });
         Ok(ObjectId {
             pool: PoolTag::Pending,
@@ -196,28 +200,36 @@ impl PendingPool {
 
     /// Give the waiting record `id` a deadline: the counter value at which
     /// its wait times out. Only a `Waiting` record has one.
-    pub fn set_deadline(&mut self, id: ObjectId, deadline_ticks: u64) -> Result<(), CapError> {
+    pub fn set_deadline(
+        &mut self,
+        id: ObjectId,
+        deadline_ticks: u64,
+        core: usize,
+    ) -> Result<(), CapError> {
         let record = self.live_mut(id)?;
         if record.state != PendingState::Waiting {
             return Err(CapError::InvalidOperation);
         }
         record.deadline_ticks = Some(deadline_ticks);
+        record.deadline_core = core;
         Ok(())
     }
 
-    /// The earliest deadline among the waiting records.
-    pub fn next_deadline(&self) -> Option<u64> {
+    /// The earliest deadline among the waiting records that `core`'s timer
+    /// counts.
+    pub fn next_deadline(&self, core: usize) -> Option<u64> {
         self.records
             .iter()
             .flatten()
-            .filter(|record| record.state == PendingState::Waiting)
+            .filter(|record| record.state == PendingState::Waiting && record.deadline_core == core)
             .filter_map(|record| record.deadline_ticks)
             .min()
     }
 
-    /// The waiting record with the earliest deadline at or before
-    /// `now_ticks`. Its terminal transition is the caller's.
-    pub fn earliest_expired(&self, now_ticks: u64) -> Option<ObjectId> {
+    /// The waiting record that `core`'s timer counts with the earliest
+    /// deadline at or before `now_ticks`. Its terminal transition is the
+    /// caller's.
+    pub fn earliest_expired(&self, now_ticks: u64, core: usize) -> Option<ObjectId> {
         let (slot, _deadline) = self
             .records
             .iter()
@@ -225,7 +237,9 @@ impl PendingPool {
             .filter_map(|(slot, record)| {
                 let record = record.as_ref()?;
                 let deadline = record.deadline_ticks?;
-                (record.state == PendingState::Waiting && deadline <= now_ticks)
+                (record.state == PendingState::Waiting
+                    && record.deadline_core == core
+                    && deadline <= now_ticks)
                     .then_some((slot, deadline))
             })
             .min_by_key(|&(_slot, deadline)| deadline)?;

@@ -98,7 +98,8 @@ Blocks the dispatcher until something needs its attention, and meanwhile runs on
 | `x3` | the Thread's own Time key, or 0 |
 | `x4` | limit in nanoseconds (must be nonzero; `u64::MAX` for none) |
 | `x5` | the generation the dispatcher last saw in the Thread's record |
-| `x6`, `x7` | must be 0 (`x6` is the CPU, only CPU 0 exists) |
+| `x6` | the Scheduler's core; the dispatcher must be running on it |
+| `x7` | must be 0 |
 
 The call returns, when the dispatcher is activated, `x1` the reasons as bits (EVENT 1, LIMIT 2, EXHAUSTED 4, BLOCKED 8, YIELDED 16, FAULTED 32, EXITED 64) and `x2` the scheduler's event count at that moment. If an activation was raised while the dispatcher ran, the call returns it at once and runs nothing.
 
@@ -107,7 +108,7 @@ The named Thread must belong to this Scheduler, not be the dispatcher, be runnab
 | Error | Cause |
 |---|---|
 | `StaleGeneration` (42) | The Thread's generation differs from `x5`; the current generation is returned so the dispatcher can retry |
-| `InvalidOperation` | The caller is not the bound dispatcher; a Thread of another Scheduler or the dispatcher itself; a Thread that cannot run now; a zero limit; a nonzero CPU or reserved register; a Time that is not the Thread's own; a Thread whose Time belongs to another core than the caller's |
+| `InvalidOperation` | The caller is not the bound dispatcher; a Thread of another Scheduler or the dispatcher itself; a Thread that cannot run now; a zero limit; an `x6` other than the Scheduler's core, a Scheduler of another core than the caller's or one with no core yet (not adopted); a nonzero reserved register; a Time that is not the Thread's own; a Thread whose Time belongs to another core than the caller's |
 | `TypeMismatch`, `InsufficientRights` | A key names the wrong kind or lacks `Write` (Time) |
 
 ### ArmTimer
@@ -124,7 +125,7 @@ EL0 reads the same clock with no system call: `CNTVCT_EL0` and `CNTFRQ_EL0` (the
 
 ### Adopt
 
-Makes the Scheduler `x2` a child of the invoked one. The parent is set once and never changes. The child must be fresh: it has no parent, is not the root, and has no children, Threads or dispatcher. A Scheduler with nothing in it has no descendants, so adopting it cannot close a cycle. The tree is at most four levels deep: the root and three below it.
+Makes the Scheduler `x2` a child of the invoked one. The parent is set once and never changes. The child takes the parent's core, which its Threads and dispatcher run on; a Scheduler made by `Untyped.Retype` has no core until it is adopted, and the root's is the boot core. The child must be fresh: it has no parent, is not the root, and has no children, Threads or dispatcher. A Scheduler with nothing in it has no descendants, so adopting it cannot close a cycle. The tree is at most four levels deep: the root and three below it.
 
 | Error | Cause |
 |---|---|
@@ -204,7 +205,7 @@ The FP/SIMD counters wrap, and count only frames in AddressSpaces that [allow FP
 - **State:** `Inactive` for a Thread that is not started, `Runnable` for a queued Thread, one waiting for budget and a woken waiter that has not resumed yet, `Running`, `Blocked`, `Faulted`, and `Dying` once the Thread is retired.
 - **Block reason:** none, Notification await, EventCount await, protected procedure call, WaitSet await.
 - **Stop reason:** blocked, slice end, budget exhausted, yielded, replaced, exited, faulted.
-- **`cpu`:** the CPU the Thread runs on, or `u32::MAX`.
+- **`cpu`:** while the Thread runs, the core it runs on (its Scheduler's core); otherwise `u32::MAX`.
 - **Freshness:** the counters are as of the last published change, not of the moment you read them; `Time.Query` gives the exact budget.
 
 The nucleus is the only writer. It makes `sequence` odd, writes the fields, then makes it even with release ordering. A reader loads `sequence` with acquire ordering, retries while it is odd, reads the fields, and retries if `sequence` changed; `ThreadRecord::try_snapshot` and `SchedulerRecord::try_snapshot` do this. `sequence` only detects torn reads; `generation` counts the Thread's state changes.

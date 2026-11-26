@@ -21,6 +21,7 @@ use {
         },
     },
     libaddress::PhysAddr,
+    libirqchip::MAX_CPUS,
     libobject::{
         CapError,
         scheduler::{activation_mask, activation_reason},
@@ -95,15 +96,17 @@ pub struct Nucleus<A: ArchObjects> {
     /// Pending-invocation records for blocked callers.
     /// Bounded kernel-private storage: the closed-wait identity for blocked invocations.
     pub pending: PendingPool,
-    /// Runnable-Thread queue: the minimal "run someone else" substrate
-    /// Kernel mechanism only:
-    /// scheduling policy stays in userspace.
-    pub activations: Activations,
+    /// The activated dispatchers of each core, by logical index: the minimal
+    /// "run someone else" substrate. A Scheduler's dispatcher is on its
+    /// core's list. Kernel mechanism only: scheduling policy stays in
+    /// userspace.
+    pub activations: [Activations; MAX_CPUS],
     /// The interrupt lines' records: live `IRQHandler`s and their bindings.
     pub irq_table: IrqTable,
     /// Preemption-timer ticks taken since boot.
     pub ticks: u64,
-    /// The dispatchers' armed timers (`Scheduler.ArmTimer`).
+    /// The dispatchers' armed timers (`Scheduler.ArmTimer`), each counted
+    /// by its Scheduler's core.
     pub timers: SchedulerTimers,
 }
 
@@ -224,6 +227,41 @@ impl<A: ArchObjects> Nucleus<A> {
         (dispatcher != id).then_some(scheduler)
     }
 
+    /// The logical core whose run state holds `scheduler`'s dispatcher and
+    /// timer: the Scheduler's own core, or this one for a Scheduler that has
+    /// none yet.
+    fn scheduler_core(&mut self, scheduler: CarvedId) -> usize {
+        let core = self
+            .scheduler_mut(scheduler)
+            .and_then(|scheduler| scheduler.core());
+        core.unwrap_or_else(|| self.current_cpu())
+    }
+
+    /// The logical core of the Thread `id`'s Scheduler, or this one for a
+    /// Thread outside every Scheduler.
+    fn thread_core(&mut self, id: ThreadId) -> usize {
+        match self.thread(id).and_then(|thread| thread.scheduler) {
+            Some(scheduler) => self.scheduler_core(scheduler),
+            None => self.current_cpu(),
+        }
+    }
+
+    /// The activated dispatchers of the core running the nucleus now.
+    pub fn local_activations(&mut self) -> &mut Activations {
+        let core = self.current_cpu();
+        &mut self.activations[core]
+    }
+
+    /// Queue `dispatcher` at the front of `core`'s activations, so it runs
+    /// next there. On this core the running Thread is preempted on the way
+    /// out of the kernel.
+    fn activate_on(&mut self, core: usize, dispatcher: ThreadId) {
+        self.activations[core].push_front(dispatcher);
+        if core == self.current_cpu() {
+            self.this_core.preempt_requested = true;
+        }
+    }
+
     /// Raise activation `reasons` for the dispatcher of `scheduler`.
     /// `mask_bit` is the activation-mask bit that selects the event, or 0
     /// for an event that always activates. A dispatcher that dispatched
@@ -277,8 +315,8 @@ impl<A: ArchObjects> Nucleus<A> {
                 self.make_runnable(dispatcher);
             }
             (parent, grant) => {
-                self.activations.push_front(dispatcher);
-                self.this_core.preempt_requested = true;
+                let core = self.scheduler_core(scheduler);
+                self.activate_on(core, dispatcher);
                 // Within a grant the parent's limit goes on applying to the
                 // dispatcher.
                 if let (Some(parent), Some(grant)) = (parent, grant) {
@@ -393,8 +431,8 @@ impl<A: ArchObjects> Nucleus<A> {
         } else if self.is_top_dispatcher(id) {
             // The root dispatcher itself, woken from a wait of its own (not a
             // `Dispatch`): nobody dispatches the dispatcher, so it runs next.
-            self.activations.push_front(id);
-            self.this_core.preempt_requested = true;
+            let core = self.thread_core(id);
+            self.activate_on(core, id);
         }
     }
 
@@ -724,7 +762,8 @@ impl<A: ArchObjects> Nucleus<A> {
         let thread_object = self.thread_mut(thread).ok_or(CapError::InvalidOperation)?;
         thread_object.context = ExecutionContext::NotStarted { saved };
         thread_object.dispatches = Some(scheduler);
-        self.activations.push_front(thread);
+        let core = self.scheduler_core(scheduler);
+        self.activations[core].push_front(thread);
         self.publish_thread(thread, false);
         Ok(())
     }
@@ -745,20 +784,27 @@ impl<A: ArchObjects> Nucleus<A> {
         }
     }
 
-    /// The earliest instant a wait times out or a dispatcher's timer is due.
+    /// The earliest instant a wait times out or a dispatcher's timer is due
+    /// on the core running the nucleus now.
     pub fn next_wakeup_ticks(&self) -> Option<u64> {
-        match (self.pending.next_deadline(), self.timers.next_deadline()) {
+        let core = self.current_cpu();
+        match (
+            self.pending.next_deadline(core),
+            self.timers.next_deadline(core),
+        ) {
             (Some(wait), Some(timer)) => Some(wait.min(timer)),
             (wait, timer) => wait.or(timer),
         }
     }
 
-    /// Give the waiting record `record` a timeout of `timeout_ns` from now.
+    /// Give the waiting record `record` a timeout of `timeout_ns` from now,
+    /// counted by the core of the waiting Thread's Scheduler.
     pub fn set_wait_timeout(&mut self, record: ObjectId, timeout_ns: u64) -> Result<(), CapError> {
         let deadline = self
             .counter_ticks()
             .saturating_add(ns_to_ticks_ceil(timeout_ns, self.counter_frequency()));
-        self.pending.set_deadline(record, deadline)
+        let core = self.thread_core(self.pending.waiter(record)?);
+        self.pending.set_deadline(record, deadline, core)
     }
 
     /// Arm (or, for `deadline_ns` 0, disarm) `scheduler`'s dispatcher timer
@@ -774,8 +820,9 @@ impl<A: ArchObjects> Nucleus<A> {
         let previous = if deadline_ns == 0 {
             self.timers.disarm(scheduler)
         } else {
+            let core = self.scheduler_core(scheduler);
             self.timers
-                .arm(scheduler, ns_to_ticks_ceil(deadline_ns, frequency))?
+                .arm(scheduler, core, ns_to_ticks_ceil(deadline_ns, frequency))?
         };
         Ok((
             ticks_to_ns_ceil(self.counter_ticks(), frequency),
@@ -790,13 +837,15 @@ impl<A: ArchObjects> Nucleus<A> {
 
     /// Process everything that is due: waits whose timeout has passed
     /// complete with `TIMED_OUT`, and dispatcher timers activate their
-    /// dispatchers. The timer interrupt calls this.
+    /// dispatchers. Only what this core's timer counts is processed. The
+    /// timer interrupt calls this.
     pub fn expire_deadlines(&mut self) {
         let now = self.counter_ticks();
-        while let Some(record) = self.pending.earliest_expired(now) {
+        let core = self.current_cpu();
+        while let Some(record) = self.pending.earliest_expired(now, core) {
             self.time_out_wait(record);
         }
-        while let Some(scheduler) = self.timers.take_expired(now) {
+        while let Some(scheduler) = self.timers.take_expired(core, now) {
             if let Some(object) = self.scheduler_mut(scheduler) {
                 object.count_timer_expiration();
             }
@@ -931,7 +980,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 (limit, exhaustion) => limit.or(exhaustion),
             };
         }
-        let contended = !self.activations.is_empty();
+        let contended = !self.local_activations().is_empty();
         let mut deadline = contended.then(|| since.saturating_add(slice_ticks));
         // An exhausted Thread stops even when nothing can take over: the
         // nucleus idles.
@@ -1107,6 +1156,18 @@ impl<A: ArchObjects> Nucleus<A> {
             thread.last_run_ticks,
         );
         let running = state == ThreadState::Running;
+        // A running Thread runs on its Scheduler's core (SMP C4(c)); one with
+        // no Scheduler yet (the boot Thread) on the core publishing it.
+        let cpu = if running {
+            let scheduler = self.thread(id).and_then(|thread| thread.scheduler);
+            let core = scheduler
+                .and_then(|scheduler| self.scheduler_mut(scheduler))
+                .and_then(|scheduler| scheduler.core())
+                .unwrap_or_else(|| self.current_cpu());
+            u32::try_from(core).unwrap_or(NO_CPU)
+        } else {
+            NO_CPU
+        };
         let dispatcher = self
             .thread(id)
             .is_some_and(|thread| thread.dispatches.is_some());
@@ -1130,7 +1191,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 | if dispatcher { FLAG_DISPATCHER } else { 0 },
             block_reason: block_reason as u32,
             last_stop,
-            cpu: if running { 0 } else { NO_CPU },
+            cpu,
             run_time_ns: ticks_to_ns_ceil(run_ticks, frequency),
             last_run_ns: ticks_to_ns_ceil(last_run_ticks, frequency),
             budget_remaining_ns,
@@ -1448,7 +1509,12 @@ impl<A: ArchObjects> Nucleus<A> {
             // Its timer ends with it.
             self.timers.disarm(scheduler_id);
         }
-        self.activations.remove(thread);
+        // A queued dispatcher is on its Scheduler's core's list.
+        let core = match scheduler {
+            Some(scheduler) => self.scheduler_core(scheduler),
+            None => self.current_cpu(),
+        };
+        self.activations[core].remove(thread);
         // A child's dispatcher that is retired takes its domain down.
         if let Some(child) = self
             .thread(thread)
@@ -1513,7 +1579,7 @@ mod tests {
             nucleus_ptr.write(Nucleus {
                 this_core: ThisCore::fixture(core_state),
                 pending: PendingPool::new(),
-                activations: Activations::new(),
+                activations: [const { Activations::new() }; libirqchip::MAX_CPUS],
                 irq_table: crate::objects::irq::IrqTable::empty(),
                 ticks: 0,
                 timers: crate::objects::timers::SchedulerTimers::new(),
@@ -1732,7 +1798,7 @@ mod tests {
         let waiter = carve_thread();
         let (n, e) = carve_objects();
         let (set, record) = block_on_wait_set(nucleus, waiter, n, e);
-        nucleus.pending.set_deadline(record, 0).ok().unwrap();
+        nucleus.pending.set_deadline(record, 0, 0).ok().unwrap();
         nucleus.expire_deadlines();
         assert_eq!(
             nucleus.pending.state(record).ok(),
@@ -1794,8 +1860,8 @@ mod tests {
             Ok(Some(woken)) => assert_eq!(woken, record_c),
             _ => panic!("signal should wake C"),
         }
-        assert!(nucleus.activations.push(c));
-        assert_eq!(nucleus.activations.len(), 1);
+        assert!(nucleus.local_activations().push(c));
+        assert_eq!(nucleus.local_activations().len(), 1);
 
         // Teardown of A: its queued wait is cancelled and released; C's
         // completed record and queued wakeup, and B's await, are untouched.
@@ -1815,7 +1881,7 @@ mod tests {
             nucleus.pending.state(record_b).ok(),
             Some(PendingState::Waiting)
         );
-        assert_eq!(nucleus.activations.len(), 1);
+        assert_eq!(nucleus.local_activations().len(), 1);
 
         // The notification no longer holds A: the next signal delivers to no
         // one (the queue is empty), so the bits stay pending.
@@ -1832,7 +1898,7 @@ mod tests {
             .cancel_thread_pending(c)
             .unwrap_or_else(|_| panic!("teardown of C failed"));
         assert!(nucleus.pending.state(record_c).is_err());
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
 
         // Teardown of B: the queued await is cancelled and released.
         nucleus
@@ -1868,7 +1934,7 @@ mod tests {
 
         // A deadline in the past: the wait completes with TIMED_OUT, the
         // waiter is runnable, and a later signal finds nobody queued.
-        nucleus.pending.set_deadline(record, 0).ok().unwrap();
+        nucleus.pending.set_deadline(record, 0, 0).ok().unwrap();
         assert_eq!(nucleus.next_wakeup_ticks(), Some(0));
         nucleus.expire_deadlines();
         assert_eq!(
@@ -1880,7 +1946,7 @@ mod tests {
             })
         );
         // No queue holds the waiter: only a dispatcher runs Threads.
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
         assert_eq!(nucleus.next_wakeup_ticks(), None);
         let notification = object::<Notification>(n);
         assert!(matches!(
@@ -1903,7 +1969,7 @@ mod tests {
             Ok(AwaitOutcome::Blocked(record)) => record,
             _ => panic!("await should block"),
         };
-        nucleus.pending.set_deadline(record, 0).ok().unwrap();
+        nucleus.pending.set_deadline(record, 0, 0).ok().unwrap();
         nucleus.expire_deadlines();
         assert_eq!(
             nucleus.pending.state(record).ok(),
@@ -1929,7 +1995,7 @@ mod tests {
         let waiter = carve_thread();
         let (n, _e) = carve_objects();
         let record = block_on_notification(nucleus, n, waiter);
-        nucleus.pending.set_deadline(record, 0).ok().unwrap();
+        nucleus.pending.set_deadline(record, 0, 0).ok().unwrap();
         // The signal completes the record first.
         match object::<Notification>(n).signal(0b10, &mut nucleus.pending) {
             Ok(Some(woken)) => assert_eq!(woken, record),
@@ -1945,7 +2011,7 @@ mod tests {
                 result1: 0
             })
         );
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
     }
 
     #[test_case]
@@ -1958,15 +2024,39 @@ mod tests {
             Ok(AwaitOutcome::Blocked(record)) => record,
             _ => panic!("await should block"),
         };
-        nucleus.pending.set_deadline(first, 900).ok().unwrap();
-        nucleus.pending.set_deadline(second, 400).ok().unwrap();
+        nucleus.pending.set_deadline(first, 900, 0).ok().unwrap();
+        nucleus.pending.set_deadline(second, 400, 0).ok().unwrap();
         assert_eq!(nucleus.next_wakeup_ticks(), Some(400));
-        assert_eq!(nucleus.pending.earliest_expired(399), None);
-        assert_eq!(nucleus.pending.earliest_expired(500), Some(second));
+        assert_eq!(nucleus.pending.earliest_expired(399, 0), None);
+        assert_eq!(nucleus.pending.earliest_expired(500, 0), Some(second));
         // A record that is not waiting takes no deadline.
         nucleus.pending.cancel(first).ok().unwrap();
-        assert!(nucleus.pending.set_deadline(first, 1).is_err());
+        assert!(nucleus.pending.set_deadline(first, 1, 0).is_err());
         assert_eq!(nucleus.next_wakeup_ticks(), Some(400));
+    }
+
+    #[test_case]
+    fn a_wait_deadline_counts_only_on_its_core() {
+        let nucleus = fixture_nucleus();
+        let (a, b) = (carve_thread(), carve_thread());
+        let (n, e) = carve_objects();
+        let here = block_on_notification(nucleus, n, a);
+        let there = match object::<EventCount>(e).await_ge(e, 1, b, &mut nucleus.pending) {
+            Ok(AwaitOutcome::Blocked(record)) => record,
+            _ => panic!("await should block"),
+        };
+        nucleus.pending.set_deadline(here, 900, 0).ok().unwrap();
+        nucleus.pending.set_deadline(there, 400, 1).ok().unwrap();
+        // This core (0) neither programs nor fires core 1's deadline.
+        assert_eq!(nucleus.next_wakeup_ticks(), Some(900));
+        assert_eq!(nucleus.pending.earliest_expired(500, 0), None);
+        assert_eq!(nucleus.pending.next_deadline(1), Some(400));
+        assert_eq!(nucleus.pending.earliest_expired(500, 1), Some(there));
+        nucleus.expire_deadlines();
+        assert!(matches!(
+            nucleus.pending.state(there),
+            Ok(PendingState::Waiting)
+        ));
     }
 
     #[test_case]
@@ -1979,7 +2069,7 @@ mod tests {
             .cancel_thread_pending(a)
             .unwrap_or_else(|_| panic!("teardown with nothing pending failed"));
         assert!(nucleus.pending.is_empty());
-        assert!(nucleus.activations.is_empty());
+        assert!(nucleus.local_activations().is_empty());
     }
 
     #[test_case]

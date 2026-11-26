@@ -61,6 +61,10 @@ pub struct Grant {
 #[derive(Clone, Copy, Debug)]
 pub struct Scheduler {
     root: bool,
+    /// The core this Scheduler's Threads and dispatcher run on (SMP C4.1(a)): set
+    /// once, at creation for a root Scheduler and from the parent at `Adopt` for
+    /// any other; `None` for a fresh Scheduler nobody adopted yet.
+    core: Option<usize>,
     /// The Scheduler that adopted this one; set once, never for the root.
     parent: Option<CarvedId>,
     /// Levels below the root (the root is 0).
@@ -102,10 +106,11 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    /// The root scheduler; only boot code creates it.
-    pub const fn root() -> Self {
+    /// The root scheduler of logical CPU `core`; only boot code creates it.
+    pub const fn root(core: usize) -> Self {
         Self {
             root: true,
+            core: Some(core),
             parent: None,
             depth: 0,
             children: 0,
@@ -129,9 +134,16 @@ impl Scheduler {
     /// parent, nothing in it. It has no execution authority until a parent
     /// adopts it and dispatches its dispatcher.
     pub const fn inert() -> Self {
-        let mut scheduler = Self::root();
+        let mut scheduler = Self::root(0);
         scheduler.root = false;
+        scheduler.core = None;
         scheduler
+    }
+
+    /// The core this Scheduler runs on, once it has one: a root from its
+    /// creation, any other from its `Adopt`.
+    pub const fn core(&self) -> Option<usize> {
+        self.core
     }
 
     /// The levels a Scheduler may sit below the root.
@@ -158,10 +170,12 @@ impl Scheduler {
             && self.dispatcher.is_none()
     }
 
-    /// Set the parent, once, and the depth that follows from it.
-    pub fn set_parent(&mut self, parent: CarvedId, depth: u8) {
+    /// Set the parent, once, with the depth that follows from it and the
+    /// parent's core, which this Scheduler runs on from now on.
+    pub fn set_parent(&mut self, parent: CarvedId, depth: u8, core: Option<usize>) {
         self.parent = Some(parent);
         self.depth = depth;
+        self.core = core;
     }
 
     /// The parent's grant in force, if its dispatcher dispatched this
@@ -430,7 +444,7 @@ mod tests {
 
     #[test_case]
     fn the_first_region_starts_at_slot_zero_and_fixes_space_and_stride() {
-        let mut scheduler = Scheduler::root();
+        let mut scheduler = Scheduler::root(0);
         assert!(invalid(scheduler.add_region(
             space(0),
             0x1000,
@@ -465,7 +479,7 @@ mod tests {
 
     #[test_case]
     fn a_stride_must_suit_the_records_and_the_frame() {
-        let mut scheduler = Scheduler::root();
+        let mut scheduler = Scheduler::root(0);
         for stride in [0, 64, 100, 130, 4160, u32::MAX] {
             assert!(invalid(scheduler.add_region(
                 space(0),
@@ -488,7 +502,7 @@ mod tests {
 
     #[test_case]
     fn regions_must_not_overlap_in_slots_or_in_memory() {
-        let mut scheduler = Scheduler::root();
+        let mut scheduler = Scheduler::root(0);
         scheduler
             .add_region(space(0), 0x1000, 4096, 0, 128)
             .ok()
@@ -536,7 +550,7 @@ mod tests {
 
     #[test_case]
     fn at_most_eight_regions() {
-        let mut scheduler = Scheduler::root();
+        let mut scheduler = Scheduler::root(0);
         for index in 0..8_u32 {
             scheduler
                 .add_region(
@@ -561,7 +575,7 @@ mod tests {
 
     #[test_case]
     fn slots_resolve_to_record_addresses() {
-        let mut scheduler = Scheduler::root();
+        let mut scheduler = Scheduler::root(0);
         scheduler
             .add_region(space(0), 0x1000, 4096, 0, 192)
             .ok()
@@ -586,7 +600,7 @@ mod tests {
 
     #[test_case]
     fn the_event_count_binds_once() {
-        let mut scheduler = Scheduler::root();
+        let mut scheduler = Scheduler::root(0);
         let event_count = test_id(ObjectType::EVENT_COUNT, 0x4000);
         assert_eq!(scheduler.event_count(), None);
         scheduler.bind_event_count(event_count).ok().unwrap();

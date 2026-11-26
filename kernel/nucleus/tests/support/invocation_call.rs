@@ -231,7 +231,7 @@ fn snapshot(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) -> Sn
         target_table: table_digest(fixture.target_table),
         ttbr0: TTBR0_EL1.get(),
         pending: nucleus.pending.len(),
-        runnable: nucleus.activations.len(),
+        runnable: nucleus.local_activations().len(),
     }
 }
 
@@ -1415,7 +1415,7 @@ fn queue_next_thread(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixtu
     nucleus.thread_mut(next).unwrap().context = ExecutionContext::NotStarted {
         saved: SavedContext::el0(0xA_0000, STACK_END, 0),
     };
-    assert!(nucleus.activations.push(next));
+    assert!(nucleus.local_activations().push(next));
     next
 }
 
@@ -2534,7 +2534,7 @@ fn preempted_fp_threads_keep_their_own_registers() {
                 .expect("the queued Thread preempts")
                 .expect_resume()
                 .next;
-            assert!(nucleus.activations.push(preempted));
+            assert!(nucleus.local_activations().push(preempted));
             next
         };
 
@@ -2823,7 +2823,7 @@ fn run_model_sequence(fp: [bool; 2], mut code: u32) {
                         .expect("the other Thread preempts")
                         .expect_resume()
                         .next;
-                    assert!(nucleus.activations.push(preempted));
+                    assert!(nucleus.local_activations().push(preempted));
                     running = 1 - running;
                     assert_eq!(next, threads[running].id);
                 }

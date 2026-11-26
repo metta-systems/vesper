@@ -388,11 +388,11 @@ fn dispatch<A: ArchObjects>(
         cpu,
         reserved,
     ] = *args;
-    if cpu != 0 || reserved != 0 || limit_ns == 0 {
+    if reserved != 0 || limit_ns == 0 {
         return Err(CapError::InvalidOperation);
     }
     let dispatcher = nucleus.current_thread_id()?;
-    let (bound, pending, events, own_grant) = {
+    let (bound, pending, events, own_grant, scheduler_core) = {
         let object = access
             .resolve_object::<Scheduler>(scheduler)
             .map_err(|error| error.for_key(key, 0))?;
@@ -401,10 +401,17 @@ fn dispatch<A: ArchObjects>(
             object.pending(),
             object.events(),
             object.grant(),
+            object.core(),
         )
     };
     // Only the bound dispatcher dispatches.
     if bound != Some(dispatcher) {
+        return Err(CapError::InvalidOperation);
+    }
+    // `x6` names the Scheduler's core, and the dispatcher runs there (SMP
+    // C4.1(a)): a Scheduler nobody adopted has no core and dispatches nothing.
+    let core = nucleus.current_cpu();
+    if scheduler_core != Some(core) || usize::try_from(cpu).ok() != Some(core) {
         return Err(CapError::InvalidOperation);
     }
     let target = if thread_key == 0 {
@@ -533,14 +540,15 @@ fn adopt(
     if child == scheduler {
         return Err(CapError::InvalidOperation);
     }
-    let depth = {
+    let (depth, core) = {
         let parent = access
             .resolve_object::<Scheduler>(scheduler)
             .map_err(|error| error.for_key(key, 0))?;
         if parent.depth() >= Scheduler::MAX_DEPTH {
             return Err(CapError::InvalidOperation);
         }
-        parent.depth() + 1
+        // The child runs on its parent's core (SMP C4.1(a)).
+        (parent.depth() + 1, parent.core())
     };
     {
         let candidate = access
@@ -553,7 +561,7 @@ fn adopt(
     access
         .resolve_object::<Scheduler>(child)
         .map_err(|error| error.for_key(child_key, 2))?
-        .set_parent(scheduler, depth);
+        .set_parent(scheduler, depth, core);
     access
         .resolve_object::<Scheduler>(scheduler)
         .map_err(|error| error.for_key(key, 0))?

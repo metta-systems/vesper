@@ -743,7 +743,12 @@ pub fn run() {
             .unwrap_or_else(|error| panic!("Bounce Retire failed: {:?}", error.code()));
         // Only the dispatcher's own parked Dispatch is left.
         assert_eq!(nucleus.pending.len(), 1);
-        assert!(nucleus.activations.is_empty());
+        assert!(
+            nucleus
+                .activations
+                .iter()
+                .all(nucleus::objects::Activations::is_empty)
+        );
         // The released record's identity is stale.
         nucleus.pending.state(record).unwrap_err();
 
