@@ -63,7 +63,7 @@ pub const NO_DEADLINE: u64 = u64::MAX;
 /// the kernel.
 pub const IPI_RESCHEDULE: u32 = 1 << 0;
 /// IPI kind: a Thread running there, or an `AddressSpace` current there, is going away
-/// (its work comes with synchronous retirement, SMP3).
+/// (its work comes with synchronous retirement, in the scheduling plan's Phase 11).
 pub const IPI_STOP: u32 = 1 << 1;
 /// IPI kind: another core panicked; the core parks.
 pub const IPI_HALT: u32 = 1 << 2;
