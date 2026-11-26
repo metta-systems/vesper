@@ -63,6 +63,11 @@ All by the maintainer, 2026-11-25.
   quiescence detection comes later.
 - **Bring-up order (C10(a)).** QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3 and Pi 5
   boards.
+- **Record totals per core (C11(a), 2026-11-26).** Each core's root Scheduler record
+  carries that core's own nucleus totals (`interrupt_ns`, `idle_ns`, `thread_switches`,
+  `fp_thread_switches`, `fp_entry_toggles`), written only by that core. A whole-machine
+  report is the client's own sum or average over the per-core reports; the nucleus keeps
+  no machine-wide total.
 
 ## 1. What exists today
 
@@ -135,7 +140,7 @@ complete on the Pi's cores (the chainboot rule). The rule that follows:
 Modelled on the interrupt-controller components (`libs/irqchip`, `drivers/irqchip-*`,
 `kernel/kickstart/src/privileged.rs`):
 
-- An ABI crate (working name `libs/cpu-start`) defines the operation table every
+- An ABI crate (`libs/cpu-start`) defines the operation table every
   implementation exports, its version, and the configuration Kickstart passes. A first
   table: `abi_version`, `init(config)`, `start(cpu, mpidr, entry, context) -> status`.
   `entry` is the physical address of the secondary entry, `context` the physical address
@@ -175,8 +180,8 @@ allocates), its address in `TPIDR_EL1` (EL1-only, so no user exposure):
 Everything else stays in the shared `Nucleus` (pools, key tables, pending records, IRQ
 table, activations). Each core has its own deadline queue (wait timeouts and dispatcher
 timers of its Schedulers) in its record. The existing scheduler-record
-totals (`interrupt_ns`, `idle_ns`) become per-core fields or sums; where they go is open
-([C11](smp-decisions.md#c11-nucleus-wide-totals-in-the-scheduler-records)).
+totals (`interrupt_ns`, `idle_ns` and the FP totals) become per-core fields, published in
+each core's root Scheduler record (C11(a)).
 
 ### Kernel lock
 

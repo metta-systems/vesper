@@ -1,0 +1,30 @@
+[package]
+name = "vesper-cpu-start"
+
+description = "ABI between Kickstart and the components that start secondary CPU cores."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+# Opt in to standard host integration tests of the ABI layout.
+host-tests = []
+
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "cpu_start"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

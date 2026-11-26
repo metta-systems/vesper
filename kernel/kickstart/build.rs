@@ -5,5 +5,6 @@ fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     libimage_build::generate_kernel("image.toml");
     libimage_build::bundle_privileged("image.toml");
+    libimage_build::bundle_cpu_start("image.toml");
     libimage_build::bundle_components("image.toml");
 }

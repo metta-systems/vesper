@@ -23,6 +23,18 @@ binary = "irqchip-bcm2836"
 name = "gicv2"
 binary = "irqchip-gicv2"
 
+# Start-method components, built position-independent with linker/cpu-start.ld
+# (`just _build-cpu-start`). Kickstart loads the one whose `enable-method` every
+# `/cpus` node names, and calls it at EL2 to start the secondary cores.
+
+[[cpu_start]]
+name = "spin_table"
+binary = "cpu-start-spin-table"
+
+[[cpu_start]]
+name = "psci"
+binary = "cpu-start-psci"
+
 # EL0 device drivers come from platform.toml. The image's own programs:
 
 # The compositor: an EL0 program that owns the display and the input. It maps

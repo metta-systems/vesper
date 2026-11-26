@@ -25,6 +25,9 @@ members = [
   # Privileged components
   "drivers/irqchip-bcm2836",
   "drivers/irqchip-gicv2",
+  # Start-method components (Kickstart, EL2)
+  "drivers/cpu-start-spin-table",
+  "drivers/cpu-start-psci",
   # EL0 driver components
   "drivers/uart-pl011",
   # Mailbox component and its Meddle-generated interface crates
@@ -117,6 +120,7 @@ members = [
   "libs/console",
   "libs/cpu",
   "libs/device-driver",
+  "libs/cpu-start",
   "libs/devicetree",
   "libs/exception",
   "libs/graphics",
@@ -282,6 +286,7 @@ libimage = { path = "libs/image", package = "vesper-image" }
 libimage-build = { path = "libs/image-build", package = "vesper-image-build" }
 libio-channel = { path = "libs/io-channel", package = "vesper-io-channel" }
 libirqchip = { path = "libs/irqchip", package = "vesper-irqchip" }
+libcpu-start = { path = "libs/cpu-start", package = "vesper-cpu-start" }
 libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
 liblocking = { path = "libs/locking", package = "vesper-locking" }

@@ -8,7 +8,7 @@ use libimage::{LoadableSection, Permissions, PrivilegedImage, Relocation, Sectio
 static {{segment.blob}}: [u8; {{segment.len}}] = *include_bytes!(concat!(env!("OUT_DIR"), "/{{segment.bin_file}}"));
 {% endfor %}
 
-/// Privileged component `{{component.name}}` (`{{component.binary}}`).
+/// Position-independent component `{{component.name}}` (`{{component.binary}}`).
 pub static {{component.stem}}: PrivilegedImage = PrivilegedImage {
     name: "{{component.name}}",
     compatible: &[{% for entry in component.compatible %}"{{entry}}", {% endfor %}],
@@ -26,5 +26,5 @@ pub static {{component.stem}}: PrivilegedImage = PrivilegedImage {
 };
 {% endfor %}
 
-/// Every bundled privileged component, in manifest order.
-pub static PRIVILEGED: &[&PrivilegedImage] = &[{% for component in components %}&{{component.stem}}{% if not loop.last %}, {% endif %}{% endfor %}];
+/// Every bundled component of this kind, in manifest order.
+pub static {{list_name}}: &[&PrivilegedImage] = &[{% for component in components %}&{{component.stem}}{% if not loop.last %}, {% endif %}{% endfor %}];

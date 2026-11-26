@@ -40,6 +40,7 @@ libchainboot-protocol = { workspace = true }
 libcomponent-loader = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
+libcpu-start = { workspace = true }
 libdevice-driver = { workspace = true }
 libserial-channel = { workspace = true }
 libdevicetree = { workspace = true }

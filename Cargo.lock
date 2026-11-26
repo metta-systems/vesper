@@ -947,6 +947,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpu-start-psci"
+version = "0.0.1"
+dependencies = [
+ "vesper-cpu-start",
+]
+
+[[package]]
+name = "cpu-start-spin-table"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "vesper-cpu",
+ "vesper-cpu-start",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2381,6 +2397,7 @@ dependencies = [
  "vesper-chainboot-protocol",
  "vesper-console",
  "vesper-cpu",
+ "vesper-cpu-start",
  "vesper-device-driver",
  "vesper-devicetree",
  "vesper-exceptions",
@@ -5475,6 +5492,10 @@ dependencies = [
  "aarch64-cpu",
  "tock-registers",
 ]
+
+[[package]]
+name = "vesper-cpu-start"
+version = "0.0.1"
 
 [[package]]
 name = "vesper-device-driver"
