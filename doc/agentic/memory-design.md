@@ -4,7 +4,7 @@ The rules for mapping (identity, PageTable and Frame installation, rights and W^
 types, cache maintenance, physical aliases, ASIDs, translation installation and shared
 mappings (fbufs) behind the Frame, PageTable and AddressSpace capabilities. Open questions are in [memory-decisions.md](memory-decisions.md), open work
 in [memory-implementation-plan.md](memory-implementation-plan.md), finished work in
-[memory-completed.md](memory-completed.md). Capability semantics (kinds, Retype, rights,
+[memory-completed.md](memory-completed.md), prior art in [memory-research.md](memory-research.md). Capability semantics (kinds, Retype, rights,
 lifecycle) are in the
 [capabilities contract](capabilities-contract.md#resource-storage-and-memory-contracts).
 
@@ -24,7 +24,7 @@ Mapping permissions are bounded by backing and target-context authority; cache/d
 
 ### Frame memory attributes (maintainer decision, 2026-10-13)
 
-`Frame.Map`'s `x5` names the memory attribute of the mapping; what a Frame may be mapped with is bounded by a ceiling the capability carries, like rights. Prior art: [Frame memory attributes and write-combining](capabilities-research.md#frame-memory-attributes-and-write-combining-sel4-composite-linux).
+`Frame.Map`'s `x5` names the memory attribute of the mapping; what a Frame may be mapped with is bounded by a ceiling the capability carries, like rights. Prior art: [Frame memory attributes and write-combining](memory-research.md#frame-memory-attributes-and-write-combining-sel4-composite-linux).
 
 | `x5` | Attribute | MAIR index | Hardware memory type |
 | ---: | --- | ---: | --- |
@@ -73,6 +73,12 @@ ASIDs come from an authoritative namespace with binding and safe reuse rules. **
 `prepare_translation_context` validates AddressSpace incarnation, root/ASID presence, and backend encoding before any scheduling mutation. AArch64 supports the existing L0-rooted, four-level, 48-bit VA / 4 KiB TTBR0 profile (`T0SZ=16`, `EPD0=0`, `A1=0`, no DS/LPA2), aligned roots within both configured and hardware PA widths, and nonzero ASIDs representable by the active hardware/configured width. Stale AS is `InvalidAddressSpace`, missing root/ASID is `NotMapped`, unencodable root is `InvalidPointer`, and unsupported profile/ASID is `InvalidOperation`. Both Activate and wait/resume install copied checked metadata only after guards and the kernel lock end. A rejected park/select preparation preserves Thread contexts, pending records, current selection, and runnable FIFO; it does not undo the wait already admitted by capability dispatch. The trusted fixture treats an impossible scheduling-preparation failure as an invariant failure, not fake wait completion or an invented recovery ABI. Prepared metadata is not a lifetime pin: immediate installation relies on the serialized single-core, masked, non-reentrant trap interval; later/asynchronous use requires fresh validation.
 
 ### Shared mappings (fbufs)
+
+Fbuf setup negotiates addresses suitable for all participating AddressSpaces before mapping, rather than attempting to reconcile conflicting placements after pointers escape. For F at X in A and Y in B, pointer X is not usable by B merely because B maps F at Y; the no-intra-AddressSpace-alias rule prevents simply adding X while retaining Y. Reservation/conflict handling and the exact machine-local allocation scheme remain D1/D6. Multi-node global/distributed address-space allocation is explicitly out of scope; do not assume a classical SASOS namespace spanning other nodes' RAM or allocated disk space. Global machine-local reservation has raised concerns but is not yet selected or categorically replaced by a particular allocator.
+
+Authoritative revocation must withdraw the relevant access even if clients retain pointers. Subsequent access to a withdrawn, still-unmapped address faults; Thread termination is the expected policy direction, while fault delivery/termination details remain open. **Stale raw pointers after VA reuse:** a revoked virtual address need not remain inaccessible for the lifetime of a surviving Thread. Capability generations are checked on invocation, not on ordinary CPU loads, so once the address is legitimately reused an old raw pointer may reach the replacement mapping without faulting. Outside/higher-level mechanisms prevent such stale application accesses; stronger kernel guarantees are [future work](capabilities-decisions.md#future-work). Frame-capability slot non-reuse is not virtual-address non-reuse. None of this relaxes kernel memory safety, authority and generation checks, completed hardware withdrawal/TLB synchronization, or safe physical-resource reuse, and it does not make an invalid Rust reference sound.
+
+Read-only mapping permissions prevent writes **through that mapping**; they do not make the backing immutable if another AddressSpace has a writable mapping or a device/kernel writer updates it. For ordinary `&[u8]`, the Rust contract additionally requires readable, initialized, properly bounded memory in one valid allocation, remaining valid and unmodified for the borrow. Multiple shared readers are permitted; conflicting mutation or exclusive access is not. These are reference-construction/usage obligations, not conditions that per-mapping permissions establish by themselves. Exact requirements, source references, immutable-sharing transitions, and fbuf protocols are discussed in [capabilities design](capabilities-design.md#5-direct-userspace-memory-access-is-not-a-fallible-invocation).
 
 Large-data IPC preferentially uses fbufs: setup establishes matching virtual addresses suitable for all participants before mapping shared backing, with explicit synchronization/ownership protocols and unchanged pointers where mappings agree. Ring/buffer pools plus produced/consumed event counts support backpressure without allocation or copying in the hot path. Exclusive, immutable-shared, and mutable-shared modes must be available; multiple writable AddressSpaces are permitted, but their synchronization is an fbuf/libOS protocol obligation. Numeric pointer possession still does not grant mapping authority.
 

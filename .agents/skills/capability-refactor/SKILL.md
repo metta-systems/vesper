@@ -43,7 +43,7 @@ Every document in `doc/agentic/` belongs to one row. **Keep this table current:*
 | Area (prefix) | Covers | Files |
 |---|---|---|
 | `capabilities` | Capability semantics: kinds and IDs, keys, rights, badges, invocation ABI, Retype, lifecycle, IPC and PPC, IRQ delivery, Thread and AddressSpace | `-contract`, `-decisions`, `-implementation-plan`, `-completed`; background `-design` (rationale), `-research` (prior art) |
-| `memory` | Mapping identity, PageTable and Frame installation, rights and W^X, memory attributes, cache maintenance, physical aliases, ASIDs, Activate, translation installation, fbufs and MappedSlice | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
+| `memory` | Mapping identity, PageTable and Frame installation, rights and W^X, memory attributes, cache maintenance, physical aliases, ASIDs, Activate, translation installation, fbufs and MappedSlice | `-design`, `-decisions`, `-implementation-plan`, `-completed`; background `-research` (memory-attribute prior art) |
 | `scheduling` | Time, the root and child Schedulers, Thread configuration and start, per-Thread architectural state (TLS, timer access, interrupt masking), scheduler-shared records, userspace scheduling policy | `-design` (ends with the background design discussion), `-decisions`, `-implementation-plan`, `-completed`; background `-research` (survey of existing systems, Composite tcap comparison) |
 | `components` | Meddle interfaces and imports, Kickstart's wiring (device memory, mailbox, PCI, data areas, channels), the shell, component loading, driver components | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `smp` | Secondary cores, the kernel lock, per-core state, IPIs | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
@@ -53,7 +53,7 @@ Every document in `doc/agentic/` belongs to one row. **Keep this table current:*
 | `audio` | Audio output (PWM jack, DMA, `cprman` clocks), mixing and synthesis | `-design`, `-implementation-plan`, `-completed`; background `audio-profiling.md` |
 | `logging` | The log server: several components sharing one PL011; the debug-only DebugConsole | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `ui-compositor` | The compositor, windows and surfaces | `-design`, `-implementation-plan`, `-completed`; `multi-display-design.md` (several outputs) |
-| `irq` | `IRQControl`/`IRQHandler` semantics, interrupt delivery, receiver Threads, driver matching and loading | `-design`, `-decisions`, `-implementation-plan`, `-completed`; background `-research` (where the interrupt-controller driver runs) |
+| `irq` | `IRQControl`/`IRQHandler` semantics, interrupt delivery, receiver Threads, driver matching and loading | `-design`, `-decisions`, `-implementation-plan`, `-completed`; background `-research` (where the interrupt-controller driver runs; event delivery in Composite and seL4) |
 | Background only | Prior art and shelved designs; no rules, tasks or decisions | `future-libmmio-design.md`, `brands-history.md` |
 | Maintainer notes | `questions.md`: the maintainer's scratch notes; read, never edit unprompted | `questions.md` |
 

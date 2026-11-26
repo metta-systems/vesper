@@ -89,9 +89,6 @@ needs them.
   own the prevention (contract, [protection requirements and
   boundaries](capabilities-contract.md#protection-requirements-and-boundaries)).
   Would need its own separately scoped design.
-- **Six-word PPC result payload:** widening the PPC result from two to six
-  `u64` words if component interfaces need more register-only results. Would
-  need a coordinated change to the Return transport, wrappers and decoders.
 - **64-bit allocation generations:** explore whether widening kernel
   allocation generations (`ObjectId`, pool slot metadata and pending-record
   generations) from 32 to 64 bits is feasible and worthwhile. A slot
