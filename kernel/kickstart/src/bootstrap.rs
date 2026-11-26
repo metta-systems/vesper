@@ -159,7 +159,7 @@ pub fn retained_init_memory() -> RetainedInitMemory {
         assert_eq!((start | end) & 4095, 0); // PAGE_MASK
     }
     assert!(
-        stack.1 <= image.0,
+        stack.1 <= image.0 || image.1 <= stack.0,
         "retained image and stack must not overlap"
     );
     BOOT_INFO.lock(|bi| {

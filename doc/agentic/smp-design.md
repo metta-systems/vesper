@@ -78,7 +78,7 @@ All by the maintainer, 2026-11-25.
 | Kernel state machine | `Init → SingleCoreMain → MultiCoreMain`; the last transition does not exist | `libs/kernel-state/src/lib.rs` |
 | Kernel lock | `KERNEL_LOCK: IRQSafeNullLock<()>`, which protects nothing against another core; a TODO asks for the read-only / per-cpu / atomic / locked split | `kernel/nucleus/src/main.rs:58-62`, `libs/locking` |
 | Per-core state | Kept as plain fields of the one `Nucleus`: `current_thread`, `current_since_ticks`, `dispatched`, `dispatch_next`, `preempt_requested`, `interrupt_ticks`, `idle_ticks`; plus statics `IDLING`, `timer::PROGRAMMED`, the FP owner in `fp_unit` | `kernel/nucleus/src/objects/nucleus.rs:89-132`, `main.rs`, `timer.rs`, `objects/arch/fp_unit.rs` |
-| Kernel stack | One trap stack in `SP_EL1`, mapped by Kickstart at `KERNEL_STACK_BASE`; the boot Thread runs EL1t on the low boot stack | `kernel/kickstart/src/paging.rs`, `el_switch.rs` |
+| Kernel stack | One trap stack in `SP_EL1`, mapped by Kickstart at `KERNEL_STACK_BASE`; the boot Thread runs EL1t on the init stack after the image | `kernel/kickstart/src/paging.rs`, `el_switch.rs` |
 | EL2 → EL1 | Kickstart runs at EL2 with the MMU off, builds the tables, then `el_switch` sets VBAR, MAIR, TCR (inner shareable), SCTLR and drops to EL1t | `kernel/kickstart/src/el_switch.rs` |
 | TLB maintenance | Nucleus already uses broadcast forms (`tlbi vae1is`, `tlbi aside1is`, `dsb ish`); Kickstart's boot flush is local `tlbi vmalle1` | `objects/arch/aarch64_objects.rs`, `el_switch.rs` |
 | Interrupt controller ABI | `IrqChipOps`: `init`, `claim` (on the calling CPU), `complete`, `mask`, `unmask`, `set_trigger`, `xlate`. No per-CPU init, no IPI, no routing | `libs/irqchip/src/lib.rs` |
@@ -86,7 +86,7 @@ All by the maintainer, 2026-11-25.
 | GIC-400 component | Routes every SPI to the CPU interface of the core running `init` (from banked `GICD_ITARGETSR0-7`) | `drivers/irqchip-gicv2/src/lib.rs` |
 | Scheduling ABI | `Scheduler.Dispatch` `x6` is the CPU and must be 0; the Thread record has a `cpu` field (`0` or `NO_CPU`); a Time "belongs to one core" and Transfer/Merge already carry per-core checks | [scheduling design](scheduling-design.md#decisions); `objects/time.rs` |
 | Payload ordering | The contract states that multicore needs real Acquire/Release kernel atomics for Signal/Advance publication | [contract, Notification and EventCount](capabilities-contract.md#notification-and-eventcount) |
-| Reserved memory | Kickstart removes `/memreserve/` entries from the Untypeds; it does not read `/reserved-memory` child nodes | `kernel/kickstart/src/lib.rs:206-242` |
+| Reserved memory | Kickstart removes `/memreserve/` entries and the `no-map` nodes of `/reserved-memory` from the Untypeds | `kernel/kickstart/src/lib.rs`, `libdevicetree::DeviceTree::no_map_reserved_memory` |
 | QEMU | `raspi3b` and `raspi4b` always model four cores | `Justfile` |
 
 ## 2. How the secondary cores are started
@@ -109,10 +109,11 @@ Consequences:
 - The start method is a component Kickstart selects from `enable-method` ([start-method
   components](#start-method-components)).
 - The firmware's spin code and words live in the first page (`/memreserve/ 0 0x1000` on
-  the Pi 3 and 4, which Kickstart honours). On the Pi 5, TF-A occupies `0..0x80000`
-  (`/reserved-memory/atf@0`, `no-map`), which Kickstart does not read: check that the
-  firmware's memory node already excludes it, or read `no-map` nodes too.
-- Chainboot must leave the first page alone; check its relocation target.
+  the Pi 3 and 4). On the Pi 5, TF-A occupies `0..0x80000` (`/reserved-memory/atf@0`,
+  `no-map`). Kickstart reserves both kinds, each page once
+  (`BootInfo::insert_reserved_region`), and nothing of Vesper's lives below the image
+  base `0x80000`: Kickstart's init stack follows its image (`linker/kickstart.ld`) and
+  chainboot's stack its relocated BSS above 32 MiB (`bin/chainboot/src/link.ld`).
 - A secondary core starts with its own EL2 registers unset. `_startup_in_rust`'s EL2
   setup (`CNTHCTL_EL2`, `CNTVOFF_EL2`, `SCTLR_EL2`, `HCR_EL2`, `CPTR_EL2`) and, under
   `qemu`, the EL3 → EL2 step, must run on every core, followed by `el_switch` with the
@@ -154,6 +155,10 @@ Modelled on the interrupt-controller components (`libs/irqchip`, `drivers/irqchi
   - `cpu-start-psci` (`"psci"`): config holds the conduit from the `psci` node (`smc` or
     `hvc`); `start` issues `CPU_ON` with `context` in `x3`, which arrives in the
     secondary's `x0`, and maps PSCI errors to the status.
+- Refusing means running on the boot core alone (maintainer, 2026-11-26): a tree whose
+  `/cpus` nodes disagree, a method no bundled component implements, more CPUs than the
+  ABI describes or a configuration `init` refuses starts no secondary core, and Kickstart
+  logs why.
 - Kickstart reads the `enable-method` of the `/cpus` nodes once, refuses a tree whose
   nodes disagree, relocates the matching component and calls it at EL2 (its MMU is off,
   so the component runs at its physical load address). The other implementations are

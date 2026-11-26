@@ -154,6 +154,19 @@ impl<'i, 'dt> DeviceTree<'i, 'dt> {
             .take_while(|region| region.start != 0 || region.size != 0)
     }
 
+    /// The `no-map` regions of `/reserved-memory` (Devicetree Specification v0.4, §3.5):
+    /// memory the operating system must neither use nor map, such as the Raspberry Pi 5's
+    /// resident TF-A (`atf@0`). Disabled nodes and empty `reg`s are left out; a node with
+    /// no `reg` (a pool allocated at run time) has none.
+    pub fn no_map_reserved_memory(&self) -> impl Iterator<Item = Region> + '_ {
+        self.node("/reserved-memory")
+            .into_iter()
+            .flat_map(|reserved| reserved.children())
+            .filter(|node| crate::is_enabled(node) && property(node, "no-map").is_some())
+            .flat_map(|node| regions(&node))
+            .filter(|region| region.size != 0)
+    }
+
     /// Every translated `reg` entry of every node that is not memory.
     pub fn devices(&self) -> impl Iterator<Item = Device<'_, 'i, 'dt>> {
         self.index

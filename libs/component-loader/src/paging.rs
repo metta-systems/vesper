@@ -53,15 +53,19 @@ pub fn read_leaf(ttbr: u64, vaddr: u64) -> (u32, u64) {
     find_leaf(ttbr, vaddr).unwrap_or_else(|| panic!("missing descriptor for {vaddr:#x}"))
 }
 
-/// Number of L3 tables (2 MiB spans) the retained image and low stack need
-/// per root, checking the linked layout the builder expects.
+/// Number of L3 tables (2 MiB spans from address 0) the retained image and the
+/// init stack after it need per root, checking the linked layout the builder
+/// expects (`linker/kickstart.ld`: the image at 0x80000, the stack right after
+/// it, nothing in the firmware's low 512 KiB).
 pub fn image_table_count(retained: &RetainedInitMemory) -> usize {
     let (start, end) = retained.image();
     let (stack_start, stack_end) = retained.stack();
     assert_eq!(start, 0x80000, "the builder expects the linked init base");
-    assert_eq!(stack_start, PAGE);
-    assert_eq!(stack_end, start);
-    let count = usize::try_from(end.div_ceil(LEAF_SPAN)).unwrap_or(usize::MAX);
+    assert_eq!(
+        stack_start, end,
+        "the builder expects the init stack right after the image"
+    );
+    let count = usize::try_from(stack_end.div_ceil(LEAF_SPAN)).unwrap_or(usize::MAX);
     assert!(
         count <= 8,
         "image exceeds the builder's eight L3 slots per root"

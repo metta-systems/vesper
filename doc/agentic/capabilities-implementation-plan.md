@@ -142,7 +142,7 @@ Secondary-core bring-up, the kernel lock, IPIs and Threads on several cores are 
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`) and enable the protections the running core supports.
-  - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN: set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN`. Prerequisite: the EL1t boot Thread stops using its EL0-accessible low stack. Validate on a core with FEAT_PAN (QEMU `virt` with a newer CPU).
+  - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN: set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN`. Prerequisite: the EL1t boot Thread stops using its EL0-accessible init stack. Validate on a core with FEAT_PAN (QEMU `virt` with a newer CPU).
   - [ ] Select `CPTR_EL2.TZ`/`TSM` by feature: `libboot`'s `_startup_in_rust` sets them (RES1 on ARMv8.0); with SVE or SME they must be cleared so traps reach EL1 through `CPACR_EL1.ZEN`/`SMEN`.
 - [ ] Replace the temporary `aarch64-cpu` git dependency on its `main` branch (`CPTR_EL2` trap fields, `PMUSERENR_EL0`) with the released version once published.
 - [ ] Run chainboot's `mmu` image (`chainboot-rpi3-mmu.bin`) on the board; if it boots a kernel there, make the `mmu` feature the default and drop `init_logger_racy` if nothing else needs it.

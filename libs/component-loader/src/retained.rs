@@ -1,4 +1,4 @@
-//! The retained init image and low execution stack.
+//! The retained init image and the execution stack after it.
 
 use {
     libobject::{KeySlot, RawKey, Rights},

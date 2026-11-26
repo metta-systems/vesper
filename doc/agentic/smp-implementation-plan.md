@@ -21,9 +21,6 @@ Secondaries run no Threads; the kernel lock is still the null lock because they 
 enter the shared kernel state. Order: QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3
 and Pi 5 boards.
 
-- [ ] Kickstart: reserve `/reserved-memory` `no-map` nodes (Pi 5 `atf@0`) as it does
-  `/memreserve/`, if the firmware's memory node does not already exclude them; check that
-  chainboot leaves the first page alone.
 - [ ] Kickstart: carve a trap stack and a per-core record per core from accounted memory,
   sized from `/cpus`, and map the stacks in the kernel half next to the boot core's. The
   record holds the core's logical index (its `/cpus` order) and `CoreAffinity`; the kernel

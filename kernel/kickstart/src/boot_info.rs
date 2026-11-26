@@ -424,6 +424,45 @@ impl BootInfo {
         Ok(())
     }
 
+    /// Insert as used the parts of `[start, end)` that no used region covers yet.
+    ///
+    /// For firmware reservations, which may repeat or overlap one another: the
+    /// `/memreserve/` block and the `no-map` nodes of `/reserved-memory` both cover
+    /// memory the firmware keeps, and a board may name the same pages in both.
+    pub fn insert_reserved_region(
+        &mut self,
+        start: PhysAddr,
+        end: PhysAddr,
+        attributes: AttributeFields,
+        name: &'static str,
+    ) -> Result<(), BootInfoError> {
+        let end = end.as_u64();
+        let mut cursor = start.as_u64();
+        while cursor < end {
+            let covering = self.used_regions().find(|region| {
+                region.start_inclusive.as_u64() <= cursor && cursor < region.end_exclusive.as_u64()
+            });
+            if let Some(covering) = covering {
+                cursor = covering.end_exclusive.as_u64();
+                continue;
+            }
+            let gap_end = self
+                .used_regions()
+                .map(|region| region.start_inclusive.as_u64())
+                .filter(|&region_start| cursor < region_start && region_start < end)
+                .min()
+                .unwrap_or(end);
+            self.insert_used_region(
+                PhysAddr::new(cursor),
+                PhysAddr::new(gap_end),
+                attributes,
+                name,
+            )?;
+            cursor = gap_end;
+        }
+        Ok(())
+    }
+
     /// Insert a used (occupied) memory region rounded to an alignment.
     ///
     /// The start is rounded down to `align` and the end up to it, so the
