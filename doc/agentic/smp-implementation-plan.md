@@ -21,16 +21,11 @@ Secondaries run no Threads; the kernel lock is still the null lock because they 
 enter the shared kernel state. Order: QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3
 and Pi 5 boards.
 
-- [ ] A secondary entry: the EL2 prologue factored out of `_startup_in_rust` (and the
-  `qemu` EL3 → EL2 step), then `el_switch` with the shared `TTBR1`/`TCR`/`MAIR`/`VBAR`,
-  its own `SP_EL1` and `TPIDR_EL1` (`cores::Cores::record_virt` and
-  `paging::trap_stack_top` of its index), no BSS clear, no atomics before its MMU is on.
-- [ ] Release the cores just before Kickstart's own drop to EL1 through the loaded
-  component (`cpu_start::LoadedCpuStart::start`), with the mixed-attribute handshake of
-  the design (plain stores cleaned to PoC; "online"
-  signalled by a cacheable atomic after the MMU is on).
 - [ ] Nucleus: a secondary idle loop (`wfi`, interrupts masked, no Thread) and the
-  `MultiCoreMain` state transition in `libkernel-state`.
+  `MultiCoreMain` state transition in `libkernel-state`. The secondaries' EL1 entry
+  (`secondary::secondary_el1`, after it sets its `ONLINE` bit) goes on into it instead of
+  parking in Kickstart's image, which must not stay their code once Kickstart's droppable
+  memory and its identity map (their `TTBR0_EL1`) are reclaimed.
 - [ ] Test kernel `smp-test` (`just _test-smp`, `-rpi4`): every core reports online with
   its MPIDR and logical index; the boot core waits with a timeout. Board runs on the Pi 4,
   Pi 3 and Pi 5, checking `SMPEN` coherency with a cross-core cacheable counter.

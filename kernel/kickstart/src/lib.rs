@@ -31,6 +31,7 @@ mod memory;
 mod paging;
 mod privileged;
 mod qsort;
+mod secondary;
 pub mod serial;
 
 use {
@@ -578,7 +579,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
 
     // The start-method component, loaded and initialised at EL2; it releases the
     // secondary cores before Kickstart drops to EL1.
-    let _start_method = cpu_start_plan.as_ref().and_then(|plan| {
+    let start_method = cpu_start_plan.as_ref().and_then(|plan| {
         cpu_start::load(plan, mmu_setup.allocator())
             .inspect_err(|reason| {
                 semi::println!("🥾 No secondary cores: {reason}");
@@ -630,6 +631,17 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
 
     print_my_sp();
 
+    // The secondary cores go to EL1 on the same tables and vectors; `el1_entry` waits
+    // for them.
+    if let Some(start_method) = &start_method {
+        secondary::release(
+            &cores,
+            start_method,
+            secondary::SharedBoot { ttbr0, ttbr1, vbar },
+            trap_stack_top,
+        );
+    }
+
     // The early console pauses here: it goes on at EL1 through the UART's
     // kernel-half mapping (`el1_entry`).
     crate::early_println!("🥾 MMU on, dropping to EL1");
@@ -648,10 +660,9 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             ttbr1,
             vbar,
             el1_entry as *const u8 as u64,
-            // el1_stack_top, // This is solely for the kernel
-            // Implementation status: pass it separately as the SP_EL1 trap
-            // stack, leaving the linked fixture's execution stack in SP_EL0.
-            execution_stack_top,
+            // The linked fixture runs EL1t on the init execution stack; the
+            // trap stack is SP_EL1.
+            Some(execution_stack_top),
             el1_stack_top,
             boot_core_record,
         );
@@ -685,6 +696,7 @@ fn el1_entry() -> ! {
         record.affinity,
         record.trap_stack_top
     );
+    secondary::wait_online();
     if let Some(base) = early_console::uart_kernel_half() {
         // SAFETY: the paired nucleus is mapped; the setter is a boot-only
         // store, and `base` is the PL011 mapped as device memory for good.

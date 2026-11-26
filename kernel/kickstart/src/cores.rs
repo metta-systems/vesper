@@ -89,6 +89,17 @@ impl Cores {
         self.plan.boot_index
     }
 
+    /// The planned cores' affinities, by logical index.
+    pub fn affinities(&self) -> &[u64] {
+        &self.plan.affinities[..self.plan.count]
+    }
+
+    /// Physical top of core `index`'s trap stack, which its secondary entry runs on at
+    /// EL2 before the stack is used at its kernel virtual address.
+    pub fn stack_physical_top(&self, index: usize) -> u64 {
+        self.stacks[index] + TRAP_STACK_BYTES as u64
+    }
+
     /// Kernel virtual address of core `index`'s record.
     pub fn record_virt(&self, index: usize) -> u64 {
         PHYSICAL_KERNEL_WINDOW + self.records.as_u64() + (index * size_of::<CoreRecord>()) as u64

@@ -63,7 +63,7 @@ global_asm!(
 
 /// Entrypoint of the Rust code.
 ///
-/// Checks if we started in EL2/EL3. If so, proceeds with setting up EL1.
+/// Checks that we started in EL2. If so, proceeds with setting up EL1.
 ///
 /// This is invoked from the boot.s asm `_boot_cores` fn, does arch-specific init
 /// and passes control to the kernel boot function `reset()`.
@@ -81,15 +81,28 @@ pub unsafe extern "C" fn _startup_in_rust(dtb: u32, loader_x1: u64, loader_x2: u
     // On entry, w0 should contain the dtb address.
     // For non-primary cores it contains 0.
 
-    // Can't match values with dots in names in match, so use intermediate consts.
-    #[cfg(feature = "qemu")]
-    const EL3: u64 = CurrentEL::EL::EL3.value;
-    const EL2: u64 = CurrentEL::EL::EL2.value;
-
     // BSS is zeroed: keep what the loader left in x1 and x2 for later.
     LOADER_REGISTERS[0].store(loader_x1, Ordering::Relaxed);
     LOADER_REGISTERS[1].store(loader_x2, Ordering::Relaxed);
 
+    configure_el2();
+
+    // The firmware and QEMU enter the kernel at EL2. Elsewhere memory mappings cannot be
+    // configured: fail instead.
+    if CurrentEL.get() == CurrentEL::EL::EL2.value {
+        reset(dtb)
+    }
+    endless_sleep()
+}
+
+/// The EL2 state every core sets before it drops to EL1: the boot core from
+/// [`_startup_in_rust`], each secondary core from Kickstart's secondary entry. Reset
+/// leaves these registers UNKNOWN on every core.
+///
+/// Touches no memory beyond the stack: a secondary core calls it with its MMU off, before
+/// anything else.
+#[unsafe(link_section = ".text.boot")]
+pub fn configure_el2() {
     // Enable timer counter registers for EL1 - FIXME can be done later after reset
     CNTHCTL_EL2.write(CNTHCTL_EL2::EL1PCEN::SET + CNTHCTL_EL2::EL1PCTEN::SET);
 
@@ -141,67 +154,6 @@ pub unsafe extern "C" fn _startup_in_rust(dtb: u32, loader_x1: u64, loader_x2: u
             + CPTR_EL2::TZ::Trap
             + CPTR_EL2::RES1_7_0::SET,
     );
-
-    match CurrentEL.get() {
-        #[cfg(feature = "qemu")]
-        EL3 => setup_and_enter_el2_from_el3(dtb),
-        EL2 => reset(dtb),
-        // Cannot configure memory mappings in all other cases, fail instead!
-        _ => endless_sleep(),
-    }
-}
-
-/// QEMU boot-up sequence.
-///
-/// Processors enter EL3 after reset.
-/// ref: http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf
-/// section: 5.5.1
-/// However, GPU init code must be switching it down to EL2.
-/// QEMU can't emulate Raspberry Pi properly (no VC boot code), so it starts in EL3.
-/// FIXME: new qemu has seemingly fixed this, so probably not needed anymore, double check!
-///
-/// Prepare and execute transition from EL3 to EL2.
-/// (from https://github.com/s-matyukevich/raspberry-pi-os/blob/master/docs/lesson02/rpi-os.md)
-#[cfg(feature = "qemu")]
-#[unsafe(link_section = ".text.boot")]
-#[inline]
-fn setup_and_enter_el2_from_el3(dtb: u32) -> ! {
-    // Set Secure Configuration Register in EL3.
-    SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
-
-    // Set Saved Program Status Register in EL3.
-    // Set up a simulated exception return.
-    //
-    // Fake a saved program status, where all interrupts were
-    // masked and SP_EL2 was used as a stack pointer.
-    SPSR_EL3.write(
-        SPSR_EL3::D::Masked
-            + SPSR_EL3::A::Masked
-            + SPSR_EL3::I::Masked
-            + SPSR_EL3::F::Masked
-            + SPSR_EL3::M::EL2h, // Use SP_EL2
-    );
-
-    // Make the Exception Link Register in EL3 point to reset().
-    ELR_EL3.set(reset as *const () as u64);
-
-    unsafe extern "Rust" {
-        // Stack top
-        static __STACK_TOP: UnsafeCell<()>;
-    }
-    // Set up SP_EL2 (stack pointer), which will be used by EL2 once
-    // we "return" to it.
-    // SAFETY: Pure asm.
-    unsafe {
-        SP_EL2.set(__STACK_TOP.get() as u64);
-    }
-    // Use `eret` to "return" to EL2. This will result in execution of
-    // `reset()` in EL2.
-    // Load DTB address into w0 prior to eret.
-    unsafe {
-        core::arch::asm!("eret", in("w0") dtb);
-        core::hint::unreachable_unchecked()
-    }
 }
 
 // Enter Rust code in EL2.
