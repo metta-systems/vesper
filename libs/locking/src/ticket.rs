@@ -64,6 +64,39 @@ impl TicketLock {
         self.holder.store(holder, Ordering::Relaxed);
     }
 
+    /// Take the lock for `holder` if it is free right now, without waiting; whether it
+    /// was taken. For a path that must not wait on a lock that may never be released,
+    /// such as a panic.
+    ///
+    /// # Panics
+    ///
+    /// If `holder` is zero, or already holds the lock.
+    pub fn try_acquire(&self, holder: u32) -> bool {
+        assert_ne!(holder, NO_HOLDER, "a ticket lock holder is nonzero");
+        assert_ne!(
+            self.holder.load(Ordering::Relaxed),
+            holder,
+            "ticket lock taken again by its holder {holder}"
+        );
+        // Free means no ticket is out: `next == serving`. Taking ticket `serving` then
+        // makes it ours at once; a ticket taken by anyone in between fails the exchange.
+        let serving = self.serving.load(Ordering::Acquire);
+        if self
+            .next
+            .compare_exchange(
+                serving,
+                serving.wrapping_add(1),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        self.holder.store(holder, Ordering::Relaxed);
+        true
+    }
+
     /// Let the next waiter in.
     ///
     /// # Panics

@@ -313,6 +313,23 @@ The panic handler stops the other cores with the Halt IPI. Semihosting and the b
 UART print from several cores, so a line must be written under a lock (the kernel lock in
 the kernel; `libs/log`'s `static mut LOGGER` is set once at boot and is fine).
 
+Until the Halt IPI exists (SMP3), a flag does it:
+
+- The first core to panic claims the panic (`PANICKED_CORE`, its kernel-lock holder id)
+  and sends `sev`.
+- A core that panics after another parks at once, printing nothing. The same core
+  panicking again still ends in `libmachine`'s re-entry guard.
+- The other cores park (interrupts masked, `wfe` forever) where they look at the flag:
+  - a secondary waits on `wfe` in `nucleus_secondary_idle`, so the `sev` wakes it;
+  - the boot core's idle loop looks after each wake, before it takes the kernel lock again.
+
+  A core inside a kernel entry finishes it; a core waiting for the lock waits on.
+- The panicking core prints under the kernel lock. If it does not hold the lock, it takes
+  it with `TicketLock::try_acquire` for at most 1 s, then prints anyway: the panic may be
+  in the lock itself.
+- Every other kernel line is printed inside a kernel entry, so under the lock. The
+  secondaries print nothing.
+
 ## 4. Scheduling
 
 The selected model already carries a CPU: dispatch names one, a Time belongs to one

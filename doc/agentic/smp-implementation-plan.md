@@ -27,8 +27,6 @@ Secondaries run no Threads and never enter the kernel. Order: QEMU `raspi3b` and
 
 ## SMP2: one kernel lock and per-core state
 
-- [ ] Panic: park the other cores through a flag they poll in idle until SMP3; console and
-  semihosting lines under the lock.
 - [ ] All existing e2e tests pass unchanged with the secondaries online and idle.
 
 ## SMP3: inter-processor interrupts
@@ -58,7 +56,7 @@ SMP3.
 Needs: SMP4. Nothing is pinned by default, so components run unpinned and what breaks is
 fixed.
 
-- [ ] The pin declaration: a core byte in `driver_threads!` entries and an
+- [ ] The pin declaration: a core bitmask in `driver_threads!` entries and an
   `entry_cpu!`-style section for the first Thread, a manifest override in `image.toml`,
   read by Kickstart and handed to the dispatchers like `DispatchInit::priorities`.
 - [ ] The root dispatchers place unpinned Threads across cores at run time.

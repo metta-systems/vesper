@@ -185,6 +185,73 @@ mod tests {
     }
 
     #[test]
+    fn try_acquire_takes_only_a_free_lock() {
+        let lock = Arc::new(TicketLock::new());
+        assert!(lock.try_acquire(1));
+        assert!(lock.is_held_by(1));
+        // Held: another holder does not get it, and nothing waits.
+        assert!(!lock.try_acquire(2));
+        assert_eq!(lock.waiting(), 0);
+        lock.release(1);
+        assert!(lock.try_acquire(2));
+        // A waiter that took a ticket keeps its place: a try while it waits fails.
+        let waiter_lock = Arc::clone(&lock);
+        let waiter = thread::spawn(move || {
+            waiter_lock.acquire(3);
+            waiter_lock.release(3);
+        });
+        while lock.waiting() < 1 {
+            thread::yield_now();
+        }
+        lock.release(2);
+        waiter.join().expect("the waiter panicked");
+        assert!(lock.try_acquire(4));
+        lock.release(4);
+        assert_eq!(lock.holder(), None);
+    }
+
+    #[test]
+    fn try_acquire_and_acquire_exclude_each_other() {
+        const ROUNDS: u64 = 20_000;
+        let guarded = Arc::new(Guarded {
+            lock: TicketLock::new(),
+            inside: AtomicBool::new(false),
+            count: UnsafeCell::new(0),
+        });
+        let workers: Vec<_> = (1..=4_u32)
+            .map(|holder| {
+                let guarded = Arc::clone(&guarded);
+                thread::spawn(move || {
+                    for _ in 0..ROUNDS {
+                        if holder % 2 == 0 {
+                            while !guarded.lock.try_acquire(holder) {
+                                thread::yield_now();
+                            }
+                        } else {
+                            guarded.lock.acquire(holder);
+                        }
+                        assert!(
+                            !guarded.inside.swap(true, Ordering::Relaxed),
+                            "two holders inside at once"
+                        );
+                        // SAFETY: only the holder touches the counter.
+                        unsafe {
+                            *guarded.count.get() += 1;
+                        }
+                        guarded.inside.store(false, Ordering::Relaxed);
+                        guarded.lock.release(holder);
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("a holder panicked");
+        }
+        // SAFETY: every holder has finished.
+        assert_eq!(unsafe { *guarded.count.get() }, 4 * ROUNDS);
+    }
+
+    #[test]
     #[should_panic(expected = "taken again by its holder 2")]
     fn a_holder_asking_again_panics_instead_of_waiting_for_itself() {
         let lock = TicketLock::new();

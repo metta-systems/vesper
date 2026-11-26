@@ -88,6 +88,12 @@ pub fn current() -> &'static CoreRecord {
     unsafe { &*(address as *const CoreRecord) }
 }
 
+/// The record of the core this runs on, or `None` when `TPIDR_EL1` names none: for the
+/// panic path, which must not panic again.
+pub fn try_current() -> Option<&'static CoreRecord> {
+    (TPIDR_EL1.get() != 0).then(current)
+}
+
 /// The record of the nucleus test kernels, which run on one core with no Kickstart and
 /// so no `TPIDR_EL1` record.
 #[cfg(test)]

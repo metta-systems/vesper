@@ -26,7 +26,7 @@ use {
     core::{
         arch::asm,
         panic::PanicInfo,
-        sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
         time::Duration,
     },
     libcpu::endless_sleep,
@@ -97,7 +97,61 @@ impl KernelLock {
         let holder = this_core_holder();
         self.0.release(holder);
         wait();
+        // Another core's panic stops this one here, holding nothing.
+        if another_core_panicked() {
+            park_for_panic()
+        }
         self.0.acquire(holder);
+    }
+}
+
+/// The kernel-lock holder id of the core that panicked first, or 0. The other cores
+/// park when they next look: in their idle loops, until the Halt IPI (SMP3) stops them
+/// wherever they are.
+static PANICKED_CORE: AtomicU32 = AtomicU32::new(0);
+
+/// Whether a core other than this one has panicked.
+fn another_core_panicked() -> bool {
+    let panicked = PANICKED_CORE.load(Ordering::Acquire);
+    panicked != 0 && panicked != this_core_holder()
+}
+
+/// Stop this core for another core's panic: interrupts masked, touching nothing shared.
+fn park_for_panic() -> ! {
+    libexception::asynchronous::local_irq_mask();
+    loop {
+        aarch64_cpu::asm::wfe();
+    }
+}
+
+/// How long the panicking core waits for the kernel lock before it prints anyway.
+const PANIC_LOCK_WAIT_MS: u64 = 1000;
+
+/// Claim the panic for this core: the first core to panic prints, under the kernel lock,
+/// and wakes the others to park; a core that panics after another parks at once,
+/// printing nothing. The panicking core waits at most [`PANIC_LOCK_WAIT_MS`] for the
+/// lock: the panic may be in the lock itself, or the holder may never let it go.
+fn claim_panic() {
+    // `u32::MAX` names a core without a record, which nothing else uses.
+    let holder = nucleus::core_record::try_current().map_or(u32::MAX, |record| record.index + 1);
+    match PANICKED_CORE.compare_exchange(0, holder, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => {}
+        // This core panicked again while panicking: `libmachine` ends that.
+        Err(first) if first == holder => return,
+        Err(_) => park_for_panic(),
+    }
+    // The other cores wait in `wfe` (secondaries) or look after their next interrupt.
+    aarch64_cpu::asm::sev();
+    if holder == u32::MAX || KERNEL_LOCK.0.is_held_by(holder) {
+        return;
+    }
+    let ticks = nucleus::timer::frequency() * PANIC_LOCK_WAIT_MS / 1000;
+    let start = nucleus::timer::counter();
+    while !KERNEL_LOCK.0.try_acquire(holder) {
+        if nucleus::timer::counter().saturating_sub(start) > ticks {
+            return;
+        }
+        core::hint::spin_loop();
     }
 }
 
@@ -187,10 +241,11 @@ pub unsafe extern "C" fn nucleus_set_board_console(base: usize) {
 /// entry jumps here at `EL1h` on the core's trap stack, interrupts masked, MMU and caches
 /// on, once the core is online.
 ///
-/// The core touches no nucleus state and takes no lock: it only waits. Its `TTBR0_EL1`
-/// still names Kickstart's identity map, which is Kickstart's memory, so translation
-/// walks through `TTBR0` stop here; its timers are turned off, since their reset state is
-/// UNKNOWN and a pending one would end every `wfi`.
+/// The core touches no nucleus state and takes no lock: it waits on `wfe`, and parks
+/// when another core has panicked. Its `TTBR0_EL1` still names Kickstart's identity map,
+/// which is Kickstart's memory, so translation walks through `TTBR0` stop here; its
+/// timers are turned off, since their reset state is UNKNOWN and a pending one would end
+/// every wait.
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.bootstrap")]
 pub extern "C" fn nucleus_secondary_idle() -> ! {
@@ -211,8 +266,12 @@ pub extern "C" fn nucleus_secondary_idle() -> ! {
     }
     CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::CLEAR + CNTP_CTL_EL0::IMASK::SET);
     CNTV_CTL_EL0.write(CNTV_CTL_EL0::ENABLE::CLEAR + CNTV_CTL_EL0::IMASK::SET);
+    // `wfe`, so that the `sev` of a panicking core wakes it to park.
     loop {
-        aarch64_cpu::asm::wfi();
+        if another_core_panicked() {
+            park_for_panic()
+        }
+        aarch64_cpu::asm::wfe();
     }
 }
 
@@ -264,6 +323,8 @@ pub fn nucleus_anchor() -> Option<*mut Nucleus<nucleus::objects::ArchObjectsImpl
 
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
+    libexception::asynchronous::local_irq_mask();
+    claim_panic();
     // Route panic output through the console logger: without an installed
     // logger, liblog drops every message on the default NopLogger, so a
     // nucleus panic would silently degrade into a bare hang. In QEMU builds
