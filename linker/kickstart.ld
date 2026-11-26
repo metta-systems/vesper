@@ -11,11 +11,11 @@ __INIT_BASE = 0x80000;
 
 SECTIONS
 {
-    /* Stack for init thread (grows down) */
-    . = 4K;
-    __STACK_BOTTOM = .;
+    /* The low 512 KiB below the image stay the firmware's: the spin-table
+     * release words of the Raspberry Pi 3 and 4 (0xd8..0xf0) and TF-A on the
+     * Pi 5 (`/reserved-memory/atf@0`, 0..0x80000). The init stack is after
+     * the image instead. */
     . = __INIT_BASE;
-    __STACK_TOP = .;
 
     __INIT_START = .;
 
@@ -62,6 +62,13 @@ SECTIONS
 
     . = ALIGN(4K);
     __INIT_END = .;
+
+    /* Stack for the init thread (grows down), outside the image so the image
+     * and the stack can be mapped separately. Not loaded: the RAM after the
+     * image file. */
+    __STACK_BOTTOM = .;
+    . += 512K;
+    __STACK_TOP = .;
 
     /* Free memory starts here - used for kernel placement */
     . = ALIGN(2M);  /* 2MB aligned for huge pages if desired */

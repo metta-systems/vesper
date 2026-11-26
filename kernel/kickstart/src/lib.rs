@@ -204,15 +204,20 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
         });
     }
 
-    // 4. List unusable memory, and remove it from the memory regions for the allocator.
-    for region in device_tree.reserved_memory() {
+    // 4. List unusable memory, and remove it from the memory regions for the allocator:
+    // the `/memreserve/` entries and the `no-map` nodes of `/reserved-memory` (the
+    // Pi 5's resident TF-A), which may name the same pages.
+    for region in device_tree
+        .reserved_memory()
+        .chain(device_tree.no_map_reserved_memory())
+    {
         semi::println!(
             "🌴 Reserved memory {:?} bytes at {:?}",
             region.size,
             region.start
         );
         BOOT_INFO.lock(|bi| {
-            bi.insert_used_region(
+            bi.insert_reserved_region(
                 PhysAddr::new(region.start),
                 PhysAddr::new(region.start + region.size),
                 AttributeFields::default(),
@@ -630,9 +635,10 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     // EL1 starts in `el1_entry`, which goes on to `run_entry`.
     RUN_ENTRY.store(run_entry, Ordering::Relaxed);
     // SAFETY: Only the boot core is active at EL2 using SP_EL2. The boot image
-    // and its low stack are identity-mapped; vectors and the distinct persistent
-    // trap stack are high-mapped. Both stack tops are page-aligned. This terminal
-    // transition abandons the EL2 call chain before the low stack is reused.
+    // and its execution stack (right after it) are identity-mapped; vectors and
+    // the distinct persistent trap stack are high-mapped. Both stack tops are
+    // page-aligned. This terminal transition abandons the EL2 call chain before
+    // the execution stack is reused.
     unsafe {
         el_switch::enable_mmu_and_drop_to_el1(
             ttbr0,
@@ -641,7 +647,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             el1_entry as *const u8 as u64,
             // el1_stack_top, // This is solely for the kernel
             // Implementation status: pass it separately as the SP_EL1 trap
-            // stack, leaving the linked fixture's low execution stack in SP_EL0.
+            // stack, leaving the linked fixture's execution stack in SP_EL0.
             execution_stack_top,
             el1_stack_top,
         );

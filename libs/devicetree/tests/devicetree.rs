@@ -772,6 +772,26 @@ mod tests {
     }
 
     #[test]
+    fn no_map_reserved_memory_lists_resident_firmware_only() {
+        // The Pi 5 keeps TF-A in its low 512 KiB; its disabled, empty bootloader
+        // nvram nodes and the run-time CMA pool are no reservations.
+        with_tree(RPI5, |tree| {
+            assert_eq!(
+                tree.no_map_reserved_memory().collect::<Vec<_>>(),
+                [Region {
+                    start: 0,
+                    size: 0x8_0000
+                }]
+            );
+        });
+        for dtb in [RPI3, RPI4] {
+            with_tree(dtb, |tree| {
+                assert_eq!(tree.no_map_reserved_memory().count(), 0);
+            });
+        }
+    }
+
+    #[test]
     fn devices_are_translated_named_and_exclude_memory() {
         with_tree(RPI3, |tree| {
             let local = tree

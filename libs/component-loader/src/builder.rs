@@ -282,7 +282,7 @@ impl Builder<'_> {
     }
 
     /// Map the retained init image (identity VA, RW+X) into every target
-    /// root, and the retained low execution stack (RW) into the first
+    /// root, and the retained execution stack (RW) into the first
     /// target only.
     ///
     /// Every root maps the *same* physical image pages: each page is granted

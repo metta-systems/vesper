@@ -30,7 +30,6 @@ ENTRY(_start)
  */
 PHDRS
 {
-    segment_boot_core_stack PT_LOAD FLAGS(6); /* RW */
     segment_start_code      PT_LOAD FLAGS(5); /* RX */
     segment_code            PT_LOAD FLAGS(5); /* RX */
     segment_data            PT_LOAD FLAGS(6); /* RW */
@@ -38,18 +37,10 @@ PHDRS
 
 SECTIONS
 {
-    /***********************************************************************************************
-    * Boot Core Stack
-    ***********************************************************************************************/
-    .boot_core_stack (NOLOAD) :
-    {
-                                             /*   ^             */
-                                             /*   | stack       */
-        . += __rpi_phys_binary_load_addr;    /*   | growth      */
-                                             /*   | direction   */
-        __boot_core_stack_top_exclusive = .; /*   |             */
-    } :segment_boot_core_stack
-
+    /* Nothing below the load address: the low 512 KiB stay the firmware's (the
+     * spin-table release words of the Raspberry Pi 3 and 4 at 0xd8..0xf0, TF-A
+     * on the Pi 5 at 0..0x80000). The boot core's stack follows the relocated
+     * BSS instead. */
     . = __rpi_phys_binary_load_addr;
     .text :
     {
@@ -105,6 +96,18 @@ SECTIONS
         *(COMMON)
         . = ALIGN(16);
         __BSS_END = .;
+    } :segment_data
+
+    /***********************************************************************************************
+    * Boot Core Stack, after the relocated image: above the kernel's load window
+    ***********************************************************************************************/
+    .boot_core_stack (NOLOAD) : ALIGN(16)
+    {
+                                             /*   ^             */
+                                             /*   | stack       */
+        . += 0x20000;                        /*   | growth      */
+                                             /*   | direction   */
+        __boot_core_stack_top_exclusive = .; /*   |             */
     } :segment_data
 
     /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.boot*)}
