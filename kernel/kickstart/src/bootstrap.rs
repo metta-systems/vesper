@@ -695,19 +695,23 @@ const VIDEO_REACH: u64 = 1 << 30;
 const VIDEO_END_ALIGNMENT: u64 = 1 << 20;
 
 /// `[start, end)` of the memory the `VideoCore` firmware keeps for itself and
-/// puts the framebuffer in, which the device tree does not list: from the top
-/// of the RAM it lists to the lowest device register, rounded down, but not
-/// beyond the first gigabyte. `None` when RAM leaves no such gap.
+/// puts the framebuffer in, outside the RAM the device tree's `/memory` nodes
+/// list: from the top of that RAM to the lowest device register, rounded
+/// down, but not beyond the first gigabyte. `None` when RAM leaves no such
+/// gap.
+///
+/// The top of RAM is the device tree's, not the highest region Kickstart
+/// keeps: the Pi 3 and 4 firmware also names this memory in `/memreserve/`,
+/// which Kickstart records as reserved so nothing allocates from it.
 fn video_memory_range() -> Option<(u64, u64)> {
+    let ram_top = crate::device_tree::at_el1()
+        .memory()
+        .filter(|region| region.start < VIDEO_REACH)
+        .map(|region| region.start + region.size)
+        .max()?;
     BOOT_INFO.lock(|boot_info| {
         let is_device =
             |region: &&BootInfoMemRegion| region.attributes.mem_attributes == MemAttributes::Device;
-        let ram_top = boot_info
-            .iter()
-            .filter(|region| !region.is_empty() && !is_device(region))
-            .filter(|region| region.start_inclusive.as_u64() < VIDEO_REACH)
-            .map(|region| region.end_exclusive.as_u64())
-            .max()?;
         let lowest_device = boot_info
             .used_regions()
             .filter(is_device)
