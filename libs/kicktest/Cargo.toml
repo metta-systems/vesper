@@ -18,6 +18,9 @@ default = []
 debug_kernel = ["kickstart/debug_kernel", "libobject/debug_kernel", "nucleus/debug_kernel"]
 # Under QEMU a panic exits through semihosting with a failure status.
 qemu = ["kickstart/qemu", "nucleus/qemu"]
+# The suite runs on core 1: `dispatcher::suite_root` names core 1's roots, so
+# `dispatcher::init` moves the boot Thread there.
+on_core1 = []
 
 [dependencies]
 aarch64-cpu = { workspace = true }
@@ -29,6 +32,7 @@ libcpu = { workspace = true }
 libdevicetree = { workspace = true }
 libexception = { workspace = true }
 libimage = { workspace = true }
+libirqchip = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }

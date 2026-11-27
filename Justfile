@@ -248,11 +248,11 @@ _build-test-kernel crate board=boards features=test_kernel_features crate_featur
 #
 # `build` builds the image for the default board set, which `machine` (`rpi3` or
 # `rpi4`, QEMU's raspi3b or raspi4b with that board's tree) must be in.
-_run-test-kernel crate build=('_build-test-kernel ' + crate) machine='rpi3' features=test_kernel_features clock_opts='' config=(boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix):
+_run-test-kernel crate build=('_build-test-kernel ' + crate) machine='rpi3' features=test_kernel_features clock_opts='' variant='' config=(boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix):
     "{{ just_executable() }}" {{ build }}
     {{ qemu }} -M {{ if machine == 'rpi3' { 'raspi3b' } else { 'raspi4b' } }} {{ qemu_io_opts }} {{ qemu_test_opts }} {{ clock_opts }} \
       -dtb "{{ if machine == 'rpi3' { rpi3_dtb } else { rpi4_dtb } }}" \
-      -kernel "{{ images_dir / crate + '-' + config + '.bin' }}"
+      -kernel "{{ images_dir / crate + (if variant == '' { '' } else { '-' + variant }) + '-' + config + '.bin' }}"
 
 # Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
 _build-endpoint-test board=boards features='qemu': (_build-components board features) (_build-test-kernel 'endpoint-test' board features)
@@ -762,7 +762,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-smp _test-smp-rpi4 _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-display _test-every _test-layout _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-spi _test-board _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-smp _test-smp-rpi4 _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-sync-core1 _test-sync-core1-rpi4 _test-ppc-core1 _test-ppc-core1-rpi4 _test-preempt-core1 _test-preempt-core1-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-display _test-every _test-layout _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-spi _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -800,6 +800,12 @@ _test-ppc: (_run-test-kernel 'ppc-test')
 # Boot sync-test: Notification, EventCount, blocking waits through the Bounce Thread, Thread.Retire
 _test-sync: (_run-test-kernel 'sync-test')
 
+# Boot ppc-test and sync-test with their suites on core 1 (the crates' `on_core1`): after its provisioning the boot Thread moves to core 1, under the test dispatcher bound to core 1's root Scheduler, and the checks run there as on the boot core
+_test-ppc-core1: (_run-test-kernel 'ppc-test' ('_build-test-kernel ppc-test ' + boards + ' ' + test_kernel_features + ' on_core1') 'rpi3' test_kernel_features '' 'on_core1')
+_test-ppc-core1-rpi4: (_run-test-kernel 'ppc-test' ('_build-test-kernel ppc-test ' + boards + ' ' + test_kernel_features + ' on_core1') 'rpi4' test_kernel_features '' 'on_core1')
+_test-sync-core1: (_run-test-kernel 'sync-test' ('_build-test-kernel sync-test ' + boards + ' ' + test_kernel_features + ' on_core1') 'rpi3' test_kernel_features '' 'on_core1')
+_test-sync-core1-rpi4: (_run-test-kernel 'sync-test' ('_build-test-kernel sync-test ' + boards + ' ' + test_kernel_features + ' on_core1') 'rpi4' test_kernel_features '' 'on_core1')
+
 # Boot memory-test: PageTable/Frame mapping, alias policy, ASIDs, activation and TLB invalidation, AddressSpace.Retire
 _test-memory: (_run-test-kernel 'memory-test')
 
@@ -817,6 +823,13 @@ _test-preempt: (_run-test-kernel 'preempt-test' '_build-preempt-test' 'rpi3' tes
 
 # Boot preempt-test on the Raspberry Pi 4 machine: the same image, ticking through the GICv2 component
 _test-preempt-rpi4: (_run-test-kernel 'preempt-test' '_build-preempt-test' 'rpi4' test_kernel_features qemu_icount_opts)
+
+# Build preempt-test with its suite on core 1 (its `on_core1`)
+_build-preempt-test-core1 board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board test_kernel_features 'on_core1')
+
+# Boot preempt-test with its suite on core 1, on both machines: core 1's timer ticks through the BCM2836 local controller and through the GIC
+_test-preempt-core1: (_run-test-kernel 'preempt-test' '_build-preempt-test-core1' 'rpi3' test_kernel_features qemu_icount_opts 'on_core1')
+_test-preempt-core1-rpi4: (_run-test-kernel 'preempt-test' '_build-preempt-test-core1' 'rpi4' test_kernel_features qemu_icount_opts 'on_core1')
 
 # Boot dispatch-test: a userspace root dispatcher runs worker Threads round-robin through Scheduler.Dispatch
 _test-dispatch: (_run-test-kernel 'dispatch-test' '_build-dispatch-test' 'rpi3' test_kernel_features qemu_icount_opts)

@@ -149,6 +149,11 @@ impl Time {
         self.bound = Some(thread);
     }
 
+    /// End the binding: the Thread moved to a Time of another core.
+    pub fn unbind(&mut self) {
+        self.bound = None;
+    }
+
     /// Move `amount` from `source` into `destination`, on core `core`: both
     /// must be that core's Times. Returns the new (source, destination)
     /// states; the caller commits both or neither.

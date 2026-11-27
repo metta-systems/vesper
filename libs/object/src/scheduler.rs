@@ -361,8 +361,9 @@ impl SchedulerKey {
     /// it leaves reads `ThreadState::Donated`.
     ///
     /// Wire schema: `x2` Thread key, `x3` destination Scheduler key, `x4`
-    /// slot, `x5..x7` zero. Authority: `WRITE` on this Scheduler, the Thread
-    /// and the destination.
+    /// slot, `x5..x7` zero (`x5` the Time key of a move to another core:
+    /// [`Self::move_thread_to_core`]). Authority: `WRITE` on this Scheduler,
+    /// the Thread and the destination.
     pub fn move_thread(
         &self,
         thread: RawKey,
@@ -377,6 +378,38 @@ impl SchedulerKey {
                 thread.to_wire(),
                 destination.to_wire(),
                 u64::from(slot),
+            )
+        };
+        decode_syscall_result(result).map(|_| ())
+    }
+
+    /// `MoveThread` to a Scheduler of another core: invoked on the Thread's
+    /// owner, `destination` is any Scheduler of another core. The Thread's
+    /// own Time stays with this Scheduler with whatever budget it holds, no
+    /// longer bound, and the Thread is bound to `time`, an unbound Time of the
+    /// destination core. A wait
+    /// timeout of the Thread is counted on the destination core from then on.
+    ///
+    /// Wire schema: as [`Self::move_thread`], with `x5` the Time key.
+    /// Authority: `WRITE` on this Scheduler, the Thread, the destination and
+    /// the Time.
+    pub fn move_thread_to_core(
+        &self,
+        thread: RawKey,
+        destination: RawKey,
+        slot: u32,
+        time: RawKey,
+    ) -> Result<(), CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result = unsafe {
+            protected_call5(
+                self.key.to_wire(),
+                SchedulerOp::MoveThread as u64,
+                thread.to_wire(),
+                destination.to_wire(),
+                u64::from(slot),
+                time.to_wire(),
+                0,
             )
         };
         decode_syscall_result(result).map(|_| ())

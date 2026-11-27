@@ -353,4 +353,26 @@ fn move_thread_encodes_the_thread_destination_and_slot() {
     assert_eq!(len, 3);
     assert_eq!(op, SchedulerOp::MoveThread as u64);
     assert_eq!(args, [thread.to_wire(), destination.to_wire(), 7, 0, 0, 0]);
+
+    // To another core, with the destination core's Time in x5.
+    arm((0, 0, 0));
+    let time = RawKey::new(KeySlot(43), 3);
+    root_scheduler()
+        .move_thread_to_core(thread, destination, 7, time)
+        .map_err(CapError::code)
+        .unwrap();
+    let (_, op, args, len) = take_request();
+    assert_eq!(len, 5);
+    assert_eq!(op, SchedulerOp::MoveThread as u64);
+    assert_eq!(
+        args,
+        [
+            thread.to_wire(),
+            destination.to_wire(),
+            7,
+            time.to_wire(),
+            0,
+            0
+        ]
+    );
 }

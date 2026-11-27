@@ -586,7 +586,7 @@ fn move_thread<A: ArchObjects>(
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
-    let [thread_key, destination_key, slot, rest @ ..] = *args;
+    let [thread_key, destination_key, slot, time_key, rest @ ..] = *args;
     if rest.iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
@@ -614,12 +614,46 @@ fn move_thread<A: ArchObjects>(
         .and_then(|thread| thread.scheduler)
         .ok_or(CapError::InvalidOperation)?;
     let owner_parent = parent_of(owner, key, 0)?;
+    let core_of = |id: CarvedId| {
+        access
+            .resolve_object::<Scheduler>(id)
+            .ok()
+            .and_then(|object| object.core())
+    };
+    let (owner_core, destination_core) = (core_of(owner), core_of(destination));
+    // To another core (SMP C4.3(a), C4.3.1(a)): invoked on the owner, with the
+    // destination core's Time `x5` for the Thread. Its own Time keeps what
+    // budget it has and stays with the source, no longer bound (C4.2.1(a)).
+    if let (Some(from), Some(to)) = (owner_core, destination_core)
+        && from != to
+    {
+        if owner != scheduler {
+            return Err(CapError::InvalidOperation);
+        }
+        let time_key = RawKey::from_wire(time_key);
+        let time_id = lookup(access, caller, time_key, 5, ObjectType::TIME, Rights::WRITE)
+            .and_then(|entry| entry.carved_id().map_err(|e| e.with_key_operand(5)))?;
+        {
+            let time = access
+                .resolve_object::<Time>(time_id)
+                .map_err(|error| error.for_key(time_key, 5))?;
+            if time.core() != to || time.is_bound() {
+                return Err(CapError::InvalidOperation);
+            }
+        }
+        nucleus.move_thread(thread_id, destination, slot, Some(time_id))?;
+        semi::println!("✅ Scheduler::MoveThread(slot {slot}, to core {to})");
+        return Ok((0, 0));
+    }
+    if time_key != 0 {
+        return Err(CapError::InvalidOperation);
+    }
     let donation = owner == scheduler && destination_parent == Some(scheduler);
     let reclaim = destination == scheduler && owner_parent == Some(scheduler);
     if !(donation || reclaim) {
         return Err(CapError::InvalidOperation);
     }
-    nucleus.move_thread(thread_id, destination, slot)?;
+    nucleus.move_thread(thread_id, destination, slot, None)?;
     semi::println!("✅ Scheduler::MoveThread(slot {slot})");
     Ok((0, 0))
 }

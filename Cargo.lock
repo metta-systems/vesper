@@ -5614,6 +5614,7 @@ dependencies = [
  "vesper-devicetree",
  "vesper-exceptions",
  "vesper-image",
+ "vesper-irqchip",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",

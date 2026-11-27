@@ -1345,6 +1345,185 @@ fn move_thread_call(
     .map(|_| ())
 }
 
+/// A root Scheduler of core 1 with its record table on page 1, the
+/// configured and started Thread of `keys` on its empty core-0 Time, and a
+/// funded Time of core 1 at slot 34: what a cross-core move needs.
+fn cross_core_move_fixture(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    fixture_as: AddressSpaceId,
+) -> (Keys, RawKey, CarvedId, RawKey, CarvedId) {
+    clear_pages();
+    let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
+    let rw = Rights::READ | Rights::WRITE;
+    let (remote_key, remote) = install_scheduler(nucleus, 30, Scheduler::root(1));
+    let root_frame = frame_key(nucleus, 32, 0, rw, false, Some(fixture_as));
+    let remote_frame = frame_key(nucleus, 33, 1, rw, false, Some(fixture_as));
+    share(nucleus, &keys, root_frame, 0, 128).expect_ok();
+    cap_invoke(
+        nucleus,
+        remote_key,
+        SchedulerOp::ShareRegion as u64,
+        &[remote_frame.to_wire(), 0, 128, 0, 0, 0],
+    )
+    .map(|_| ())
+    .expect_ok();
+    configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+    assign(nucleus, &keys, 5).expect_ok();
+    start(nucleus, &keys).expect_ok();
+    let remote_time = test_arena::carve(Time::root(1, 1_000_000)).expect("arena exhausted");
+    let remote_time_key = install(
+        nucleus,
+        34,
+        KeyEntry::new_carved(remote_time, Rights::all(), 0),
+    );
+    (keys, remote_key, remote, remote_time_key, remote_time)
+}
+
+fn move_to_core_call(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    invoked: RawKey,
+    thread: RawKey,
+    destination: RawKey,
+    time: u64,
+) -> Result<(), CapError> {
+    cap_invoke(
+        nucleus,
+        invoked,
+        SchedulerOp::MoveThread as u64,
+        &[thread.to_wire(), destination.to_wire(), 3, time, 0, 0],
+    )
+    .map(|_| ())
+}
+
+fn time_object(id: CarvedId) -> &'static mut Time {
+    // SAFETY: a test-arena Time; serial tests.
+    unsafe { &mut *Carved::<Time>::validate(id).ok().expect("a carved Time") }
+}
+
+#[test_case]
+fn a_thread_moves_to_another_cores_scheduler_onto_a_time_of_that_core() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        let (keys, remote_key, remote, remote_time_key, remote_time) =
+            cross_core_move_fixture(nucleus, fixture_as);
+        let root_key = keys.scheduler;
+        let own_time = nucleus.thread(keys.thread_id).unwrap().time.unwrap();
+        let local_time = test_arena::carve(Time::root(0, 1_000_000)).expect("arena exhausted");
+        let local_time_key = install(
+            nucleus,
+            35,
+            KeyEntry::new_carved(local_time, Rights::all(), 0),
+        );
+        // Refused: a Time of this core, invoked on the destination, no Time.
+        for (invoked, time) in [
+            (root_key, local_time_key.to_wire()),
+            (remote_key, remote_time_key.to_wire()),
+        ] {
+            assert!(matches!(
+                move_to_core_call(nucleus, invoked, keys.thread, remote_key, time),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        assert!(move_to_core_call(nucleus, root_key, keys.thread, remote_key, 0).is_err());
+        // Its own Time still holds budget, which stays with the source.
+        *time_object(own_time) = Time::root(0, 1_000);
+        time_object(own_time).bind(keys.thread_id);
+        let root = keys_scheduler(nucleus, root_key);
+        assert_eq!(
+            nucleus.thread(keys.thread_id).unwrap().scheduler,
+            Some(root)
+        );
+
+        // Moved: core 1's Scheduler owns it, on core 1's Time; its old one
+        // stays behind with its budget, no longer bound.
+        move_to_core_call(
+            nucleus,
+            root_key,
+            keys.thread,
+            remote_key,
+            remote_time_key.to_wire(),
+        )
+        .expect_ok();
+        let thread = nucleus.thread(keys.thread_id).unwrap();
+        assert_eq!(thread.scheduler, Some(remote));
+        assert_eq!(thread.time, Some(remote_time));
+        assert!(!thread.awaiting_budget);
+        assert_eq!(time_object(own_time).bound_thread(), None);
+        let frequency = nucleus.counter_frequency();
+        assert_eq!(time_object(own_time).remaining_ns(frequency), 1_000);
+        assert_eq!(
+            time_object(remote_time).bound_thread(),
+            Some(keys.thread_id)
+        );
+        assert_eq!(scheduler_object(remote).thread_count(), 1);
+        assert_eq!(
+            thread_snapshot(5, 128).thread_state(),
+            Some(ThreadState::Donated)
+        );
+        // SAFETY: serial tests; core 1's page is live and aligned.
+        let arrived = unsafe { ThreadRecord::at((page_paddr(1) + 3 * 128) as *const u8) }
+            .try_snapshot(1)
+            .expect("a consistent record");
+        assert_eq!(arrived.thread_state(), Some(ThreadState::Runnable));
+    });
+}
+
+/// The Scheduler identity behind `key` in the caller's table.
+fn keys_scheduler(nucleus: &mut Nucleus<ArchObjectsImpl>, key: RawKey) -> CarvedId {
+    nucleus
+        .current_thread_table()
+        .unwrap()
+        .lookup(key, FIXTURE_GUARD)
+        .and_then(KeyEntry::carved_id)
+        .unwrap_or_else(|error| panic!("Scheduler lookup: {:?}", error.code()))
+}
+
+#[test_case]
+fn a_waiting_thread_moved_to_another_core_has_its_timeout_counted_there() {
+    use crate::objects::{completion::PendingKind, core_record};
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        let (keys, remote_key, _remote, remote_time_key, _remote_time) =
+            cross_core_move_fixture(nucleus, fixture_as);
+        let core_one = core_record::of(1).expect("the test kernels have a core 1 record");
+        core_one
+            .pending_ipis
+            .store(0, core::sync::atomic::Ordering::Relaxed);
+        // It waits on a Notification, with a timeout counted on core 0.
+        let notification = test_arena::carve(Notification::new()).expect("arena exhausted");
+        let record = nucleus
+            .pending
+            .block(keys.thread_id, PendingKind::NotificationAwait, notification)
+            .ok()
+            .expect("a pending record");
+        {
+            let thread = nucleus.thread_mut(keys.thread_id).unwrap();
+            let ExecutionContext::NotStarted { saved } = thread.context else {
+                panic!("a started Thread")
+            };
+            thread.context = ExecutionContext::Parked { saved, record };
+        }
+        nucleus.set_wait_timeout(record, 5_000_000).expect_ok();
+        assert!(nucleus.pending.next_deadline(0).is_some());
+
+        move_to_core_call(
+            nucleus,
+            keys.scheduler,
+            keys.thread,
+            remote_key,
+            remote_time_key.to_wire(),
+        )
+        .expect_ok();
+        // Core 1 counts it now, and is told to program its timer.
+        assert_eq!(nucleus.pending.next_deadline(0), None);
+        assert!(nucleus.pending.next_deadline(1).is_some());
+        let sent = core_one
+            .pending_ipis
+            .swap(0, core::sync::atomic::Ordering::Relaxed);
+        assert_ne!(sent & core_record::IPI_TIMER, 0);
+        // Leave nothing pending for the tests after.
+        nucleus.cancel_thread_pending(keys.thread_id).expect_ok();
+    });
+}
+
 #[test_case]
 fn a_thread_moves_down_to_a_child_and_back_and_the_old_record_reads_donated() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {

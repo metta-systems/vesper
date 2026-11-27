@@ -20,6 +20,8 @@ debug_kernel = ["kickstart/debug_kernel", "libkicktest/debug_kernel", "libobject
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["kickstart/jtag"]
 noserial = []
+# Run the suite on core 1 (`just _test-preempt-core1`, `_test-preempt-core1-rpi4`).
+on_core1 = ["libkicktest/on_core1"]
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = [
   "kickstart/qemu",
