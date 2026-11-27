@@ -714,8 +714,14 @@ const VIDEO_END_ALIGNMENT: u64 = 1 << 20;
 /// The top of RAM is the device tree's, not the highest region Kickstart
 /// keeps: the Pi 3 and 4 firmware also names this memory in `/memreserve/`,
 /// which Kickstart records as reserved so nothing allocates from it.
+///
+/// A framebuffer the firmware left and named in a `simple-framebuffer` node
+/// (the Pi 5's does) is video memory too: the range grows to cover it, in
+/// whole pages, unless that would reach RAM, a device or past the first
+/// gigabyte.
 fn video_memory_range() -> Option<(u64, u64)> {
-    let ram_top = crate::device_tree::at_el1()
+    let tree = crate::device_tree::at_el1();
+    let ram_top = tree
         .memory()
         .filter(|region| region.start < VIDEO_REACH)
         .map(|region| region.start + region.size)
@@ -723,14 +729,42 @@ fn video_memory_range() -> Option<(u64, u64)> {
     BOOT_INFO.lock(|boot_info| {
         let is_device =
             |region: &&BootInfoMemRegion| region.attributes.mem_attributes == MemAttributes::Device;
-        let lowest_device = boot_info
+        let lowest_device_start = boot_info
             .used_regions()
             .filter(is_device)
             .map(|region| region.start_inclusive.as_u64())
             .min()
             .unwrap_or(u64::MAX);
-        let end = lowest_device.min(VIDEO_REACH) & !(VIDEO_END_ALIGNMENT - 1);
-        let start = ram_top.next_multiple_of(DEVICE_PAGE);
+        let mut end = lowest_device_start.min(VIDEO_REACH) & !(VIDEO_END_ALIGNMENT - 1);
+        let mut start = ram_top.next_multiple_of(DEVICE_PAGE);
+        if start >= end {
+            (start, end) = (u64::MAX, 0);
+        }
+        for framebuffer in tree.simple_framebuffers() {
+            let framebuffer_start = framebuffer.start & !(DEVICE_PAGE - 1);
+            let framebuffer_end = (framebuffer.start + framebuffer.size).next_multiple_of(DEVICE_PAGE);
+            let grown = (start.min(framebuffer_start), end.max(framebuffer_end));
+            let overlaps = |other_start: u64, other_end: u64| other_start < grown.1 && grown.0 < other_end;
+            let blocked = grown.1 > VIDEO_REACH
+                || tree
+                    .memory()
+                    .any(|region| overlaps(region.start, region.start + region.size))
+                || boot_info.used_regions().filter(is_device).any(|region| {
+                    overlaps(region.start_inclusive.as_u64(), region.end_exclusive.as_u64())
+                });
+            if blocked {
+                crate::early_println!(
+                    "🥾 The firmware framebuffer at {:#x}+{:#x} overlaps RAM or a device: it is no video memory",
+                    framebuffer.start,
+                    framebuffer.size
+                );
+            } else {
+                (start, end) = grown;
+            }
+        }
+        crate::early_println!(
+            "🥾 Video memory {start:#x}..{end:#x}: RAM top {ram_top:#x}, lowest device at {lowest_device_start:#x}"
+        );
         (start < end).then_some((start, end))
     })
 }
