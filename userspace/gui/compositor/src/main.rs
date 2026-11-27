@@ -75,6 +75,7 @@ const fn format(display: DisplayFormat) -> Format {
         DisplayFormat::Xrgb8888 => Format::Xrgb8888,
         DisplayFormat::Xbgr8888 => Format::Xbgr8888,
         DisplayFormat::Rgb565Be => Format::Rgb565Be,
+        DisplayFormat::Rgb565 => Format::Rgb565,
     }
 }
 
@@ -163,7 +164,7 @@ fn set_up(init: &DriverInit, trace: &mut Trace) {
         .iter()
         .flatten()
         .map(|display| display.format)
-        .find(|format| *format != Format::Rgb565Be)
+        .find(|format| !format.is_rgb565())
         .unwrap_or(Format::Xrgb8888);
     trace!(trace, "compositor: drawing in {canvas:?}");
 

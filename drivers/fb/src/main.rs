@@ -105,8 +105,8 @@ mod component {
             ATTRIBUTE_WORDS, CONFIGURE_WORDS, EDID_WORDS, FramePlan, PAGE_BYTES,
             attributes_request, configure_request, covered_by,
             edid::{Edid, Modes, Timing},
-            edid_request, page_range, physical_address, read_allocation, read_attributes,
-            read_edid,
+            edid_request, page_range, physical_address, pixel_bytes, read_allocation,
+            read_attributes, read_edid,
         },
         libdevice_driver::{
             DriverInit, INIT_VA, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, Turnstile, driver_compatible,
@@ -130,6 +130,8 @@ mod component {
     static ADDRESS: AtomicU64 = AtomicU64::new(0);
     static BYTES: AtomicU64 = AtomicU64::new(0);
     static PIXEL_ORDER: AtomicU64 = AtomicU64::new(0);
+    /// Bytes per pixel of the configured mode, as its pitch shows them.
+    static PIXEL_BYTES: AtomicU32 = AtomicU32::new(4);
 
     /// The configured mode: its size in pixels and its pitch in bytes.
     static WIDTH: AtomicU32 = AtomicU32::new(0);
@@ -257,10 +259,33 @@ mod component {
         );
         let answer: [u32; ATTRIBUTE_WORDS] = exchange(&mailbox, &attributes_request())?;
         let attributes = read_attributes(&answer).map_err(firmware_error)?;
+        // The pitch tells the pixel size: the Raspberry Pi 5's firmware gives
+        // 16-bit pixels whatever depth is asked for, and reports the depth
+        // asked for.
+        let pixel_bytes = pixel_bytes(width, attributes.pitch);
         trace!(
             trace,
-            "fb:   pixel order {}, pitch {}", attributes.pixel_order, attributes.pitch
+            "fb:   pixel order {}, pitch {}, firmware depth {}, pixels {}",
+            attributes.pixel_order,
+            attributes.pitch,
+            attributes.depth,
+            match pixel_bytes {
+                Some(4) => "32-bit",
+                Some(2) => "16-bit",
+                _ => "of no size the pitch allows",
+            }
         );
+        let Some(pixel_bytes) = pixel_bytes else {
+            return Err(firmware_error(attributes.pitch));
+        };
+        if attributes.depth != pixel_bytes * 8 {
+            trace!(
+                trace,
+                "fb:   the firmware reports depth {} for {}-bit pixels: the pitch is trusted",
+                attributes.depth,
+                pixel_bytes * 8
+            );
+        }
         match attributes.pixel_order {
             0 | 1 => {}
             other => return Err(firmware_error(other)),
@@ -296,16 +321,19 @@ mod component {
             HEIGHT.load(Ordering::Acquire),
             PITCH.load(Ordering::Acquire),
             PIXEL_ORDER.load(Ordering::Acquire),
+            PIXEL_BYTES.load(Ordering::Acquire),
             ADDRESS.load(Ordering::Acquire),
         ) != (
             width,
             height,
             attributes.pitch,
             u64::from(attributes.pixel_order),
+            pixel_bytes,
             physical,
         );
         BYTES.store(u64::from(allocation.bytes), Ordering::Release);
         PIXEL_ORDER.store(u64::from(attributes.pixel_order), Ordering::Release);
+        PIXEL_BYTES.store(pixel_bytes, Ordering::Release);
         WIDTH.store(width, Ordering::Release);
         HEIGHT.store(height, Ordering::Release);
         PITCH.store(attributes.pitch, Ordering::Release);
@@ -453,11 +481,14 @@ mod component {
         }
     }
 
-    /// The `display_v1` format of the configured pixel order: the firmware's
-    /// BGR (0) has blue in the lowest byte of the pixel word, RGB (1) red
+    /// The `display_v1` format of the configured mode: 16-bit pixels are
+    /// 5-6-5, the low byte first; of 32-bit ones, the firmware's BGR (0) has
+    /// blue in the lowest byte of the pixel word, RGB (1) red
     /// (`libgraphics::PixelOrder`).
     fn format() -> Format {
-        if PIXEL_ORDER.load(Ordering::Acquire) == 0 {
+        if PIXEL_BYTES.load(Ordering::Acquire) == 2 {
+            Format::Rgb565
+        } else if PIXEL_ORDER.load(Ordering::Acquire) == 0 {
             Format::Xrgb8888
         } else {
             Format::Xbgr8888

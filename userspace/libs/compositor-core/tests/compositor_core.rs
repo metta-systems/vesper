@@ -780,6 +780,16 @@ mod drawing {
         let mut bytes = [0_u8; 4];
         convert_row(&row, Format::Xrgb8888, &mut bytes, Format::Rgb565Be);
         assert_eq!(bytes, [0xf8, 0x00, 0x00, 0x1f], "big-endian");
+        convert_row(&row, Format::Xrgb8888, &mut bytes, Format::Rgb565);
+        assert_eq!(bytes, [0x00, 0xf8, 0x1f, 0x00], "little-endian");
+        // From an xbgr8888 canvas, red is in the lowest byte.
+        convert_row(
+            &[0xff00_00ff],
+            Format::Xbgr8888,
+            &mut bytes[..2],
+            Format::Rgb565,
+        );
+        assert_eq!(bytes[..2], [0x00, 0xf8], "little-endian red from xbgr8888");
     }
 
     #[test]

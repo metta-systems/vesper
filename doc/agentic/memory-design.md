@@ -10,6 +10,10 @@ lifecycle) are in the
 
 ## Decisions
 
+### RAM Untypeds and reach (maintainer decision, 2026-11-28, (c))
+
+The boot Untyped, out of which Kickstart carves the nucleus's state and every component's memory, is placed in the first gigabyte of RAM when it fits there: the memory the `VideoCore` firmware reaches, and the 32-bit bus addresses of the mailbox and of devices that cannot DMA higher. On the Raspberry Pi 5 the allocator otherwise picked RAM above 4 GiB, which the mailbox cannot pass to the firmware. Planned next: every RAM region the device tree lists becomes RAM Untypeds (aligned blocks around what is used or reserved), and each component gets its memory from the lowest region its device's DMA reach and its firmware use allow; the RAM left over stays as Untypeds for a later memory manager.
+
 ### Mapping identity and context
 
 Mapping identity must contain enough information to locate and retire the real mapping: translation/protection context, virtual address/range, permissions/attributes, and lifetime identity as required by the backend. A compressed virtual address without context is not sufficient for arbitrary VSpace mappings. Avoid unexplained exclusions such as address zero or a 44-bit-only range caused by a storage shortcut.

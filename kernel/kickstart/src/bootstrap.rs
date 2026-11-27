@@ -287,9 +287,19 @@ fn carve_irq_table(
 /// later object — page tables, component `AddressSpace`s, fixture Threads — is
 /// carved from the boot Untyped by the continuation.
 pub fn bootstrap_nucleus() -> BootState {
-    // Allocate a power-of-2 boot region for the boot Untyped.
+    // Allocate a power-of-2 boot region for the boot Untyped, in the first
+    // gigabyte when it fits there: every component's memory comes from it,
+    // and the firmware (the mailbox's buffers) and 32-bit DMA reach only
+    // that (memory design: RAM Untypeds and reach). Elsewhere only if not.
     let boot_region = BOOT_INFO
-        .lock(|bi| bi.alloc_region(usize::from(BOOT_UNTYPED_SIZE_BITS), "Boot Untyped"))
+        .lock(|bi| {
+            bi.alloc_region_below(
+                usize::from(BOOT_UNTYPED_SIZE_BITS),
+                VIDEO_REACH,
+                "Boot Untyped",
+            )
+            .or_else(|_| bi.alloc_region(usize::from(BOOT_UNTYPED_SIZE_BITS), "Boot Untyped"))
+        })
         .expect("no free region for the boot Untyped");
 
     // Create the boot Untyped capability over that region.
@@ -687,7 +697,8 @@ fn device_page_runs(kernel_owned: &[(u64, u64)]) -> PageRuns {
     handed
 }
 
-/// The first gigabyte of physical memory: the part `VideoCore` can reach.
+/// The first gigabyte of physical memory: the part `VideoCore` can reach,
+/// where the firmware takes the mailbox's buffers from and 32-bit DMA works.
 const VIDEO_REACH: u64 = 1 << 30;
 
 /// The end of the video memory is rounded down to this, clear of any

@@ -93,6 +93,7 @@ local interface display_v1
         xrgb8888,     # 32-bit, blue in the lowest byte (the mailbox's bgr order)
         xbgr8888,     # 32-bit, red in the lowest byte (the mailbox's rgb order)
         rgb565_be,    # 16-bit, high byte first (the ILI9341's 65K format)
+        rgb565,       # 16-bit, low byte first (the Raspberry Pi 5 firmware's framebuffer)
     }
 
     ## Rotation as a set (bit n: n quarter turns clockwise), and one turn.
@@ -262,7 +263,10 @@ exceptions there take precedence over this sketch.
   code is in `compositor-core::blit`: `compose` and `present`, which calls
   `convert_row` once per row.
   - `xrgb8888` is a copy, and `xbgr8888` a swap.
-  - `rgb565_be` packs `r>>3, g>>2, b>>3` and stores the high byte first.
+  - `rgb565_be` packs `r>>3, g>>2, b>>3` and stores the high byte first;
+    `rgb565` packs the same and stores the low byte first.
+  - The canvas is the first 32-bit output's format; a 16-bit output is always
+    drawn by conversion.
 
   The loops work a row at a time on slices, and blending has no branch on
   alpha, only a final select, so the compiler vectorizes them. The compositor
