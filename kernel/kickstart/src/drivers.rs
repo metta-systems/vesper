@@ -74,7 +74,7 @@
 use {
     crate::{
         bootstrap::{
-            BootState, device_tree_blob, device_untypeds, interrupt_controllers,
+            BootState, CoreRoot, device_tree_blob, device_untypeds, interrupt_controllers,
             kernel_owned_device_ranges, video_untypeds,
         },
         device_tree,
@@ -89,15 +89,15 @@ use {
         loader::{StackRegion, update_init, write_init},
     },
     libdevice_driver::{
-        DATA_WINDOW_VA, DEVICE_TREE_VA, DEVICE_WINDOW_VA, DeviceBlock, DevicePage, DispatchInit,
-        DriverInit, ExportedArea, FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_PAGES, INIT_VA,
-        Interrupt, LAYOUT_BADGE, MAX_AREAS, MAX_DEVICE_PAGES, MAX_DEVICE_TREE_BYTES,
-        MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PCI_CHILDREN,
-        MAX_PINS, MAX_REGIONS, MAX_RESETS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, MAX_WINDOW_BLOCKS,
-        MSI_CONTROLLER, MSI_OWN, MapWindow, NO_BUS_ADDRESS, NO_PULL, NODE_PATH_BYTES, NONE_INDEX,
-        PAGE_FRAME, PAGE_UNTYPED, PCI_SPACE_IO, PCI_SPACE_MEMORY32, PCI_SPACE_MEMORY64, PciChild,
-        PciHost, PciWindow, PinSet, PinSetting, Priority, RESET_NAME_BYTES, Region, Reset,
-        ResourceRecord, STACK_REGION, StackSpan,
+        CoreDispatch, DATA_WINDOW_VA, DEVICE_TREE_VA, DEVICE_WINDOW_VA, DeviceBlock, DevicePage,
+        DispatchInit, DriverInit, ExportedArea, FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_PAGES,
+        INIT_VA, Interrupt, LAYOUT_BADGE, MAX_AREAS, MAX_DEVICE_PAGES, MAX_DEVICE_TREE_BYTES,
+        MAX_DISPATCH_CORES, MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS,
+        MAX_INTERRUPTS, MAX_PCI_CHILDREN, MAX_PINS, MAX_REGIONS, MAX_RESETS, MAX_RESOURCES,
+        MAX_VIDEO_BLOCKS, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN, MapWindow, NO_BUS_ADDRESS,
+        NO_PULL, NODE_PATH_BYTES, NONE_INDEX, PAGE_FRAME, PAGE_UNTYPED, PCI_SPACE_IO,
+        PCI_SPACE_MEMORY32, PCI_SPACE_MEMORY64, PciChild, PciHost, PciWindow, PinSet, PinSetting,
+        Priority, RESET_NAME_BYTES, Region, Reset, ResourceRecord, STACK_REGION, StackSpan,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
@@ -111,6 +111,7 @@ use {
         phandle, primecell_periphid, reg, regions, write_path,
     },
     libimage::{DriverImage, Extra, Import, Link, Provider},
+    libirqchip::MAX_CPUS,
     libmeddle_runtime::ImportRecord,
     libobject::{
         CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType,
@@ -183,6 +184,8 @@ pub struct BootKeys {
     pub untyped: RawKey,
     pub boot_time: RawKey,
     pub root_scheduler: RawKey,
+    /// Each online core's boot Time and root Scheduler, by logical index
+    pub core_roots: [Option<CoreRoot>; MAX_CPUS],
     pub irq_control: RawKey,
     pub boot_thread: RawKey,
     /// The debug console grant, which every component gets a `WRITE` copy of
@@ -197,6 +200,7 @@ impl BootKeys {
             untyped: boot.boot_untyped_key,
             boot_time: boot.boot_time_key,
             root_scheduler: boot.root_scheduler_key,
+            core_roots: boot.core_roots,
             irq_control: boot.irq_control_key,
             boot_thread: boot.boot_thread_key,
             #[cfg(feature = "debug_kernel")]
@@ -1035,7 +1039,8 @@ fn share_data_area(
     }
 }
 
-/// Where the root dispatcher sees the Scheduler's record table.
+/// Where the root dispatcher sees the record table of core 0's root
+/// Scheduler; core `i`'s follows at `RECORD_VA + i * CORE_RECORD_SPAN`.
 const RECORD_VA: u64 = 0x3c00_0000;
 
 /// Bytes between records: the nucleus's part of a record and nothing more.
@@ -1043,6 +1048,15 @@ const RECORD_STRIDE: u32 = 128;
 
 /// Records a Frame holds.
 const RECORDS_PER_FRAME: u32 = 4096 / RECORD_STRIDE;
+
+/// Most Frames of one core's record table: every managed Thread and the
+/// Scheduler's own record.
+#[expect(clippy::cast_possible_truncation, reason = "a few dozen Threads")]
+const CORE_RECORD_FRAMES: u32 = (MAX_MANAGED_THREADS as u32 + 1).div_ceil(RECORDS_PER_FRAME);
+
+/// Bytes of the dispatcher's address range each core's record table has.
+const CORE_RECORD_SPAN: u64 = CORE_RECORD_FRAMES as u64 * PAGE;
+const _: () = assert!(MAX_CPUS as u64 * CORE_RECORD_SPAN <= 1 << 21);
 
 /// Most Threads the root dispatcher manages: the driver instances' Threads
 /// (their first and up to `MAX_FURTHER_THREADS` further ones each) and the
@@ -1060,30 +1074,16 @@ struct ManagedThread {
 /// in slot `s` sits at `FIRST_THREAD_KEY_SLOT + s`.
 const FIRST_THREAD_KEY_SLOT: u32 = 256;
 
-/// Bind the loaded component `dispatcher` as the root Scheduler's dispatcher.
-///
-/// The Scheduler's record table is shared first: records for `managed` in
-/// slots 1 up, in Frames mapped read-only in the dispatcher's
-/// `AddressSpace`. The dispatcher receives the Scheduler, one key to each
-/// managed Thread and each one's priority, and where all of that is
-/// (`DriverInit::dispatch`). Binding starts it and takes the managed Threads
-/// off the kernel's queue.
-fn bind_root_dispatcher(
+/// Share `frames` Frames of `scheduler`'s record table with the dispatcher,
+/// mapped read-only at `va` in its `AddressSpace`.
+fn share_records(
     builder: &Builder<'_>,
-    root_scheduler: &SchedulerKey,
-    scheduler_key: RawKey,
+    scheduler: &SchedulerKey,
     slots: &mut SlotCursor,
-    dispatcher: &mut Prepared<'_>,
-    managed: &[Option<ManagedThread>],
+    component: &Component,
+    va: u64,
+    frames: u32,
 ) {
-    let slot_count = u32::try_from(managed.len()).expect("a few managed Threads");
-    let frames = (slot_count + 1).div_ceil(RECORDS_PER_FRAME);
-    let component = &dispatcher.component;
-    Builder::map_table(
-        builder.carve_tables(slots.take(1), 1),
-        component.l2,
-        RECORD_VA,
-    );
     let first = slots.take(frames);
     let incarnation = builder.retype_frames(first, frames).incarnation();
     Builder::map_frames(
@@ -1091,11 +1091,11 @@ fn bind_root_dispatcher(
         incarnation,
         frames,
         component.address_space_key,
-        RECORD_VA,
+        va,
         Rights(Rights::READ),
     );
     for frame in 0..frames {
-        root_scheduler
+        scheduler
             .share_region(
                 boot_key(first + frame, incarnation),
                 frame * RECORDS_PER_FRAME,
@@ -1103,6 +1103,51 @@ fn bind_root_dispatcher(
             )
             .unwrap_or_else(|error| panic!("🥾 ShareRegion failed: {:?}", error.code()));
     }
+}
+
+/// Where the dispatcher sees core `core`'s record table.
+fn core_records_va(core: usize) -> u64 {
+    RECORD_VA + core as u64 * CORE_RECORD_SPAN
+}
+
+/// Bind the loaded component `dispatcher` as the dispatcher of every online
+/// core's root Scheduler: its first Thread the boot core's, and one more
+/// Thread for each other core, configured on that core's root Scheduler and
+/// boot Time with the core's logical index in `x0` (the first Thread gets the
+/// boot core's).
+///
+/// Each Scheduler's record table is shared first: for the boot core's,
+/// records for `managed` in slots 1 up, in Frames mapped read-only in the
+/// dispatcher's `AddressSpace`; another core's has only its own record for
+/// now, since every managed Thread is the boot core's. The dispatcher
+/// receives the Schedulers, one key to each managed Thread and each one's
+/// priority, and where all of that is (`DriverInit::dispatch`). Binding
+/// starts each Thread on its core and takes the managed Threads off the
+/// kernel's queue.
+fn bind_root_dispatcher(
+    builder: &Builder<'_>,
+    keys: &BootKeys,
+    slots: &mut SlotCursor,
+    dispatcher: &mut Prepared<'_>,
+    managed: &[Option<ManagedThread>],
+) {
+    let root_scheduler = SchedulerKey::from_key(keys.root_scheduler);
+    let slot_count = u32::try_from(managed.len()).expect("a few managed Threads");
+    let boot_core = nucleus::core_record::current().index as usize;
+    let component = &dispatcher.component;
+    Builder::map_table(
+        builder.carve_tables(slots.take(1), 1),
+        component.l2,
+        RECORD_VA,
+    );
+    share_records(
+        builder,
+        &root_scheduler,
+        slots,
+        component,
+        core_records_va(boot_core),
+        (slot_count + 1).div_ceil(RECORDS_PER_FRAME),
+    );
     let mut priorities = [Priority::NORMAL; MAX_DISPATCHED_THREADS];
     for ((slot, managed), priority) in (1..).zip(managed.iter().flatten()).zip(&mut priorities) {
         *priority = managed.priority;
@@ -1120,24 +1165,107 @@ fn bind_root_dispatcher(
             "🥾 a fresh slot's first incarnation"
         );
     }
-    let scheduler_slot = dispatcher.next_slot;
-    dispatcher.next_slot += 1;
-    let scheduler = grant(component, builder.entry(scheduler_key), scheduler_slot);
+    // Each core's Scheduler, and the dispatcher Thread that runs it.
+    let entry = dispatcher
+        .instance
+        .driver
+        .component
+        .entry
+        .expect("a dispatcher has an entry");
+    let mut cores = [CoreDispatch {
+        scheduler: 0,
+        records: 0,
+        slot_count: 0,
+    }; MAX_DISPATCH_CORES];
+    let mut threads = [None; MAX_CPUS];
+    for (core, root) in keys.core_roots.iter().enumerate() {
+        let Some(root) = root else { continue };
+        assert!(
+            core < MAX_DISPATCH_CORES,
+            "🥾 core {core} beyond the dispatcher's"
+        );
+        let scheduler = SchedulerKey::from_key(root.scheduler);
+        let thread = if core == boot_core {
+            dispatcher.thread
+        } else {
+            share_records(
+                builder,
+                &scheduler,
+                slots,
+                &dispatcher.component,
+                core_records_va(core),
+                1,
+            );
+            let stack = builder.user_stack(&mut dispatcher.stacks, STACK_PAGES, slots);
+            let thread = builder
+                .untyped
+                .retype(
+                    ObjectType::THREAD,
+                    0,
+                    0,
+                    1,
+                    builder.self_table,
+                    slots.take(1),
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("🥾 dispatcher Thread Retype failed: {:?}", error.code())
+                });
+            scheduler
+                .configure_thread(
+                    thread,
+                    dispatcher.component.address_space_key,
+                    ThreadStart {
+                        entry,
+                        stack_pointer: stack.top,
+                        argument: core as u64,
+                    },
+                    root.time,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "🥾 core {core} dispatcher ConfigureThread failed: {:?}",
+                        error.code()
+                    )
+                });
+            thread
+        };
+        threads[core] = Some((root.scheduler, thread));
+        let slot = dispatcher.next_slot;
+        dispatcher.next_slot += 1;
+        cores[core] = CoreDispatch {
+            scheduler: grant(&dispatcher.component, builder.entry(root.scheduler), slot).to_wire(),
+            records: core_records_va(core),
+            slot_count: if core == boot_core {
+                u64::from(slot_count)
+            } else {
+                0
+            },
+        };
+    }
     update_init(dispatcher.init_page, |init: &mut DriverInit| {
         init.first_free_slot = u64::from(dispatcher.next_slot);
         init.dispatch = DispatchInit {
-            scheduler: scheduler.to_wire(),
-            records: RECORD_VA,
+            cores,
             stride: u64::from(RECORD_STRIDE),
-            slot_count: u64::from(slot_count),
             first_thread_key_slot: u64::from(FIRST_THREAD_KEY_SLOT),
             priorities,
         };
     });
-    root_scheduler
-        .bind_dispatcher(dispatcher.thread)
-        .unwrap_or_else(|error| panic!("🥾 BindDispatcher failed: {:?}", error.code()));
-    crate::early_println!("🥾 Root dispatcher bound over {slot_count} Threads");
+    for (core, bound) in threads.into_iter().enumerate() {
+        let Some((scheduler, thread)) = bound else {
+            continue;
+        };
+        SchedulerKey::from_key(scheduler)
+            .bind_dispatcher(thread)
+            .unwrap_or_else(|error| {
+                panic!("🥾 core {core} BindDispatcher failed: {:?}", error.code())
+            });
+    }
+    crate::early_println!(
+        "🥾 Root dispatcher bound over {slot_count} Threads, on {} cores",
+        threads.iter().flatten().count()
+    );
 }
 
 /// Pages of each target stack of the pool an exporting driver serves calls on.
@@ -1536,7 +1664,13 @@ pub fn load_drivers(
                     ThreadStart {
                         entry,
                         stack_pointer: stack_top,
-                        argument: INIT_VA,
+                        // The root dispatcher's first Thread runs the
+                        // boot core's Scheduler, and learns which from x0.
+                        argument: if driver.dispatcher {
+                            nucleus::core_record::current().index.into()
+                        } else {
+                            INIT_VA
+                        },
                     },
                     time,
                 )
@@ -2253,14 +2387,7 @@ pub fn load_drivers(
             managed_count += 1;
         }
         let loaded = prepared[number].as_mut().expect("a loaded dispatcher");
-        bind_root_dispatcher(
-            builder,
-            &root_scheduler,
-            keys.root_scheduler,
-            slots,
-            loaded,
-            &managed[..managed_count],
-        );
+        bind_root_dispatcher(builder, &keys, slots, loaded, &managed[..managed_count]);
     }
     started
 }

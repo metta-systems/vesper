@@ -140,8 +140,10 @@ fn configure_thread<A: ArchObjects>(
             .resolve_object::<Time>(time_id)
             .map_err(|error| error.for_key(time_key, 6))?;
         // A Time is one Thread's own: one already bound to a live Thread is
-        // refused.
-        if time.core() != nucleus.current_cpu() || time.is_bound() {
+        // refused. The Thread runs on its Scheduler's core, so its Time is
+        // one of that core's (the calling core's for a Scheduler with no
+        // core yet).
+        if time.core() != nucleus.scheduler_core(scheduler) || time.is_bound() {
             return Err(CapError::InvalidOperation);
         }
     }

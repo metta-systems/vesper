@@ -4549,10 +4549,13 @@ name = "smp-test"
 version = "0.0.1"
 dependencies = [
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-boot",
  "vesper-cpu",
+ "vesper-exceptions",
  "vesper-kicktest",
+ "vesper-objects",
  "vesper-print",
  "vesper-qemu",
 ]

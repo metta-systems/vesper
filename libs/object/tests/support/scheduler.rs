@@ -261,6 +261,15 @@ fn dispatching_nothing_waits_and_a_stale_generation_reports_the_current_one() {
     let (_, _, args, _) = take_request();
     assert_eq!(args, [0, 0, u64::MAX, 0, 0, 0]);
 
+    // On another core's Scheduler, the CPU goes in x6.
+    arm((0, 0, 0));
+    root_scheduler()
+        .dispatch_on(3, None, u64::MAX, 0)
+        .map_err(CapError::code)
+        .unwrap();
+    let (_, _, args, _) = take_request();
+    assert_eq!(args, [0, 0, u64::MAX, 0, 3, 0]);
+
     arm((42, 123, 0));
     let error = root_scheduler()
         .dispatch(Some(RawKey::new(KeySlot(41), 3)), 1, 5)

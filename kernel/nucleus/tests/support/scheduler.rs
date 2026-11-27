@@ -174,6 +174,39 @@ fn configure_then_start_makes_an_inert_thread_runnable() {
 }
 
 #[test_case]
+fn configure_binds_a_time_of_the_schedulers_core() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        // A root Scheduler of core 1, configured from core 0.
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(1));
+        // The calling core's Time is another core's than the Scheduler's.
+        assert!(matches!(
+            configure(nucleus, &keys, ENTRY, STACK),
+            Err(CapError::InvalidOperation)
+        ));
+        assert_eq!(
+            nucleus.thread(keys.thread_id).unwrap().context,
+            ExecutionContext::Inactive
+        );
+        // A Time of core 1 is bound.
+        let core_one_time = test_arena::carve(Time::empty(1)).expect("arena exhausted");
+        let keys = Keys {
+            time: install(
+                nucleus,
+                24,
+                KeyEntry::new_carved(core_one_time, Rights::all(), 0),
+            ),
+            ..keys
+        };
+        configure(nucleus, &keys, ENTRY, STACK)
+            .unwrap_or_else(|error| panic!("ConfigureThread: {:?}", error.code()));
+        assert_eq!(
+            nucleus.thread(keys.thread_id).unwrap().time,
+            Some(core_one_time)
+        );
+    });
+}
+
+#[test_case]
 fn configure_rejects_bad_start_state_and_leaves_the_thread_inert() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(0));
@@ -623,8 +656,17 @@ fn assign_record_links_a_thread_and_publishes_its_state() {
 fn the_record_reports_the_core_a_running_thread_runs_on() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         clear_pages();
-        // The Thread's Scheduler is core 3's.
+        // The Thread's Scheduler is core 3's, and so is its Time.
         let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(3));
+        let core_three_time = test_arena::carve(Time::empty(3)).expect("arena exhausted");
+        let keys = Keys {
+            time: install(
+                nucleus,
+                24,
+                KeyEntry::new_carved(core_three_time, Rights::all(), 0),
+            ),
+            ..keys
+        };
         let frame = frame_key(
             nucleus,
             30,
@@ -1052,6 +1094,37 @@ fn interrupt_time_is_published_in_the_scheduler_record_of_the_interrupted_thread
             scheduler_record().try_snapshot(1).unwrap().interrupt_ns,
             2_000_000
         );
+    });
+}
+
+#[test_case]
+fn only_its_own_core_writes_a_schedulers_record() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        clear_pages();
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root(1));
+        let frame = frame_key(
+            nucleus,
+            30,
+            0,
+            Rights::READ | Rights::WRITE,
+            false,
+            Some(fixture_as),
+        );
+        share(nucleus, &keys, frame, 0, 128).expect_ok();
+        let id = nucleus
+            .current_thread_table()
+            .unwrap()
+            .lookup(keys.scheduler, FIXTURE_GUARD)
+            .and_then(KeyEntry::carved_id)
+            .unwrap_or_else(|error| panic!("Scheduler lookup: {:?}", error.code()));
+        // This core's totals do not belong in core 1's root record (on its
+        // own core a Scheduler's record is written:
+        // `interrupt_time_is_published_in_the_scheduler_record_of_the_interrupted_thread`).
+        let saved_ticks = nucleus.this_core.interrupt_ticks;
+        nucleus.this_core.interrupt_ticks = nucleus.counter_frequency() / 1_000;
+        nucleus.publish_scheduler_record(id);
+        nucleus.this_core.interrupt_ticks = saved_ticks;
+        assert_eq!(scheduler_record().try_snapshot(1).unwrap().interrupt_ns, 0);
     });
 }
 

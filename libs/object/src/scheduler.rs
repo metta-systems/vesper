@@ -288,6 +288,18 @@ impl SchedulerKey {
         limit_ns: u64,
         expected_generation: u64,
     ) -> Result<Activation, CapError> {
+        self.dispatch_on(0, thread, limit_ns, expected_generation)
+    }
+
+    /// [`Self::dispatch`] on the Scheduler of logical CPU `cpu` (`x6`): the
+    /// Scheduler's core, which the caller runs on.
+    pub fn dispatch_on(
+        &self,
+        cpu: u64,
+        thread: Option<RawKey>,
+        limit_ns: u64,
+        expected_generation: u64,
+    ) -> Result<Activation, CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
         let result = unsafe {
             protected_call5(
@@ -297,7 +309,7 @@ impl SchedulerKey {
                 0,
                 limit_ns,
                 expected_generation,
-                0,
+                cpu,
             )
         };
         let (reasons, events) = decode_syscall_result(result)?;

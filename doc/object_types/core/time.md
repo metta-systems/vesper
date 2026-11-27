@@ -56,7 +56,7 @@ A Time bound to a Thread by [`Scheduler.ConfigureThread`](scheduler.md#configure
 
 `Untyped.Retype` creates an empty Time on the creating core, carved from the Untyped's memory.
 
-The first component receives the boot Time at `KeySlot::BOOT_TIME` (17): core 0 and an infinite budget.
+Each online core has a boot Time with an infinite budget. The first component receives the boot core's at `KeySlot::BOOT_TIME` (17).
 
 The nucleus charges the running Thread's bound Time with the counter ticks it executes, including the time it spends in system calls. The charge is kept exactly and converted to nanoseconds, rounded up, only when it is compared with the budget, so the budget is never rounded in the Thread's favour and Query reports the remaining budget rounded down. Time spent handling interrupts is not charged. An infinite budget is never charged.
 

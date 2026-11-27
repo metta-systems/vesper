@@ -684,23 +684,39 @@ pub struct SerialKeys {
 /// Most Threads the root dispatcher can be handed ([`DispatchInit`]).
 pub const MAX_DISPATCHED_THREADS: usize = 80;
 
+/// Most cores the root dispatcher runs on ([`DispatchInit::cores`]).
+pub const MAX_DISPATCH_CORES: usize = 8;
+
+/// One core's root Scheduler, as the root dispatcher's Thread on that core
+/// sees it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoreDispatch {
+    /// The core's root Scheduler (`WRITE`); zero for a core that is not
+    /// online
+    pub scheduler: u64,
+    /// Where the Scheduler's record table is mapped
+    pub records: u64,
+    /// Highest record slot in use
+    pub slot_count: u64,
+}
+
 /// What the root dispatcher needs to find the Threads it dispatches; zero in
-/// every other component. The Scheduler's record table is mapped read-only at
-/// `records`; the record in slot `s` (1 up to `slot_count`) belongs to the
-/// Thread whose key (first incarnation) is at slot `first_thread_key_slot + s`
-/// of the dispatcher's table, and whose [`Priority`] level is
-/// `priorities[s - 1]`.
+/// every other component. The dispatcher has one Thread per online core,
+/// each started with its core's logical index in `x0` and dispatching that
+/// core's root Scheduler (`cores[index]`). Each Scheduler's record table is
+/// mapped read-only at its `records`. The Threads Kickstart hands over are
+/// all the boot core's: the record in slot `s` (1 up to that core's
+/// `slot_count`) belongs to the Thread whose key (first incarnation) is at
+/// slot `first_thread_key_slot + s` of the dispatcher's table, and whose
+/// [`Priority`] level is `priorities[s - 1]`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DispatchInit {
-    /// The root Scheduler (`WRITE`)
-    pub scheduler: u64,
-    /// Where the record table is mapped
-    pub records: u64,
+    /// Each core's root Scheduler, by logical index
+    pub cores: [CoreDispatch; MAX_DISPATCH_CORES],
     /// Bytes between records
     pub stride: u64,
-    /// Highest record slot in use
-    pub slot_count: u64,
     pub first_thread_key_slot: u64,
     /// Each slot's priority level, from slot 1 on
     pub priorities: [Priority; MAX_DISPATCHED_THREADS],
@@ -918,10 +934,12 @@ impl DriverInit {
         resource_count: 0,
         resources: [ResourceRecord { base: 0, len: 0 }; MAX_RESOURCES],
         dispatch: DispatchInit {
-            scheduler: 0,
-            records: 0,
+            cores: [CoreDispatch {
+                scheduler: 0,
+                records: 0,
+                slot_count: 0,
+            }; MAX_DISPATCH_CORES],
             stride: 0,
-            slot_count: 0,
             first_thread_key_slot: 0,
             priorities: [Priority::NORMAL; MAX_DISPATCHED_THREADS],
         },

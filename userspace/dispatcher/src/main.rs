@@ -2,12 +2,15 @@
 // Vesper.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
 
-//! The root dispatcher: the one policy that decides which Thread of the root
-//! Scheduler runs.
+//! The root dispatcher: the one policy that decides which Thread of each
+//! core's root Scheduler runs.
 //!
-//! Kickstart shares the Scheduler's record table with it and hands it a key
+//! It has one Thread per online core, each dispatching its own core's root
+//! Scheduler from that core's queues (its own [`root_dispatcher::Rounds`]).
+//! Kickstart shares each Scheduler's record table with it and hands it a key
 //! to every managed Thread and each one's priority (see
-//! `DriverInit::dispatch`). The policy is fixed priority with round-robin
+//! `DriverInit::dispatch`); these are all the boot core's Threads, so the
+//! other cores' Threads wait with nothing dispatched. The policy is fixed priority with round-robin
 //! within a level ([`root_dispatcher::Rounds`]): take the next Thread of the
 //! highest level whose record says it can run and dispatch it for one slice.
 //! A runnable Thread runs before every Thread of a lower level (normal,
@@ -25,7 +28,7 @@
 #[cfg(target_os = "vesper")]
 mod dispatcher {
     use {
-        libdevice_driver::{DispatchInit, MAX_DISPATCHED_THREADS, driver_init, local_key},
+        libdevice_driver::{DispatchInit, INIT_VA, MAX_DISPATCHED_THREADS, driver_init, local_key},
         libobject::{
             CapError, RawKey,
             scheduler::{SchedulerKey, activation_mask},
@@ -50,14 +53,21 @@ mod dispatcher {
         panic!("root dispatcher: {what} failed: {:?}", error.code())
     }
 
-    fn main(init_va: u64) -> ! {
-        // SAFETY: Kickstart passes the init page's address in x0.
-        let init = unsafe { driver_init(init_va) };
+    /// One Thread per online core runs this, with the core's logical index in
+    /// `x0`, over that core's root Scheduler.
+    fn main(core: u64) -> ! {
+        // SAFETY: Kickstart maps the init page at `INIT_VA` in this
+        // AddressSpace and writes it before starting any Thread.
+        let init = unsafe { driver_init(INIT_VA) };
         let dispatch: &DispatchInit = &init.dispatch;
-        let scheduler = SchedulerKey::from_key(RawKey::from_wire(dispatch.scheduler));
+        let own = usize::try_from(core)
+            .ok()
+            .and_then(|core| dispatch.cores.get(core))
+            .unwrap_or_else(|| panic!("root dispatcher: no core {core}"));
+        let scheduler = SchedulerKey::from_key(RawKey::from_wire(own.scheduler));
         let stride = usize::try_from(dispatch.stride).unwrap_or(usize::MAX);
-        let slot_count = usize::try_from(dispatch.slot_count).unwrap_or(0);
-        let records = dispatch.records;
+        let slot_count = usize::try_from(own.slot_count).unwrap_or(0);
+        let records = own.records;
         let record = |slot: usize| {
             // SAFETY: Kickstart maps the record table read-only for this
             // component, 64-byte aligned, and every slot up to `slot_count`
@@ -88,11 +98,11 @@ mod dispatcher {
             let Some((slot, generation)) = chosen else {
                 // Nothing can run: wait for an event with nothing dispatched.
                 scheduler
-                    .dispatch(None, u64::MAX, 0)
+                    .dispatch_on(core, None, u64::MAX, 0)
                     .unwrap_or_else(|error| fail("Dispatch (idle)", error));
                 continue;
             };
-            match scheduler.dispatch(Some(thread_key(slot)), SLICE_NS, generation) {
+            match scheduler.dispatch_on(core, Some(thread_key(slot)), SLICE_NS, generation) {
                 // Ran: account the run for the starvation guard. A Thread
                 // that blocked (or exited or faulted) starts over; one that
                 // was preempted or yielded keeps adding up.
@@ -117,7 +127,7 @@ mod dispatcher {
                 // change rather than choose it again.
                 Err(CapError::InvalidOperation) => {
                     scheduler
-                        .dispatch(None, u64::MAX, 0)
+                        .dispatch_on(core, None, u64::MAX, 0)
                         .unwrap_or_else(|error| fail("Dispatch (idle)", error));
                 }
                 Err(error) => fail("Dispatch", error),
