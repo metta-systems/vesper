@@ -254,12 +254,28 @@ fn resume_rejects_unencodable_root_or_reserved_asid_atomically() {
 
 #[test_case]
 fn resume_rejects_unsupported_ttbr0_walk_profile_atomically() {
-    for tcr in [0, 25, 16 | (1 << 7)] {
+    for tcr in [0, 25] {
         with_resume(|nucleus, waits| {
             TCR_EL1.set(tcr);
             reject_unchanged(nucleus, &waits, CapError::InvalidOperation);
         });
     }
+}
+
+#[test_case]
+fn resume_accepts_ttbr0_walks_still_off_before_a_secondarys_first_thread() {
+    // A secondary core selects its first Thread with TTBR0 walks off
+    // (`TCR_EL1.EPD0`) and turns them on as it installs that Thread's
+    // translation, so the selection does not refuse them.
+    with_resume(|nucleus, waits| {
+        TCR_EL1.set(16 | (1 << 7));
+        // SAFETY: as in `reject_unchanged`.
+        let result = {
+            let access = unsafe { Access::new() };
+            nucleus.park_and_select(&access, SOURCE_SAVED, waits.incoming)
+        };
+        assert!(result.is_ok(), "walks off refused the selection");
+    });
 }
 
 #[test_case]
@@ -1596,6 +1612,41 @@ fn binding_a_dispatcher_runs_it_next() {
         ));
         // A second bind, and a bind of a started Thread, are refused.
         assert!(nucleus.bind_dispatcher(scheduler_id, waits.source).is_err());
+    });
+}
+
+#[test_case]
+fn binding_another_cores_root_dispatcher_queues_it_there_and_sends_reschedule() {
+    use crate::objects::core_record;
+    with_resume(|nucleus, waits| {
+        let scheduler_id = test_arena::carve(Scheduler::root(1)).expect("arena exhausted");
+        while nucleus.local_activations().pop().is_some() {}
+        let source_as = nucleus.thread(waits.source).unwrap().address_space;
+        let dispatcher = nucleus.create_thread(source_as).expect("dispatcher Thread");
+        {
+            let thread = nucleus.thread_mut(dispatcher).unwrap();
+            thread.scheduler = Some(scheduler_id);
+            thread.context = ExecutionContext::Configured {
+                saved: SavedContext::el1t(0xC0000, 0xD0000),
+            };
+        }
+        let core_one = core_record::of(1).expect("the test kernels have a core 1 record");
+        core_one
+            .pending_ipis
+            .store(0, core::sync::atomic::Ordering::Relaxed);
+        nucleus
+            .bind_dispatcher(scheduler_id, dispatcher)
+            .ok()
+            .expect("bind");
+        // Core 1 runs it: it is on core 1's list, and core 1 is told.
+        assert!(nucleus.local_activations().is_empty());
+        assert!(!nucleus.this_core.preempt_requested);
+        assert_eq!(nucleus.activations[1].peek(), Some(dispatcher));
+        let sent = core_one
+            .pending_ipis
+            .swap(0, core::sync::atomic::Ordering::Relaxed);
+        assert_ne!(sent & core_record::IPI_RESCHEDULE, 0);
+        assert_eq!(nucleus.activations[1].pop(), Some(dispatcher));
     });
 }
 

@@ -12,14 +12,21 @@
 //! trip with each: the nucleus pings the core (`IPI_PING`, through its test-only ping
 //! SVC, built with the nucleus's `smp_test` feature), the core answers the boot core
 //! (`IPI_PONG`), and the test sees both take their IPI in the per-core records.
+//! Last, Threads run on a secondary's root Scheduler ([`roots`]).
 //!
 //! Runs on the real Kickstart boot path. Under QEMU (`just _test-smp`, `_test-smp-rpi4`)
 //! the semihosting exit status is the result; on a board (`just boot-smp-test`) the
 //! console shows `smp-test: PASS` or `smp-test: FAIL`.
 
+mod roots;
+
 use {
     core::sync::atomic::Ordering,
-    kickstart::{early_println, image::BootObjects, kickstart_init_el2, smp},
+    kickstart::{
+        early_println,
+        image::{BUILDER_ARCHIVE_GUARD, BootObjects},
+        kickstart_init_el2, smp,
+    },
     // `libkicktest` supplies the panic handler, so it is linked in every build.
     libkicktest as _,
     nucleus::core_record::{self, SMP_TEST_PING_SVC},
@@ -165,7 +172,7 @@ pub fn run() -> ! {
 
     // The nucleus with its interrupt controller: the secondaries waiting in its idle loop
     // prepare themselves at the controller once it is installed.
-    let _boot = BootObjects::bootstrap();
+    let mut boot = BootObjects::bootstrap();
     for index in indices(online) {
         let result = round_trip(index);
         passed &= check(
@@ -173,6 +180,10 @@ pub fn run() -> ! {
             format_args!("IPI round trip with core {index}: {result:?}"),
         );
     }
+
+    // Threads on a secondary's root Scheduler.
+    let mut image = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
+    passed &= roots::check_roots(&mut image);
 
     if passed {
         early_println!("smp-test: PASS");

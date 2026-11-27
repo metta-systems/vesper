@@ -1,7 +1,7 @@
 [package]
 name = "smp-test"
 
-description = "Vesper end-to-end test kernel: the secondary cores come online through the start-method component, report their affinity and logical index, and pass a cross-core cacheable counter."
+description = "Vesper end-to-end test kernel: the secondary cores come online through the start-method component, report their affinity and logical index, pass a cross-core cacheable counter and IPI round trips, and run Threads on a secondary's root Scheduler."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -30,8 +30,11 @@ smp_test = ["nucleus/smp_test"]
 [dependencies]
 kickstart = { workspace = true, features = ["smp_test"] }
 libboot = { workspace = true }
+libcomponent-loader = { workspace = true }
 libcpu = { workspace = true }
+libexception = { workspace = true }
 libkicktest = { workspace = true }
+libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
 libqemu = { workspace = true }

@@ -26,6 +26,7 @@ use {
         retained::RetainedInitMemory,
     },
     libexception::arch::aarch64::SavedContext,
+    libirqchip::MAX_CPUS,
     liblocking::interface::Mutex,
     libmapping::MemAttributes,
     libobject::{
@@ -59,6 +60,47 @@ const BOOT_UNTYPED_SIZE_BITS: u8 = 27;
 /// scheduler has an unlimited allowance to give out. Infinite budget never
 /// decreases, so nothing needs to replenish it.
 pub const BOOT_TIME_BUDGET_NS: Budget = INFINITE_BUDGET;
+
+/// Boot-table slot of the boot Time of the core with logical index `i`
+/// other than the boot core's (`KeySlot::BOOT_TIME`): `SECONDARY_TIME_SLOT + i`,
+/// at the top of the boot table, clear of the slots the builders take.
+pub const SECONDARY_TIME_SLOT: u32 = (1 << BOOT_TABLE_SIZE_BITS) - 2 * CORE_SLOTS;
+
+/// Boot-table slot of the root Scheduler of such a core:
+/// `SECONDARY_SCHEDULER_SLOT + i`.
+pub const SECONDARY_SCHEDULER_SLOT: u32 = SECONDARY_TIME_SLOT + CORE_SLOTS;
+
+/// Slots each of the two runs above has: one per possible core.
+#[expect(clippy::cast_possible_truncation, reason = "`MAX_CPUS` is a handful")]
+const CORE_SLOTS: u32 = MAX_CPUS as u32;
+
+/// The keys of an online core's own boot Time and root Scheduler.
+#[derive(Clone, Copy)]
+pub struct CoreRoot {
+    pub time: RawKey,
+    pub scheduler: RawKey,
+}
+
+/// Carve a boot Time for logical core `core` from the boot Untyped, like any
+/// Retype-created object, with that core's root budget. Retype only creates
+/// empty Times, so every other budget of that core is transferred out of this
+/// one.
+fn carve_boot_time(boot_payload: &mut RegionPayload, core: usize) -> CarvedId {
+    let paddr = carve_region(boot_payload, Carved::<Time>::SIZE)
+        .unwrap_or_else(|error| panic!("boot Time carve failed: {:?}", error.code()));
+    // SAFETY: carve_region reserved the record from the boot Untyped's unused
+    // watermark range at page alignment, and the direct map makes it
+    // kernel-writable.
+    let id = unsafe {
+        Carved::<Time>::initialize(paddr.user_to_kernel().as_mut_ptr::<u8>(), Time::empty(core))
+    };
+    // SAFETY: the record was initialized just above and nothing else names it.
+    unsafe {
+        *Carved::<Time>::validate(id).expect("boot Time just carved") =
+            Time::root(core, BOOT_TIME_BUDGET_NS);
+    }
+    id
+}
 
 /// Alignment for every boot carve. Page alignment guarantees the 16-byte
 /// watermark granularity and object alignment for all pool types.
@@ -197,6 +239,9 @@ pub struct BootState {
     pub boot_time_key: RawKey,
     /// Key of the root Scheduler grant (slot `ROOT_SCHEDULER`).
     pub root_scheduler_key: RawKey,
+    /// Each online core's boot Time and root Scheduler, by logical index;
+    /// the boot core's are the two keys above.
+    pub core_roots: [Option<CoreRoot>; MAX_CPUS],
     /// Key of the `IRQControl` grant (slot `IRQ_CONTROL`).
     pub irq_control_key: RawKey,
     /// Key of the boot Thread (slot 50).
@@ -264,20 +309,15 @@ pub fn bootstrap_nucleus() -> BootState {
         panic!("failed to build the initial nucleus")
     };
 
-    // Carve the boot Time from the boot Untyped, like any Retype-created
-    // object: the root budget on core 0. Retype only creates empty Times, so
-    // every other budget is transferred out of this one.
-    let boot_time_paddr = carve_region(boot_payload, Carved::<Time>::SIZE)
-        .unwrap_or_else(|error| panic!("boot Time carve failed: {:?}", error.code()));
-    let boot_time_address = boot_time_paddr.user_to_kernel().as_mut_ptr::<u8>();
-    // SAFETY: carve_region reserved the record from the boot Untyped's unused
-    // watermark range at page alignment, and the direct map makes it
-    // kernel-writable.
-    let boot_time_id = unsafe { Carved::<Time>::initialize(boot_time_address, Time::empty(0)) };
-    // SAFETY: the record was initialized just above and nothing else names it.
-    unsafe {
-        *Carved::<Time>::validate(boot_time_id).expect("boot Time just carved") =
-            Time::root(0, BOOT_TIME_BUDGET_NS);
+    // The boot Time of every online core: the boot core's, then each
+    // secondary's (SMP C4(c)).
+    let boot_core = nucleus::core_record::current().index as usize;
+    let boot_time_id = carve_boot_time(boot_payload, boot_core);
+    let mut secondary_times = [None; MAX_CPUS];
+    for (core, time) in secondary_times.iter_mut().enumerate() {
+        if crate::secondary::online_cores() & (1 << core) != 0 && core != boot_core {
+            *time = Some(carve_boot_time(boot_payload, core));
+        }
     }
 
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.
@@ -413,8 +453,7 @@ pub fn bootstrap_nucleus() -> BootState {
 
     // The root Scheduler, carved from the boot Untyped: the only authority
     // that configures and starts Threads created by `Untyped.Retype`. It runs
-    // on the boot core, this one.
-    let boot_core = nucleus::core_record::current().index as usize;
+    // on the boot core, this one; every other online core has its own.
     let root_scheduler_id =
         carve_object(keytable_addr, boot_untyped_key, Scheduler::root(boot_core));
     let root_scheduler_key = boot_table
@@ -426,6 +465,38 @@ pub fn bootstrap_nucleus() -> BootState {
         .unwrap_or_else(|failure| {
             panic!("root Scheduler install failed: {:?}", failure.error.code())
         });
+    let mut core_roots = [None; MAX_CPUS];
+    core_roots[boot_core] = Some(CoreRoot {
+        time: boot_time_key,
+        scheduler: root_scheduler_key,
+    });
+    for (core, time) in secondary_times.into_iter().enumerate() {
+        let Some(time) = time else { continue };
+        let index = u32::try_from(core).expect("a few cores");
+        let time = boot_table
+            .insert(
+                KeySlot(SECONDARY_TIME_SLOT + index),
+                KeyEntry::new_carved(time, Rights::all(), 0),
+                BOOT_TABLE_GUARD,
+            )
+            .unwrap_or_else(|failure| {
+                panic!("core boot Time install failed: {:?}", failure.error.code())
+            });
+        let scheduler_id = carve_object(keytable_addr, boot_untyped_key, Scheduler::root(core));
+        let scheduler = boot_table
+            .insert(
+                KeySlot(SECONDARY_SCHEDULER_SLOT + index),
+                KeyEntry::new_carved(scheduler_id, Rights::all(), 0),
+                BOOT_TABLE_GUARD,
+            )
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "core root Scheduler install failed: {:?}",
+                    failure.error.code()
+                )
+            });
+        core_roots[core] = Some(CoreRoot { time, scheduler });
+    }
 
     // IRQControl: the only authority that issues IRQHandlers; IRQ authority
     // never comes from memory.
@@ -508,6 +579,7 @@ pub fn bootstrap_nucleus() -> BootState {
         boot_untyped_key,
         boot_time_key,
         root_scheduler_key,
+        core_roots,
         irq_control_key,
         boot_thread_key,
         #[cfg(feature = "debug_kernel")]

@@ -230,7 +230,7 @@ impl<A: ArchObjects> Nucleus<A> {
     /// The logical core whose run state holds `scheduler`'s dispatcher and
     /// timer: the Scheduler's own core, or this one for a Scheduler that has
     /// none yet.
-    fn scheduler_core(&mut self, scheduler: CarvedId) -> usize {
+    pub(crate) fn scheduler_core(&mut self, scheduler: CarvedId) -> usize {
         let core = self
             .scheduler_mut(scheduler)
             .and_then(|scheduler| scheduler.core());
@@ -803,8 +803,14 @@ impl<A: ArchObjects> Nucleus<A> {
         let thread_object = self.thread_mut(thread).ok_or(CapError::InvalidOperation)?;
         thread_object.context = ExecutionContext::NotStarted { saved };
         thread_object.dispatches = Some(scheduler);
+        // The dispatcher starts on its Scheduler's core: this one runs it at
+        // its next selection, another core is told to reschedule.
         let core = self.scheduler_core(scheduler);
-        self.activations[core].push_front(thread);
+        if core == self.current_cpu() {
+            self.activations[core].push_front(thread);
+        } else {
+            self.activate_on(core, thread);
+        }
         self.publish_thread(thread, false);
         Ok(())
     }
@@ -1079,8 +1085,12 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Write `scheduler`'s own record (slot 0), if it has one: the events
     /// published, the timers that fired and the total time spent handling
     /// interrupts. Not itself an event: the bound `EventCount` is not
-    /// advanced.
+    /// advanced. Only the Scheduler's own core writes it (SMP C11(a)): the
+    /// totals are this core's, and another core's would be wrong there.
     pub(crate) fn publish_scheduler_record(&mut self, scheduler: CarvedId) {
+        if self.scheduler_core(scheduler) != self.current_cpu() {
+            return;
+        }
         // SAFETY: as in `record_paddr`.
         let Ok(object) = (unsafe { Carved::<Scheduler>::validate(scheduler) }) else {
             return;

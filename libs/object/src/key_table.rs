@@ -50,11 +50,13 @@ impl KeySlot {
     /// kernel Calls on a faulting Thread (see [`crate::fault`]). An empty slot,
     /// or any other kind, means faults here are unhandled.
     pub const FAULT_HANDLER: KeySlot = KeySlot(16);
-    /// The boot Time (Kickstart grant): the root CPU budget on core 0. Its
-    /// budget is infinite or a large finite amount (see Kickstart).
+    /// The boot Time (Kickstart grant): the boot core's root CPU budget. Its
+    /// budget is infinite or a large finite amount (see Kickstart). Every
+    /// other online core has a boot Time of its own.
     pub const BOOT_TIME: KeySlot = KeySlot(17);
-    /// The root Scheduler (Kickstart grant): the only authority that
-    /// configures and starts Retype-created Threads.
+    /// The boot core's root Scheduler (Kickstart grant); every other online
+    /// core has a root Scheduler of its own. The root Schedulers are the
+    /// only authority that configures and starts Retype-created Threads.
     pub const ROOT_SCHEDULER: KeySlot = KeySlot(18);
     /// The `IRQControl` (Kickstart grant): the only authority that issues
     /// `IRQHandler`s for interrupt lines.

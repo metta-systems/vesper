@@ -3,12 +3,12 @@
 | | |
 |---|---|
 | Wire type | `0x05` (core) |
-| Backing | Kernel object: the root is carved from the boot Untyped by Kickstart, any other from an Untyped by `Untyped.Retype` |
+| Backing | Kernel object: the root Schedulers are carved from the boot Untyped by Kickstart, any other from an Untyped by `Untyped.Retype` |
 | Operations | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation, ArmTimer, Adopt, MoveThread |
 
 ## Purpose
 
-A Scheduler capability is the authority to make Threads run. A Thread created by [`Untyped.Retype`](untyped.md#retype) is inert: it has no AddressSpace and no execution state, and it never runs. A Scheduler turns it into a Thread that runs, by configuring it and then starting it. Schedulers form a tree: the root, and children that a parent adopts. Every operation works on any Scheduler for a holder with `Write`, but a child has no execution authority until its parent has adopted it and dispatched its dispatcher (see [Child Schedulers](#child-schedulers)). The first component receives the root Scheduler at `KeySlot::ROOT_SCHEDULER` (18).
+A Scheduler capability is the authority to make Threads run. A Thread created by [`Untyped.Retype`](untyped.md#retype) is inert: it has no AddressSpace and no execution state, and it never runs. A Scheduler turns it into a Thread that runs, by configuring it and then starting it. Schedulers form a tree: the root, and children that a parent adopts. Every operation works on any Scheduler for a holder with `Write`, but a child has no execution authority until its parent has adopted it and dispatched its dispatcher (see [Child Schedulers](#child-schedulers)). Each online core has its own root Scheduler, whose Threads and dispatcher run on that core. The first component receives the boot core's at `KeySlot::ROOT_SCHEDULER` (18).
 
 A Scheduler also owns a table of scheduling records. The nucleus writes each of its Threads' state into a record the scheduler can read without a system call, and advances an EventCount when a record changes.
 
@@ -52,7 +52,7 @@ Binds the inert Thread `x2` to the AddressSpace `x3`, an EL0 start state (entry 
 
 | Error | Cause |
 |---|---|
-| `InvalidOperation` | The Thread is not inert (already configured or started); the entry is not 4-byte aligned or not below the end of the user address range; the stack pointer is not 16-byte aligned or above that end; the Time belongs to another core or is already bound to a live Thread |
+| `InvalidOperation` | The Thread is not inert (already configured or started); the entry is not 4-byte aligned or not below the end of the user address range; the stack pointer is not 16-byte aligned or above that end; the Time belongs to another core than the Scheduler's (the caller's for a Scheduler with no core yet) or is already bound to a live Thread |
 | `NotBound` | The AddressSpace has no KeyTable bound ([`AddressSpace.Bind`](../arch/address_space.md#bind)) |
 | `NotMapped` | The AddressSpace has no translation root |
 | `NoAsidAssigned` | The AddressSpace has no ASID |
@@ -81,7 +81,7 @@ Binds the EventCount `x2`. After the nucleus publishes a change to the state, fl
 
 For a child Scheduler the dispatcher is a Thread of its parent: it must have been configured by the parent, is not started by the bind (the parent starts it, and dispatches it), and the child must have been adopted. The bind marks the Thread as the dispatcher of the child: its record carries the `DISPATCHER` flag. After the dispatcher of a child faults or is retired, another can be bound (see [Child Schedulers](#child-schedulers)).
 
-Binds the Thread `x2` as the scheduler's *dispatcher*, the Thread that decides what runs, and starts it. The Thread must have been configured by this Scheduler, and binding is once-only. From then on every other Thread this Scheduler configured, and every one it starts later, is dispatcher-managed: it is published in its record and runs only when the dispatcher names it with `Dispatch`. A Scheduler with no bound dispatcher runs nothing: its Threads wait. Kickstart binds the root dispatcher (`userspace/dispatcher`: the highest runnable priority first, round-robin within a priority, with each Thread's priority declared by its component in `driver_threads!`; the Scheduler itself has no priorities) in the production image, after it has started every driver and program, and registers the boot Thread with it. The test kernels run on a dispatcher too: the ones that load drivers bundle the same component, the others use the fixture dispatcher of `libkicktest`.
+Binds the Thread `x2` as the scheduler's *dispatcher*, the Thread that decides what runs, and starts it. The Thread must have been configured by this Scheduler, and binding is once-only. From then on every other Thread this Scheduler configured, and every one it starts later, is dispatcher-managed: it is published in its record and runs only when the dispatcher names it with `Dispatch`. A Scheduler with no bound dispatcher runs nothing: its Threads wait. Kickstart binds the root dispatcher (`userspace/dispatcher`: the highest runnable priority first, round-robin within a priority, with each Thread's priority declared by its component in `driver_threads!`; the Scheduler itself has no priorities) in the production image, after it has started every driver and program, and registers the boot Thread with it. The root dispatcher has one Thread per online core, each the bound dispatcher of that core's root Scheduler; a dispatcher bound to another core's Scheduler starts on that core. The test kernels run on a dispatcher too: the ones that load drivers bundle the same component, the others use the fixture dispatcher of `libkicktest`.
 
 | Error | Cause |
 |---|---|
@@ -125,7 +125,7 @@ EL0 reads the same clock with no system call: `CNTVCT_EL0` and `CNTFRQ_EL0` (the
 
 ### Adopt
 
-Makes the Scheduler `x2` a child of the invoked one. The parent is set once and never changes. The child takes the parent's core, which its Threads and dispatcher run on; a Scheduler made by `Untyped.Retype` has no core until it is adopted, and the root's is the boot core. The child must be fresh: it has no parent, is not the root, and has no children, Threads or dispatcher. A Scheduler with nothing in it has no descendants, so adopting it cannot close a cycle. The tree is at most four levels deep: the root and three below it.
+Makes the Scheduler `x2` a child of the invoked one. The parent is set once and never changes. The child takes the parent's core, which its Threads and dispatcher run on; a Scheduler made by `Untyped.Retype` has no core until it is adopted, and a root Scheduler's is the core it was carved for. The child must be fresh: it has no parent, is not the root, and has no children, Threads or dispatcher. A Scheduler with nothing in it has no descendants, so adopting it cannot close a cycle. The tree is at most four levels deep: the root and three below it.
 
 | Error | Cause |
 |---|---|
@@ -178,7 +178,7 @@ x (u32, 1), `record_size` (u32, 128) |
 | 72 | `fp_thread_switches` (u64): Thread switches with an FP/SIMD frame on either side |
 | 80 | `fp_entry_toggles` (u64): FP/SIMD trap changes at kernel entry and exit; 0 unless the nucleus is built with `fp_entry_trap` |
 
-The counters from byte 64 are nucleus-wide and only the root Scheduler's record carries them; they read 0 in any other.
+The totals are those of the Scheduler's core, and only that core writes the record. The counters from byte 64 are carried only by a root Scheduler's record; they read 0 in any other.
 
 **Thread record (slots 1 and up)**
 
@@ -212,7 +212,7 @@ The nucleus is the only writer. It makes `sequence` odd, writes the fields, then
 
 ## Implementation
 
-The root Scheduler is carved by Kickstart; `Untyped.Retype` makes inert ones (no parent, no Threads, no dispatcher), which have no execution authority until a parent adopts them. No queue runs Threads: a Thread runs only when its Scheduler's dispatcher dispatches it, and a Scheduler with no dispatcher runs nothing. The only list the nucleus keeps is the dispatchers an activation made ready to run next. The nucleus tracks which Thread the dispatcher dispatched and its limit, charges its Time as it runs, and at every kernel exit programs the one-shot timer for the nearest of the limit, the Time's exhaustion, and an immediate fire when an activation is waiting for the dispatcher.
+The root Schedulers are carved by Kickstart, one per online core; `Untyped.Retype` makes inert ones (no parent, no Threads, no dispatcher), which have no execution authority until a parent adopts them. No queue runs Threads: a Thread runs only when its Scheduler's dispatcher dispatches it, and a Scheduler with no dispatcher runs nothing. The only list the nucleus keeps is the dispatchers an activation made ready to run next. The nucleus tracks which Thread the dispatcher dispatched and its limit, charges its Time as it runs, and at every kernel exit programs the one-shot timer for the nearest of the limit, the Time's exhaustion, and an immediate fire when an activation is waiting for the dispatcher.
 
 The nucleus publishes a Thread's record when it starts, queues, moves to another Scheduler (`Donated` in the record it leaves), waits for budget, runs, blocks, stops, faults or is retired, and when `AssignRecord` links it. Retiring a Thread publishes `Dying` with its incarnation and drops the slot, and the scheduler may reuse the slot after it sees that. A shared Frame must stay mapped and must not be retired while the table uses it; the nucleus does not reclaim Frame memory.
 

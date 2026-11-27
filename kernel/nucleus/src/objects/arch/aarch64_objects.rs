@@ -184,7 +184,11 @@ impl ArchObjects for AArch64 {
     fn validate_translation_context(root_paddr: u64, asid: u16) -> Result<(), CapError> {
         use aarch64_cpu::registers::{ID_AA64MMFR0_EL1, Read, TCR_EL1};
 
-        validate_translation_metadata(root_paddr, asid, TCR_EL1.get(), ID_AA64MMFR0_EL1.get())
+        // A secondary core keeps TTBR0 walks off until it enters its first
+        // Thread, and turns them on as it installs that Thread's
+        // translation: check the TCR it runs Threads with.
+        let tcr = TCR_EL1.get() & !TCR_EL1::EPD0::DisableTTBR0Walks.value;
+        validate_translation_metadata(root_paddr, asid, tcr, ID_AA64MMFR0_EL1.get())
     }
 
     fn install_translation_context(root_paddr: u64, asid: u16, fp_simd: bool) {
