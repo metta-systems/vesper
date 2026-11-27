@@ -35,13 +35,20 @@ All by the maintainer, 2026-11-25.
   dispatch stay parked in [scheduling-decisions.md](scheduling-decisions.md).
 - **Scheduler core (C4.1(a)).** A Scheduler has a core field set once: Kickstart sets it
   for the root Schedulers, and a child Scheduler takes its parent's core at `Adopt`.
-- **Bound Time on a move (C4.2(a)).** A cross-core move requires the Thread's bound Time
-  to be empty and rebinds the Thread, in the same call, to a Time of the destination
-  core. The old Time stays with the source Scheduler.
+- **Bound Time on a move (C4.2(a), amended by C4.2.1(a)).** A cross-core move rebinds
+  the Thread, in the same call, to a Time of the destination core. The old Time stays
+  with the source Scheduler.
+- **Budget left on a move (C4.2.1(a), 2026-11-27).** The old Time need not be empty: it
+  keeps whatever budget is left and stays with the source Scheduler, no longer bound, so
+  the source can Merge or Transfer it afterwards. No budget crosses cores.
 - **Move operation (C4.3(a)).** `Scheduler.MoveThread` carries the cross-core move: besides
   a Scheduler and its direct child, it moves a Thread between Schedulers of different
   cores, taking the destination Time key, with `WRITE` on both Schedulers, the Thread and
   the destination Time.
+- **Who moves a Thread across cores (C4.3.1(a), 2026-11-27).** The cross-core move is
+  invoked on the Scheduler that owns the Thread, and the destination may be any Scheduler
+  of another core: the owner sends, the destination cannot pull. Pulling (work stealing)
+  is [future work](smp-decisions.md#future-work).
 - **Scheduler queues (maintainer, 2026-11-27).** The root scheduler's run queues are its
   own: it carves the queues it carved for one core once per core, owns them, and the
   kernel knows nothing of them.
@@ -98,6 +105,12 @@ All by the maintainer, 2026-11-25.
   until no core holds it, then releases the ASID.
 - **Page tables named elsewhere (C8.2(a), 2026-11-27).** `PageTable.Unmap` of a root
   does the same check and Stop, so after it no core's `TTBR0_EL1` names the root.
+- **Suites on a secondary core (maintainer, 2026-11-27).** The preempt, sync and ppc
+  suites also run whole on core 1, unchanged: the test kernel hands its suite to a Thread
+  of core 1's root Scheduler, the test dispatcher bound there, and the boot Thread parks
+  on core 0, so every check keeps its single-core meaning ((a)). Running the driver and
+  the Threads under test on different cores is later work, suite by suite, with SMP5.
+  Each runs on QEMU `raspi3b` and `raspi4b` ((a)).
 - **Bring-up order (C10(a)).** QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3 and Pi 5
   boards.
 - **Record totals per core (C11(a), 2026-11-26).** Each core's root Scheduler record
@@ -130,7 +143,7 @@ All by the maintainer, 2026-11-25.
 | Interrupt controller ABI | `IrqChipOps`: `init`, `claim` (on the calling CPU), `complete`, `mask`, `unmask`, `set_trigger`, `xlate`. No per-CPU init, no IPI, no routing | `libs/irqchip/src/lib.rs` |
 | BCM2836 component | Drives core 0's local registers only; core 1–3 timer, mailbox and source registers are reserved fields | `drivers/irqchip-bcm2836/src/lib.rs` |
 | GIC-400 component | Routes every SPI to the CPU interface of the core running `init` (from banked `GICD_ITARGETSR0-7`) | `drivers/irqchip-gicv2/src/lib.rs` |
-| Scheduling ABI | A Scheduler has a core (its own core for a root, the parent's from `Adopt`); `Scheduler.Dispatch` `x6` must name it and the caller must run on it (`SchedulerKey::dispatch_on`); `ConfigureThread` binds only a Time of the Scheduler's core (the caller's for a Scheduler with no core yet); the Thread record's `cpu` is the running Thread's Scheduler's core; a Scheduler's record is written only on its core, with that core's totals; a Time belongs to the core that created it, and Transfer, Merge and Dispatch refuse another core's | [scheduling design](scheduling-design.md#decisions); `objects/scheduler.rs`, `objects/time.rs`, `api/scheduler.rs` |
+| Scheduling ABI | A Scheduler has a core (its own core for a root, the parent's from `Adopt`); `Scheduler.Dispatch` `x6` must name it and the caller must run on it (`SchedulerKey::dispatch_on`); `ConfigureThread` binds only a Time of the Scheduler's core (the caller's for a Scheduler with no core yet); the Thread record's `cpu` is the running Thread's Scheduler's core; a Scheduler's record is written only on its core, with that core's totals; a Time belongs to the core that created it, and Transfer, Merge and Dispatch refuse another core's; `Scheduler.MoveThread` invoked on the owner moves a Thread that runs nowhere to a Scheduler of another core with that core's unbound Time in `x5` (`SchedulerKey::move_thread_to_core`), its own Time left unbound with the source with whatever budget it holds, and re-tags its wait timeout to the destination core, which `IPI_TIMER` tells to program its timer | [scheduling design](scheduling-design.md#decisions); `objects/scheduler.rs`, `objects/time.rs`, `api/scheduler.rs` |
 | Per-core roots | Kickstart carves a boot Time (infinite) and a root Scheduler for every online core (`BootState::core_roots`; the boot core's at `BOOT_TIME` and `ROOT_SCHEDULER`, the others at the top of the boot table). The root dispatcher (`userspace/dispatcher`) has one Thread per online core, started with the core's index in `x0`: the boot core's is its first Thread, each other core's is configured on that core's root Scheduler and boot Time, and each runs its own core's Scheduler from its own queues (`DispatchInit::cores`, one record table per Scheduler). A root `BindDispatcher` for another core queues the dispatcher on that core's list and sends `IPI_RESCHEDULE`. Every managed Thread is still the boot core's, so the other cores' dispatchers wait with nothing dispatched. `smp-test` runs Threads on core 1's root Scheduler: entry, a cross-core Signal wakeup, parallel execution with core 1's timer ending a budget, and the per-core Transfer refusal | `kernel/kickstart/src/bootstrap.rs`, `drivers.rs`; `userspace/dispatcher`; `objects/nucleus.rs` |
 | Run state | `Nucleus::activations` is one list per core, a Scheduler's dispatcher on its core's list; a core selects from its own (`local_activations`); an activation on its own list preempts its running Thread, one on another core's list sends that core `IPI_RESCHEDULE`, and only the target core updates its own `dispatched` (`settle_dispatched`). The dispatcher-timer table and the wait timeouts are tagged by core, and each core programs and expires only its own | `objects/nucleus.rs`, `objects/timers.rs`, `objects/completion.rs`, `main.rs` |
 | Payload ordering | The contract states that multicore needs real Acquire/Release kernel atomics for Signal/Advance publication | [contract, Notification and EventCount](capabilities-contract.md#notification-and-eventcount) |
@@ -369,7 +382,9 @@ of its running Thread's dispatch limit, budget and slice, and the wait timeouts 
 `Scheduler.ArmTimer` deadlines tagged with its core; its timer interrupt expires only
 those (`Nucleus::expire_deadlines`). A wait timeout takes its core when it is set, from
 the waiting Thread's Scheduler (this core for a Thread outside every Scheduler); a
-dispatcher timer takes its Scheduler's core when it is armed.
+dispatcher timer takes its Scheduler's core when it is armed. When that core is another
+than the one setting the timeout, or a waiting Thread moves to another core, that core is
+sent `IPI_TIMER`, whose kernel exit programs its timer.
 
 ### Memory management
 
@@ -423,8 +438,11 @@ How it is done:
     the flag;
   - the boot core's idle loop looks after each wake, before it takes the lock again.
   A core inside a kernel entry finishes it and parks at its next entry or idle wait.
-- Every other kernel line is printed inside a kernel entry, so under the lock. The
-  secondaries print nothing.
+- Every other kernel line is printed inside a kernel entry, so under the lock, on any
+  core (a secondary prints its first idle, a Thread's first run and faults). A test
+  kernel's boot Thread prints through Kickstart's early console outside the lock, so on
+  the board UART its lines can interleave with a kernel line from another core, byte by
+  byte (seen on the Pi 5 in `smp-test`).
 
 ## 4. Scheduling
 

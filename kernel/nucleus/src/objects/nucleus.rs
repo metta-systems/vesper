@@ -591,6 +591,7 @@ impl<A: ArchObjects> Nucleus<A> {
         id: ThreadId,
         destination: CarvedId,
         slot: u32,
+        rebind: Option<CarvedId>,
     ) -> Result<(), CapError> {
         let thread = self.thread(id).ok_or(CapError::InvalidOperation)?;
         let owner = thread.scheduler.ok_or(CapError::InvalidOperation)?;
@@ -602,6 +603,8 @@ impl<A: ArchObjects> Nucleus<A> {
         );
         if !started
             || owner == destination
+            || thread.running_on.is_some()
+            || thread.retiring
             || self.this_core.current_thread == Some(id)
             || [self.this_core.dispatched, self.this_core.dispatch_next]
                 .into_iter()
@@ -632,6 +635,10 @@ impl<A: ArchObjects> Nucleus<A> {
             thread.record = None;
         }
         self.join_scheduler(id, destination);
+        if let Some(time) = rebind {
+            let core = self.scheduler_core(destination);
+            self.rebind_moved_thread(id, time, core);
+        }
         self.assign_record(id, destination, slot)?;
         let ready = self.thread(id).is_some_and(|thread| {
             !thread.suspended
@@ -650,6 +657,44 @@ impl<A: ArchObjects> Nucleus<A> {
             self.make_runnable(id);
         }
         Ok(())
+    }
+
+    /// A cross-core move (SMP C4.2(a), C4.2.1(a)): the Thread `id` leaves its
+    /// Time, with whatever budget it holds, to the source, no longer bound,
+    /// and is bound to `time`, of the destination `core`, which
+    /// from now on counts the timeout of its wait, if it has one (and is told
+    /// to program its timer for it).
+    fn rebind_moved_thread(&mut self, id: ThreadId, time: CarvedId, core: usize) {
+        let old = self.thread(id).and_then(|thread| thread.time);
+        // SAFETY: Time identities name carved records that are never freed;
+        // validation checks the header, and the kernel lock serializes
+        // access, so these are the only references to the Times.
+        unsafe {
+            if let Some(old) = old.and_then(|old| Carved::<Time>::validate(old).ok()) {
+                (*old).unbind();
+            }
+            if let Ok(new) = Carved::<Time>::validate(time) {
+                (*new).bind(id);
+            }
+        }
+        let parked = self.thread_mut(id).and_then(|thread| {
+            thread.time = Some(time);
+            // Whether it waits for budget is decided again, against the new
+            // Time, when it is announced.
+            thread.awaiting_budget = false;
+            match thread.context {
+                ExecutionContext::Parked { record, .. } => Some(record),
+                _ => None,
+            }
+        });
+        if let Some(record) = parked
+            && self.pending.retag_deadline(record, core)
+            && core != self.current_cpu()
+            && let Ok(cpu) = u32::try_from(core)
+            && cpu < u32::BITS
+        {
+            super::core_record::send_ipis(1 << cpu, super::core_record::IPI_TIMER);
+        }
     }
 
     /// The Thread `id` joins `scheduler`'s list of owned Threads.
@@ -942,7 +987,16 @@ impl<A: ArchObjects> Nucleus<A> {
             .counter_ticks()
             .saturating_add(ns_to_ticks_ceil(timeout_ns, self.counter_frequency()));
         let core = self.thread_core(self.pending.waiter(record)?);
-        self.pending.set_deadline(record, deadline, core)
+        self.pending.set_deadline(record, deadline, core)?;
+        // A Thread of another core's Scheduler waiting here (one moving to
+        // that core): that core programs its timer for the deadline.
+        if core != self.current_cpu()
+            && let Ok(cpu) = u32::try_from(core)
+            && cpu < u32::BITS
+        {
+            super::core_record::send_ipis(1 << cpu, super::core_record::IPI_TIMER);
+        }
+        Ok(())
     }
 
     /// Arm (or, for `deadline_ns` 0, disarm) `scheduler`'s dispatcher timer

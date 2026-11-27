@@ -53,7 +53,7 @@ pub fn run() {
         boot_untyped_key,
         boot_time_key,
         debug_console_key,
-        root_scheduler_key,
+        core_roots,
         ..
     } = boot;
     let boot_table_binding = nucleus
@@ -247,8 +247,14 @@ pub fn run() {
         Err(CapError::InvalidOperation)
     ));
     assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
-    // The fixture Threads run on the root Scheduler's dispatcher.
-    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, root_scheduler_key);
+    // The fixture Threads run on the root Scheduler's dispatcher, on the
+    // suite's core (core 1 with `on_core1`, where the boot Thread moves).
+    let suite_root = libkicktest::dispatcher::suite_root(&core_roots);
+    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, suite_root.scheduler);
+    // The trap stack is the core's own: the suite's core's from here on (the
+    // same as before on the boot core). The boot Thread's stack is its own.
+    let (execution_sp, shared_trap_sp) = record_fixture_stacks();
+    assert_eq!(execution_sp, boot_execution_sp);
     let bounce_id = threads::spawn(
         nucleus,
         &builder,

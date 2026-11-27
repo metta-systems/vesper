@@ -24,11 +24,9 @@ Secondaries run no Threads; they enter the kernel only to prepare themselves at 
 interrupt controller and to take IPIs. Order: QEMU `raspi3b` and `raspi4b`, then the
 Pi 4, Pi 3 and Pi 5 boards.
 
-- [ ] Board runs of `smp-test` (`just boot-smp-test`, or `smp-test-<boards>.bin` on a card)
-  on the Pi 3 and Pi 5 (the Pi 4 passes): `smp-test: PASS`, which checks `SMPEN`
-  coherency with the cross-core counter and an IPI round trip with each core; the Pi 3 is
-  the first run of the BCM2836 mailbox IPIs, the Pi 5 the first of the PSCI component and
-  the `no-map` reservation.
+- [ ] Board run of `smp-test` (`just boot-smp-test`, or `smp-test-<boards>.bin` on a card)
+  on the Pi 3 (the Pi 4 and Pi 5 pass): `smp-test: PASS`, the first run of the BCM2836
+  mailbox IPIs on a board, and of SMP4 on a Cortex-A53.
 
 ## SMP4: Threads on secondary cores
 

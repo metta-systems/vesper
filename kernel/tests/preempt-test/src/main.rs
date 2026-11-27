@@ -557,8 +557,11 @@ pub fn run() -> ! {
     START_TICKS.store(ticks(), Ordering::Relaxed);
     let time_before = nucleus.current_time_ns();
 
-    // The fixture Threads run on the root Scheduler's dispatcher.
-    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, keys.root_scheduler);
+    // The fixture Threads run on the root Scheduler's dispatcher, on the
+    // suite's core (core 1 with `on_core1`, where the boot Thread moves);
+    // its boot Time and root Scheduler are the ones used from here on.
+    let suite_root = libkicktest::dispatcher::suite_root(&keys.core_roots);
+    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, suite_root.scheduler);
     let entries = [
         spinner_a as *const () as u64,
         spinner_b as *const () as u64,
@@ -571,7 +574,7 @@ pub fn run() -> ! {
     // and a Time, fund the Time from the boot Time, then the root Scheduler
     // configures the Thread on it and starts it. The first spinner's Time is
     // infinite; the second's holds a few ticks of CPU time.
-    let boot_time = TimeKey::from_key(keys.boot_time);
+    let boot_time = TimeKey::from_key(suite_root.time);
     let mut retype_time = |budget_ns: u64| {
         let key = untyped
             .retype(
@@ -607,7 +610,7 @@ pub fn run() -> ! {
             Rights::all(),
         )
         .unwrap_or_else(|error| panic!("Thread Retype failed: {:?}", error.code()));
-    let root_scheduler = SchedulerKey::from_key(keys.root_scheduler);
+    let root_scheduler = SchedulerKey::from_key(suite_root.scheduler);
     // The scheduler's record table is the Frame mapped for the EL0 reader
     // above: share it with the nucleus, and bind the EventCount the nucleus
     // advances whenever it publishes a change to a record.

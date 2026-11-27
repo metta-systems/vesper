@@ -17,17 +17,22 @@ use {
         cell::UnsafeCell,
         sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering},
     },
+    kickstart::bootstrap::CoreRoot,
     libcomponent_loader::{builder::Builder, keys::BOOT_TABLE_GUARD},
     libexception::arch::aarch64::SavedContext,
+    libirqchip::MAX_CPUS,
     libobject::{
-        KeySlot, ObjectType, RawKey, Rights,
+        KeySlot, NotificationKey, ObjectType, RawKey, Rights,
         scheduler::{SchedulerKey, activation_mask},
     },
+    libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, Thread,
-            arch_objects::AddressSpaceId, carved::CarvedId, thread::ThreadId,
+            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, Scheduler, Thread,
+            arch_objects::AddressSpaceId,
+            carved::{Carved, CarvedId},
+            thread::ThreadId,
         },
     },
 };
@@ -97,13 +102,15 @@ fn generation_of(index: usize) -> u64 {
 extern "C" fn dispatcher() -> ! {
     let scheduler =
         SchedulerKey::from_key(RawKey::from_wire(SCHEDULER_KEY.load(Ordering::Acquire)));
+    // The core of the Scheduler it dispatches, which it runs on.
+    let core = u64::from(nucleus::core_record::current().index);
     // One pass: try every registered Thread for a slice; whether any ran.
     let pass = || {
         let mut ran = false;
         for (index, key) in KEYS.iter().enumerate().take(COUNT.load(Ordering::Acquire)) {
             let key = RawKey::from_wire(key.load(Ordering::Acquire));
             if scheduler
-                .dispatch(Some(key), SLICE_NS, generation_of(index))
+                .dispatch_on(core, Some(key), SLICE_NS, generation_of(index))
                 .is_ok()
             {
                 ran = true;
@@ -124,13 +131,41 @@ extern "C" fn dispatcher() -> ! {
         if pass() {
             continue;
         }
-        scheduler.dispatch(None, u64::MAX, 0).ok();
+        scheduler.dispatch_on(core, None, u64::MAX, 0).ok();
     }
 }
+
+/// The boot Time and root Scheduler of the core the suite runs on: core 1's
+/// in a test kernel built with `on_core1`, the boot core's otherwise.
+///
+/// # Panics
+///
+/// If that core has no roots (it is not online).
+pub fn suite_root(core_roots: &[Option<CoreRoot>; MAX_CPUS]) -> CoreRoot {
+    let core = if cfg!(feature = "on_core1") {
+        1
+    } else {
+        nucleus::core_record::current().index as usize
+    };
+    core_roots
+        .get(core)
+        .copied()
+        .flatten()
+        .unwrap_or_else(|| panic!("core {core} has no root Scheduler"))
+}
+
+/// How long each wait of the boot Thread's move to another core lasts.
+const MOVE_WAIT_NS: u64 = 1_000_000;
 
 /// Create the root Scheduler's dispatcher in `address_space` (which must map
 /// the boot image), bind it, and register the current (boot) Thread. The
 /// dispatcher first runs when the boot Thread blocks or is preempted.
+///
+/// For the root Scheduler of another core ([`suite_root`] with `on_core1`)
+/// the boot Thread moves there: it joins that Scheduler, the dispatcher is
+/// bound through the kernel (which starts it on that core), and the boot
+/// Thread waits with a short timeout, which that core's timer ends, until it
+/// resumes on that core. Everything after `init` runs there.
 pub fn init(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     builder: &Builder<'_>,
@@ -158,15 +193,69 @@ pub fn init(
         .expect("the dispatcher Thread exists")
         .scheduler = Some(scheduler);
     nucleus.join_scheduler(thread, scheduler);
-    nucleus
-        .bind_dispatcher(scheduler, thread)
-        .unwrap_or_else(|error| panic!("fixture BindDispatcher failed: {:?}", error.code()));
-
     let boot = nucleus
         .this_core
         .current_thread
         .expect("a boot Thread is running");
+    // SAFETY: the Scheduler identity was resolved from a live key above;
+    // carved records are never freed.
+    let core = unsafe { Carved::<Scheduler>::validate(scheduler) }
+        .ok()
+        .and_then(|object| {
+            // SAFETY: as above; the record is read once.
+            unsafe { (*object).core() }
+        });
+    let here = nucleus::core_record::current().index as usize;
+    let Some(there) = core.filter(|&core| core != here) else {
+        nucleus
+            .bind_dispatcher(scheduler, thread)
+            .unwrap_or_else(|error| panic!("fixture BindDispatcher failed: {:?}", error.code()));
+        register(nucleus, builder, boot);
+        return;
+    };
+
+    // Another core's: the boot Thread becomes one of its Scheduler's
+    // Threads, then the kernel binds the dispatcher, starting it there.
     register(nucleus, builder, boot);
+    let dispatcher_key = grant(builder, KeyEntry::new_thread(thread, Rights::all(), 0));
+    SchedulerKey::from_key(root_scheduler)
+        .bind_dispatcher(dispatcher_key)
+        .unwrap_or_else(|error| panic!("fixture BindDispatcher failed: {:?}", error.code()));
+    // Each wait times out on that core, whose dispatcher then runs the boot
+    // Thread: it resumes there.
+    let pause = builder
+        .untyped
+        .retype(
+            ObjectType::NOTIFICATION,
+            0,
+            0,
+            1,
+            builder.self_table,
+            next_slot(),
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("move Notification Retype failed: {:?}", error.code()));
+    while nucleus::core_record::current().index as usize != there {
+        NotificationKey::from_key(pause)
+            .await_bits(MOVE_WAIT_NS)
+            .ok();
+    }
+    semi::println!("🧪 the suite runs on core {there}");
+}
+
+/// The next boot-table slot of the fixture keys.
+fn next_slot() -> u32 {
+    let slot = NEXT_SLOT.fetch_add(1, Ordering::Relaxed);
+    assert!(slot < 1 << 9, "boot-table slots exhausted");
+    slot
+}
+
+/// A key to `entry` in the next fixture slot of the boot table.
+fn grant(builder: &Builder<'_>, entry: KeyEntry) -> RawKey {
+    // SAFETY: the live boot table, borrowed for this bootstrap grant only.
+    unsafe { &mut *KeyTable::at_carve(builder.boot_table_addr) }
+        .insert(KeySlot(next_slot()), entry, BOOT_TABLE_GUARD)
+        .unwrap_or_else(|failure| panic!("fixture key grant failed: {:?}", failure.error.code()))
 }
 
 /// Make `thread` a Thread of the root Scheduler and add it to the
@@ -187,16 +276,7 @@ pub fn register(nucleus: &mut Nucleus<ArchObjectsImpl>, builder: &Builder<'_>, t
         nucleus.join_scheduler(thread, scheduler);
     }
 
-    let slot = NEXT_SLOT.fetch_add(1, Ordering::Relaxed);
-    assert!(slot < 1 << 9, "boot-table slots exhausted");
-    // SAFETY: the live boot table, borrowed for this bootstrap grant only.
-    let key = unsafe { &mut *KeyTable::at_carve(builder.boot_table_addr) }
-        .insert(
-            KeySlot(slot),
-            KeyEntry::new_thread(thread, Rights::all(), 0),
-            BOOT_TABLE_GUARD,
-        )
-        .unwrap_or_else(|failure| panic!("fixture key grant failed: {:?}", failure.error.code()));
+    let key = grant(builder, KeyEntry::new_thread(thread, Rights::all(), 0));
     let index = COUNT.load(Ordering::Acquire);
     assert!(index < MAX_FIXTURES, "too many fixture Threads");
     KEYS[index].store(key.to_wire(), Ordering::Release);

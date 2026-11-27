@@ -26,7 +26,7 @@ A Scheduler also owns a table of scheduling records. The nucleus writes each of 
 | 7 | ConfigureActivation | `x2` mask | `Write` on the Scheduler | — |
 | 8 | ArmTimer | `x2` deadline in nanoseconds (0 disarms) | `Write` on the Scheduler | `x1` the time now, `x2` the previous deadline |
 | 9 | Adopt | `x2` child Scheduler | `Write` on the Scheduler and the child | — |
-| 10 | MoveThread | `x2` Thread, `x3` destination Scheduler, `x4` slot | `Write` on the Scheduler, the Thread and the destination | — |
+| 10 | MoveThread | `x2` Thread, `x3` destination Scheduler, `x4` slot, `x5` Time (to another core) or 0 | `Write` on the Scheduler, the Thread, the destination and the Time | — |
 
 `Read` is rights bit 0, `Write` and `Map` are bit 1. `SchedulerKey` in `libs/object` wraps the operations. Unused argument registers must be zero.
 
@@ -137,9 +137,11 @@ Makes the Scheduler `x2` a child of the invoked one. The parent is set once and 
 
 Moves the Thread `x2` to the Scheduler `x3`, linking it to record slot `x4` of that Scheduler's table. Invoked on the Thread's owner, the destination is a direct child of the invoked Scheduler (donation); invoked on the owner's parent, the destination is the invoked Scheduler itself (taking the Thread back). The Thread must be started and not running, dispatched or a dispatcher; a blocked or suspended Thread moves with its wait, completion and Time untouched. The record it leaves reads `Donated`, which the old owner may reuse. A Thread that can run is announced to the new owner as for any wakeup; the first-in, first-out queue drops it.
 
+To a Scheduler of another core, MoveThread is invoked on the Thread's owner, and `x5` names a Time of the destination core that no live Thread is bound to. The Thread's own Time stays with the invoked Scheduler with whatever budget it holds, no longer bound, so that Scheduler can Merge or Transfer it, and the Thread is bound to the Time `x5`. A wait timeout of the Thread is counted by the destination core from then on. For a move on one core `x5` is zero.
+
 | Error | Cause |
 |---|---|
-| `InvalidOperation` | The move is not between a Scheduler and its direct child; the Thread is inert, running, dispatched or a dispatcher; the slot is 0 or not covered by the destination's table; a nonzero unused register |
+| `InvalidOperation` | The move is not between a Scheduler and its direct child, nor from the owner to a Scheduler of another core; the Thread is inert, running on any core, dispatched or a dispatcher; the slot is 0 or not covered by the destination's table; to another core: the Time `x5` is of another core or bound to a live Thread; on one core: `x5` is not zero; a nonzero unused register |
 | `InsufficientRights` | A missing right |
 | `TypeMismatch` | A key names the wrong kind |
 

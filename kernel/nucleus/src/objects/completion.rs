@@ -215,6 +215,19 @@ impl PendingPool {
         Ok(())
     }
 
+    /// Count the deadline of the waiting record `id`, if it has one, on
+    /// `core`'s timer from now on: its waiter moved there. Whether it has one.
+    pub fn retag_deadline(&mut self, id: ObjectId, core: usize) -> bool {
+        let Ok(record) = self.live_mut(id) else {
+            return false;
+        };
+        if record.state != PendingState::Waiting || record.deadline_ticks.is_none() {
+            return false;
+        }
+        record.deadline_core = core;
+        true
+    }
+
     /// The earliest deadline among the waiting records that `core`'s timer
     /// counts.
     pub fn next_deadline(&self, core: usize) -> Option<u64> {

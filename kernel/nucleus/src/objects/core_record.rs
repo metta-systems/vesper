@@ -62,11 +62,15 @@ pub const NO_DEADLINE: u64 = u64::MAX;
 /// IPI kind: something to run there changed; the core selects again on its way out of
 /// the kernel.
 pub const IPI_RESCHEDULE: u32 = 1 << 0;
-/// IPI kind: a Thread running there, or an `AddressSpace` current there, is going away
-/// (its work comes with synchronous retirement, in the scheduling plan's Phase 11).
+/// IPI kind: a Thread running there is being retired, or an `AddressSpace` it still
+/// holds is going away: the core stops the Thread, or lets go of the `AddressSpace`.
 pub const IPI_STOP: u32 = 1 << 1;
 /// IPI kind: another core panicked; the core parks.
 pub const IPI_HALT: u32 = 1 << 2;
+/// IPI kind: a deadline the core counts changed (a waiting Thread moved there with
+/// its timeout); taking it is all it does, since every interrupt's kernel exit
+/// programs the core's timer.
+pub const IPI_TIMER: u32 = 1 << 5;
 /// IPI kind, `smp-test` only: the core answers the boot core with [`IPI_PONG`].
 #[cfg(feature = "smp_test")]
 pub const IPI_PING: u32 = 1 << 3;

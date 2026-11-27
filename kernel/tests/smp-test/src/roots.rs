@@ -26,6 +26,7 @@ use {
     },
     kickstart::{bootstrap::CoreRoot, image::BootImage},
     libcomponent_loader::{
+        builder::Builder,
         component::Component,
         keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, boot_key},
     },
@@ -35,6 +36,8 @@ use {
         address_space::AddressSpaceKey,
         page_table::PageTableKey,
         scheduler::{SchedulerKey, activation_mask, activation_reason},
+        scheduler_record::ThreadRecord,
+        thread::ThreadState,
         time::INFINITE_BUDGET,
     },
     nucleus::{
@@ -67,11 +70,12 @@ struct Stack(UnsafeCell<[u8; STACK_BYTES]>);
 // SAFETY: each stack is one Thread's, used only through its SP.
 unsafe impl Sync for Stack {}
 
-/// The waiter's, the spinner's, the victim's and the dispatcher's stacks.
-static STACKS: [Stack; 4] = [const { Stack(UnsafeCell::new([0; STACK_BYTES])) }; 4];
+/// The workers' stacks (waiter, spinner, victim, moved, timed), then the
+/// dispatcher's.
+static STACKS: [Stack; 6] = [const { Stack(UnsafeCell::new([0; STACK_BYTES])) }; 6];
 
 /// The dispatcher's stack, after the workers'.
-const DISPATCHER_STACK: usize = 3;
+const DISPATCHER_STACK: usize = 5;
 
 fn stack_top(index: usize) -> u64 {
     STACKS[index].0.get() as u64 + STACK_BYTES as u64
@@ -81,11 +85,34 @@ const WAITER: usize = 0;
 const SPINNER: usize = 1;
 /// Spins with no dispatch limit, so only a Stop IPI takes it off the CPU.
 const VICTIM: usize = 2;
+/// Moved here from the boot core's root Scheduler; it has a record.
+const MOVED: usize = 3;
+/// Waits with a timeout here, and is moved to the boot core while it waits.
+const TIMED: usize = 4;
 
 /// The secondary's root Scheduler, as a wire key.
 static SCHEDULER: AtomicU64 = AtomicU64::new(0);
 /// The workers' wire keys, set as each is started (zero before).
-static WORKERS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+static WORKERS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+/// Where the boot core's root Scheduler's record table is mapped, and the
+/// timed waiter's slot in it.
+const BOOT_RECORDS_VA: u64 = 0x3020_0000;
+const TIMED_SLOT: u32 = 2;
+/// How long the timed waiter waits.
+const TIMED_WAIT_NS: u64 = 500_000_000;
+/// The core the timed waiter began its wait on, plus one, and the
+/// Notification it waits on, which nobody signals.
+static TIMED_WAITING_ON: AtomicU64 = AtomicU64::new(0);
+static TIMED_PARK: AtomicU64 = AtomicU64::new(0);
+/// Where the secondary's root Scheduler's record table is mapped, and the
+/// moved Thread's record slot in it.
+const RECORDS_VA: u64 = 0x3000_0000;
+const MOVED_SLOT: u32 = 1;
+const RECORD_STRIDE: u64 = 128;
+/// The core the moved Thread ran on, plus one.
+static MOVED_RAN_ON: AtomicU64 = AtomicU64::new(0);
+/// The Notification the moved Thread waits on for good, as a wire key.
+static MOVED_PARK: AtomicU64 = AtomicU64::new(0);
 /// The activation reasons the victim's dispatch returned.
 static VICTIM_REASONS: AtomicU64 = AtomicU64::new(0);
 /// The victim's progress.
@@ -141,9 +168,16 @@ extern "C" fn dispatcher() -> ! {
             }
             let left_before = if index == SPINNER { spinner_left() } else { 0 };
             let limit = if index == VICTIM { u64::MAX } else { SLICE_NS };
+            // A Thread without a record keeps generation 0; the moved one
+            // has a record, which tells its generation.
+            let generation = if index == MOVED {
+                moved_generation()
+            } else {
+                0
+            };
             let started = nucleus::timer::counter();
-            // A Thread without a record keeps generation 0.
-            let result = scheduler.dispatch_on(core, Some(RawKey::from_wire(key)), limit, 0);
+            let result =
+                scheduler.dispatch_on(core, Some(RawKey::from_wire(key)), limit, generation);
             let took_ns = ticks_to_ns(nucleus::timer::counter() - started);
             if index == SPINNER && result.is_ok() {
                 account_spinner_run(left_before, spinner_left(), took_ns);
@@ -187,6 +221,45 @@ extern "C" fn spinner() -> ! {
     loop {
         SPINS.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+/// The moved Thread's generation, from its record.
+fn moved_generation() -> u64 {
+    // SAFETY: the record table is mapped at `RECORDS_VA` in the boot
+    // AddressSpace before the move, 64-byte aligned; records are read only
+    // through atomics.
+    unsafe { ThreadRecord::at((RECORDS_VA + u64::from(MOVED_SLOT) * RECORD_STRIDE) as *const u8) }
+        .try_snapshot(100)
+        .map_or(0, |snapshot| snapshot.generation)
+}
+
+/// Records the core it runs on, then waits for good.
+extern "C" fn moved() -> ! {
+    MOVED_RAN_ON.store(this_core_plus_one(), Ordering::Release);
+    let park = NotificationKey::from_key(RawKey::from_wire(MOVED_PARK.load(Ordering::Acquire)));
+    loop {
+        park.await_bits(NotificationKey::WAIT_INFINITE).ok();
+    }
+}
+
+/// Waits once with a timeout, then for good. It is moved to the boot core
+/// while it waits, and nothing runs it there.
+extern "C" fn timed_waiter() -> ! {
+    let park = NotificationKey::from_key(RawKey::from_wire(TIMED_PARK.load(Ordering::Acquire)));
+    TIMED_WAITING_ON.store(this_core_plus_one(), Ordering::Release);
+    park.await_bits(TIMED_WAIT_NS).ok();
+    loop {
+        park.await_bits(NotificationKey::WAIT_INFINITE).ok();
+    }
+}
+
+/// The state the record in `slot` of the table at `va` shows.
+fn record_state(va: u64, slot: u32) -> Option<ThreadState> {
+    // SAFETY: a record table mapped at `va` in the boot AddressSpace, 64-byte
+    // aligned; records are read only through atomics.
+    unsafe { ThreadRecord::at((va + u64::from(slot) * RECORD_STRIDE) as *const u8) }
+        .try_snapshot(100)
+        .and_then(|snapshot| snapshot.thread_state())
 }
 
 /// Counts until it is retired.
@@ -375,6 +448,96 @@ pub fn check_roots(image: &mut BootImage<'_>) -> bool {
         &SavedContext::el1t_interruptible(victim as *const () as u64, stack_top(VICTIM)),
         Some(victim_time),
     );
+    // A Thread of the boot core's root Scheduler, on an empty Time of the
+    // boot core, which never runs there: it moves to the secondary.
+    let boot_root = image.keys.core_roots[boot_core].expect("the boot core's roots");
+    let boot_scheduler_id = image
+        .builder
+        .entry(boot_root.scheduler)
+        .carved_id()
+        .unwrap_or_else(|error| panic!("boot root Scheduler: {:?}", error.code()));
+    let moved_old_time = image.builder.carve_object(Time::empty(boot_core));
+    let moved_key = configured_thread(
+        image,
+        boot_scheduler_id,
+        &SavedContext::el1t_interruptible(moved as *const () as u64, stack_top(MOVED)),
+        Some(moved_old_time),
+    );
+    let moved_time = image
+        .builder
+        .carve_object(Time::root(core, INFINITE_BUDGET));
+    let moved_time_key = grant(image, KeyEntry::new_carved(moved_time, Rights::all(), 0));
+    let moved_park = image.notification();
+    MOVED_PARK.store(moved_park.to_wire(), Ordering::Release);
+    // The secondary's root Scheduler gets a record table, mapped here.
+    Builder::map_table(
+        image.builder.carve_tables(image.slots.take(1), 1),
+        image.l2,
+        RECORDS_VA,
+    );
+    let record_frame = image.slots.take(1);
+    let record_incarnation = image.builder.retype_frames(record_frame, 1).incarnation();
+    Builder::map_frames(
+        record_frame,
+        record_incarnation,
+        1,
+        image.address_space,
+        RECORDS_VA,
+        Rights(Rights::READ | Rights::WRITE),
+    );
+    scheduler
+        .share_region(
+            boot_key(record_frame, record_incarnation),
+            0,
+            u32::try_from(RECORD_STRIDE).unwrap_or(u32::MAX),
+        )
+        .unwrap_or_else(|error| panic!("core {core} ShareRegion failed: {:?}", error.code()));
+    // A waiter on the secondary that moves to the boot core's root
+    // Scheduler, whose record table is mapped here too.
+    let timed_time = image
+        .builder
+        .carve_object(Time::root(core, INFINITE_BUDGET));
+    let timed_key = configured_thread(
+        image,
+        scheduler_id,
+        &SavedContext::el1t(timed_waiter as *const () as u64, stack_top(TIMED)),
+        Some(timed_time),
+    );
+    let timed_destination_time = image
+        .builder
+        .carve_object(Time::root(boot_core, INFINITE_BUDGET));
+    let timed_destination_time_key = grant(
+        image,
+        KeyEntry::new_carved(timed_destination_time, Rights::all(), 0),
+    );
+    let timed_park = image.notification();
+    TIMED_PARK.store(timed_park.to_wire(), Ordering::Release);
+    Builder::map_table(
+        image.builder.carve_tables(image.slots.take(1), 1),
+        image.l2,
+        BOOT_RECORDS_VA,
+    );
+    let boot_record_frame = image.slots.take(1);
+    let boot_record_incarnation = image
+        .builder
+        .retype_frames(boot_record_frame, 1)
+        .incarnation();
+    Builder::map_frames(
+        boot_record_frame,
+        boot_record_incarnation,
+        1,
+        image.address_space,
+        BOOT_RECORDS_VA,
+        Rights(Rights::READ | Rights::WRITE),
+    );
+    SchedulerKey::from_key(boot_root.scheduler)
+        .share_region(
+            boot_key(boot_record_frame, boot_record_incarnation),
+            0,
+            u32::try_from(RECORD_STRIDE).unwrap_or(u32::MAX),
+        )
+        .unwrap_or_else(|error| panic!("boot ShareRegion failed: {:?}", error.code()));
+
     // An AddressSpace that two more cores come to hold: each one's
     // dispatcher is an EL0 Thread in it, which faults at once on its
     // unmapped entry, so the core idles holding it.
@@ -538,6 +701,99 @@ pub fn check_roots(image: &mut BootImage<'_>) -> bool {
     passed &= check(
         wait_for(|| WAKES.load(Ordering::Acquire) >= 2, core::hint::spin_loop),
         format_args!("core {core} still wakes its waiter after the retirement"),
+    );
+
+    // ── A Thread moved from the boot core's root Scheduler ──
+    WORKERS[MOVED].store(moved_key.to_wire(), Ordering::Release);
+    let boot_root_scheduler = SchedulerKey::from_key(boot_root.scheduler);
+    boot_root_scheduler
+        .start_thread(moved_key)
+        .unwrap_or_else(|error| panic!("moved StartThread failed: {:?}", error.code()));
+    // The secondary's Time must be of the secondary; the Thread's own empty.
+    let local = boot_root_scheduler.move_thread_to_core(
+        moved_key,
+        root.scheduler,
+        MOVED_SLOT,
+        image.keys.boot_time,
+    );
+    passed &= check(
+        matches!(local, Err(CapError::InvalidOperation)),
+        format_args!("a move to core {core} onto a Time of core {boot_core} is refused"),
+    );
+    let moved_to = boot_root_scheduler.move_thread_to_core(
+        moved_key,
+        root.scheduler,
+        MOVED_SLOT,
+        moved_time_key,
+    );
+    passed &= check(
+        moved_to.is_ok(),
+        format_args!(
+            "a Thread moves from core {boot_core}'s root Scheduler to core {core}'s: {:?}",
+            moved_to.map_err(CapError::code)
+        ),
+    );
+    passed &= check(
+        wait_for(
+            || MOVED_RAN_ON.load(Ordering::Acquire) == core_plus_one,
+            core::hint::spin_loop,
+        ),
+        format_args!(
+            "it runs on core {core}: {}",
+            MOVED_RAN_ON.load(Ordering::Acquire)
+        ),
+    );
+
+    // ── A Thread moved while it waits takes its timeout along ──
+    WORKERS[TIMED].store(timed_key.to_wire(), Ordering::Release);
+    scheduler
+        .start_thread(timed_key)
+        .unwrap_or_else(|error| panic!("timed waiter StartThread failed: {:?}", error.code()));
+    let blocked = wait_for(
+        || {
+            TIMED_WAITING_ON.load(Ordering::Acquire) == core_plus_one
+                && idle.load(Ordering::Acquire)
+        },
+        core::hint::spin_loop,
+    );
+    let waiting_since = nucleus::timer::counter();
+    passed &= check(
+        blocked,
+        format_args!("a Thread waits on core {core} with a {TIMED_WAIT_NS} ns timeout"),
+    );
+    let moved_away = scheduler.move_thread_to_core(
+        timed_key,
+        boot_root.scheduler,
+        TIMED_SLOT,
+        timed_destination_time_key,
+    );
+    passed &= check(
+        moved_away.is_ok(),
+        format_args!(
+            "it moves to core {boot_core}'s root Scheduler while it waits: {:?}",
+            moved_away.map_err(CapError::code)
+        ),
+    );
+    // Past its deadline, with this core taking no interrupts: core 1 no
+    // longer counts it, so it still waits.
+    let deadline_passed = TIMED_WAIT_NS + 200_000_000;
+    while ticks_to_ns(nucleus::timer::counter() - waiting_since) < deadline_passed {
+        core::hint::spin_loop();
+    }
+    let still = record_state(BOOT_RECORDS_VA, TIMED_SLOT);
+    passed &= check(
+        still == Some(ThreadState::Blocked),
+        format_args!("past its deadline it still waits, uncounted by core {core}: {still:?}"),
+    );
+    // This core's timer, once it takes interrupts, ends the wait.
+    let fired = wait_for(
+        || record_state(BOOT_RECORDS_VA, TIMED_SLOT) != Some(ThreadState::Blocked),
+        crate::take_interrupts,
+    );
+    let after = record_state(BOOT_RECORDS_VA, TIMED_SLOT);
+    passed &= check(
+        fired,
+        format_args!("core {boot_core}'s timer ends its wait: {after:?}"),
     );
 
     // ── Retiring an AddressSpace two idle cores still hold ──

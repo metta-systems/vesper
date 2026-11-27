@@ -165,6 +165,7 @@ pub fn run() {
         self_table_key,
         boot_untyped_key,
         debug_console_key,
+        core_roots,
         ..
     } = boot;
     let boot_table_binding = nucleus
@@ -742,6 +743,15 @@ pub fn run() {
     let bounce_table_addr = bounce.table_addr;
     let bounce_debug_console_key = bounce.debug_console_key;
     let source_root = bounce.source_root;
+    // With `on_core1` the rest of the suite, the PPC round trips, runs on
+    // core 1: with the image now mapped in the boot AddressSpace, the boot
+    // Thread moves there under the test dispatcher bound to core 1's root
+    // Scheduler. Without it the boot Thread runs alone, outside any
+    // Scheduler.
+    if cfg!(feature = "on_core1") {
+        let suite_root = libkicktest::dispatcher::suite_root(&core_roots);
+        libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, suite_root.scheduler);
+    }
 
     // Provisioning (`bind_address_space`) installed Bounce's Slot(1)
     // sentinel before its AddressSpace existed. As Bounce's builder, this
