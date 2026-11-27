@@ -492,6 +492,7 @@ impl<A: ArchObjects> Nucleus<A> {
             stats.fp_entries = stats.fp_entries.wrapping_add(1);
             stats.fp_zeroes = stats.fp_zeroes.wrapping_add(1);
         }
+        self.enter_address_space(target_address_space);
         Ok(CommittedCall {
             source_thread,
             target: prepared.target_entry_context(lease.sp),
@@ -798,6 +799,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 A::Fp::load_preserved(&prepared.continuation.source_fp);
                 thread.fp_stats.fp_entries = thread.fp_stats.fp_entries.wrapping_add(1);
             }
+            self.enter_address_space(prepared.continuation.source_address_space);
             self.give_stack(prepared.current_address_space, prepared.continuation.stack);
             return Ok(CommittedReturn {
                 source_thread,
@@ -838,6 +840,7 @@ impl<A: ArchObjects> Nucleus<A> {
             }
             None => (fault.frame, true),
         };
+        self.enter_address_space(prepared.continuation.source_address_space);
         self.give_stack(prepared.current_address_space, prepared.continuation.stack);
         self.set_fault_handler_busy(fault.address_space, false);
         Ok(CommittedReturn {

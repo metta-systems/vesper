@@ -10,7 +10,7 @@
 //! reaches the running core's state through [`ThisCore`].
 
 use {
-    super::{nucleus::Dispatched, thread::ThreadId},
+    super::{carved::CarvedId, nucleus::Dispatched, thread::ThreadId},
     aarch64_cpu::registers::{Read, TPIDR_EL1},
     core::{
         cell::UnsafeCell,
@@ -197,6 +197,11 @@ pub struct CoreState {
     pub idle_ticks: u64,
     /// This core's FP/SIMD totals, published in its root Scheduler's record.
     pub fp_totals: FpTotals,
+    /// The `AddressSpace` whose translation this core's `TTBR0_EL1` holds,
+    /// or will at its next kernel exit: the one it last entered, until it
+    /// lets go of it (SMP C8). Its bit is set in that `AddressSpace`'s
+    /// `CoreUse::installed`.
+    pub installed_address_space: Option<CarvedId>,
 }
 
 impl CoreState {
@@ -211,6 +216,7 @@ impl CoreState {
             interrupt_ticks: 0,
             idle_ticks: 0,
             fp_totals: FpTotals::ZERO,
+            installed_address_space: None,
         }
     }
 }

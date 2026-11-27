@@ -365,8 +365,11 @@ pub fn bootstrap_nucleus() -> BootState {
             Thread::new(boot_as_id, ExecutionContext::Running),
         )
     };
-    // The boot Thread is the first allocation; make it current.
+    // The boot Thread is the first allocation; make it current, on this core.
     nucleus.this_core.current_thread = Some(boot_thread_id);
+    if let Some(boot_thread) = nucleus.thread_mut(boot_thread_id) {
+        boot_thread.running_on = Some(boot_core);
+    }
 
     // Install the boot Thread's self-table capability, its AddressSpace
     // (the bootstrap-era mapping context for `PageTable.Map`/`Frame.Map`),

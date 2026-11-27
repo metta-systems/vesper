@@ -252,6 +252,97 @@ impl<A: ArchObjects> Nucleus<A> {
         &mut self.activations[core]
     }
 
+    /// This core's bit in a core mask.
+    fn this_core_bit(&self) -> u32 {
+        u32::try_from(self.current_cpu())
+            .ok()
+            .and_then(|core| 1_u32.checked_shl(core))
+            .unwrap_or(0)
+    }
+
+    /// This core enters a Thread in `address_space` (selected, or migrated
+    /// there by a call or a return): it holds and runs that `AddressSpace`
+    /// from now on, and no longer the one it held before (SMP C8).
+    pub(crate) fn enter_address_space(&mut self, address_space: AddressSpaceId) {
+        let bit = self.this_core_bit();
+        if let Some(previous) = self
+            .this_core
+            .installed_address_space
+            .filter(|&previous| previous != address_space)
+            && let Some(object) = self.address_space_mut(previous)
+        {
+            let core_use = object.core_use_mut();
+            core_use.installed &= !bit;
+            core_use.running &= !bit;
+        }
+        if let Some(object) = self.address_space_mut(address_space) {
+            let core_use = object.core_use_mut();
+            core_use.installed |= bit;
+            core_use.running |= bit;
+        }
+        self.this_core.installed_address_space = Some(address_space);
+    }
+
+    /// The Thread this core ran stopped: it runs nothing of the
+    /// `AddressSpace` it still holds.
+    pub(crate) fn stop_running_address_space(&mut self) {
+        let bit = self.this_core_bit();
+        if let Some(held) = self.this_core.installed_address_space
+            && let Some(object) = self.address_space_mut(held)
+        {
+            object.core_use_mut().running &= !bit;
+        }
+    }
+
+    /// Let go of the `AddressSpace` this idle core still holds, at a Stop:
+    /// whether it held one, so the caller turns `TTBR0` walks off before the
+    /// kernel lock is released.
+    pub fn let_go_of_address_space(&mut self) -> bool {
+        if self.this_core.current_thread.is_some() {
+            return false;
+        }
+        let Some(held) = self.this_core.installed_address_space.take() else {
+            return false;
+        };
+        let bit = self.this_core_bit();
+        if let Some(object) = self.address_space_mut(held) {
+            let core_use = object.core_use_mut();
+            core_use.installed &= !bit;
+            core_use.running &= !bit;
+        }
+        true
+    }
+
+    /// Whether no other core uses `address_space`, before its ASID or root
+    /// is released (SMP C8.1(a), C8.2(a)): `Ok(true)` when none holds it;
+    /// `Ok(false)` while idle cores still hold it, which are sent a Stop once
+    /// and let go of it (the caller retries); `InvalidOperation` while one of
+    /// its Threads runs on another core, which userspace must stop first.
+    pub(crate) fn quiesce_address_space(
+        &mut self,
+        address_space: AddressSpaceId,
+    ) -> Result<bool, CapError> {
+        let others = !self.this_core_bit();
+        let object = self
+            .address_space_mut(address_space)
+            .ok_or(CapError::InvalidAddressSpace)?;
+        let core_use = object.core_use_mut();
+        if core_use.running & others != 0 {
+            core_use.stopping = false;
+            return Err(CapError::InvalidOperation);
+        }
+        let holding = core_use.installed & others;
+        if holding == 0 {
+            core_use.stopping = false;
+            return Ok(true);
+        }
+        if !core_use.stopping {
+            core_use.stopping = true;
+            super::core_record::send_ipis(holding, super::core_record::IPI_STOP);
+        }
+        Ok(false)
+    }
+
     /// Queue `dispatcher` at the front of `core`'s activations, so it runs
     /// next there. On this core the running Thread is preempted on the way
     /// out of the kernel; another core is sent `IPI_RESCHEDULE`, and does the

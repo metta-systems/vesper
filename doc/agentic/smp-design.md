@@ -90,6 +90,14 @@ All by the maintainer, 2026-11-25.
   [scheduling-implementation-plan.md](scheduling-implementation-plan.md), once Threads
   run on other cores (maintainer, 2026-11-26): before that nothing runs, and no
   AddressSpace is current, anywhere but the boot core.
+- **An AddressSpace in use elsewhere (C8.1(a), 2026-11-27).** `AddressSpace.Retire`
+  fails with `InvalidOperation` while one of its Threads runs on another core: the
+  maintainer's words, "it's up to the userspace policy to schedule retirement at the
+  correct time". A core that only still holds it in `TTBR0_EL1` (idle after one of its
+  Threads) gets a Stop, turns TTBR0 walks off and lets go of it; the call is retried
+  until no core holds it, then releases the ASID.
+- **Page tables named elsewhere (C8.2(a), 2026-11-27).** `PageTable.Unmap` of a root
+  does the same check and Stop, so after it no core's `TTBR0_EL1` names the root.
 - **Bring-up order (C10(a)).** QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3 and Pi 5
   boards.
 - **Record totals per core (C11(a), 2026-11-26).** Each core's root Scheduler record
@@ -317,8 +325,18 @@ enough. As built:
   wakeup queues a dispatcher on another core's list; there `handle_irq` settles the
   core's own `dispatched` from the Schedulers (`Nucleus::settle_dispatched`) and sets its
   `preempt_requested`, so the exit path of an interrupt that stopped a Thread selects
-  again. `send_ipis` is `core_record::send_ipis`. Halt parks; Stop has no work until synchronous
-  retirement.
+  again. `send_ipis` is `core_record::send_ipis`. Halt parks.
+- Stop is sent by `Thread.Retire` of a Thread running on another core (the Thread's
+  `running_on`, set as a core enters it and cleared as it stops): the call marks it
+  `retiring`, which `Dispatch` refuses, sends Stop once, and returns
+  `InvokeOutcome::Retry`, which puts the caller back at its `svc` unchanged. The call
+  runs again until the Thread is off the CPU, then retires it; between attempts the
+  caller's core leaves the kernel, so the lock is free and it takes interrupts, and two
+  cores retiring each other's Threads cannot wait for each other. The core taking Stop
+  preempts a retiring current Thread even with nothing else to run, does not queue it
+  again, and ends its dispatch with `EXITED`. A Thread that never takes interrupts is
+  stopped only at its next kernel entry. An idle core taking Stop lets go of the
+  AddressSpace it holds (see [Memory management](#memory-management)).
 
 ### Interrupt-controller ABI
 
@@ -360,11 +378,20 @@ dispatcher timer takes its Scheduler's core when it is armed.
 - Any set/way cache maintenance is local only (`libs/cpu` cache notes); by-VA operations
   to PoC are broadcast. Audit the nucleus and drivers for set/way use.
 - `TTBR0_EL1` is per core. An AddressSpace may be current on several cores at once
-  (several of its Threads). Retiring it, or recycling its ASID, needs every core to have
-  switched away first, which is the Stop IPI and an "active on" core mask in the
-  AddressSpace. Retirement waits for every core's acknowledgement with the kernel lock
-  released, then completes in the same call; asynchronous retirement with quiescence
-  detection is later work.
+  (several of its Threads). As built: each AddressSpace has a `CoreUse` (`installed`,
+  the cores whose `TTBR0_EL1` holds it or will at their next exit; `running`, the cores
+  running one of its Threads), changed only by each core for its own bit, under the
+  lock, wherever a translation is committed for the core (`Nucleus::enter_address_space`
+  at Thread entry, PPC Call and Return, and `Activate`), with `running` cleared as the
+  Thread stops; the core's `CoreState::installed_address_space` names the one it holds.
+  `AddressSpace.Retire` and a root `PageTable.Unmap` run `quiesce_address_space`:
+  `InvalidOperation` while it runs on another core (C8.1(a)), a Stop once to the other
+  cores still holding it and `InvokeOutcome::Retry` until none does, then the ASID or
+  root goes. An idle core taking Stop lets go of it and turns TTBR0 walks off
+  (`ArchObjects::disable_translation_walks`); installing the next translation turns them
+  on (`install_translation_context`, also for a secondary's first Thread). A core holds
+  an AddressSpace idle only after its own dispatcher ran there: the dispatcher runs last
+  before a core idles. Asynchronous retirement with quiescence detection is later work.
 
 ### FP/SIMD
 

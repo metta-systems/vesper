@@ -172,6 +172,23 @@ fn retire<A: ArchObjects>(
         return Ok(InvokeOutcome::Exit);
     }
 
+    // A Thread running on another core is stopped there first (SMP C8(a)):
+    // it is marked retiring, so nothing dispatches it again, that core is
+    // sent a Stop IPI once, and the call runs again until it has stopped.
+    if let Some(thread) = nucleus.thread_mut(thread_id)
+        && let Some(core) = thread.running_on
+    {
+        let first = !thread.retiring;
+        thread.retiring = true;
+        if first
+            && let Ok(cpu) = u32::try_from(core)
+            && cpu < u32::BITS
+        {
+            crate::objects::core_record::send_ipis(1 << cpu, crate::objects::core_record::IPI_STOP);
+        }
+        return Ok(InvokeOutcome::Retry);
+    }
+
     // Cancel-then-retire: the pending records and queued wakeups go first,
     // then the Thread is retired.
     nucleus.cancel_thread_pending(thread_id)?;

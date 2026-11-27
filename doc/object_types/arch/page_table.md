@@ -36,12 +36,12 @@ Install tables from the root downwards: level 0, then levels 1, 2 and 3 as neede
 
 ### Unmap
 
-Removes the table from its parent. The table must be empty. Unmapping a root detaches it from its AddressSpace and flushes every TLB entry tagged with that AddressSpace's ASID.
+Removes the table from its parent. The table must be empty. Unmapping a root detaches it from its AddressSpace and flushes every TLB entry tagged with that AddressSpace's ASID. On several cores it returns once no other core holds the AddressSpace's translation, as for [`AddressSpace.Retire`](address_space.md#retire), and it is refused while one of the AddressSpace's Threads runs on another core.
 
 | Error | Cause |
 |---|---|
 | `NotMapped` | The table is not installed |
-| `InvalidOperation` | The table still has entries |
+| `InvalidOperation` | The table still has entries, or it is a root and a Thread of its AddressSpace runs on another core |
 
 ## Implementation
 

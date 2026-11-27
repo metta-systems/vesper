@@ -56,6 +56,29 @@ impl FrameSize {
 /// record, and generation.
 pub type AddressSpaceId = CarvedId;
 
+/// Which cores use an `AddressSpace` (SMP C8): bit `n` is logical core `n`,
+/// and each core changes only its own bits, under the kernel lock.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CoreUse {
+    /// Cores whose `TTBR0_EL1` holds its translation, or will at their next
+    /// kernel exit: entered last, and not let go of since.
+    pub installed: u32,
+    /// Cores running one of its Threads now.
+    pub running: u32,
+    /// A Stop was sent to the cores holding it, for a retirement or a root
+    /// `Unmap` that waits for them to let go.
+    pub stopping: bool,
+}
+
+impl CoreUse {
+    /// Nobody uses it.
+    pub const NONE: Self = Self {
+        installed: 0,
+        running: 0,
+        stopping: false,
+    };
+}
+
 /// Identity of a carved `PageTable`'s kernel metadata record. The 4 KiB
 /// hardware table itself is a separate carve the record names by physical
 /// address.
@@ -152,6 +175,9 @@ pub trait AddressSpaceObject: CarvedObject {
     /// Whether code in this `AddressSpace` may execute FP/SIMD instructions:
     /// set when it is created and never changed.
     fn fp_simd(&self) -> bool;
+    /// Which cores hold and run it.
+    fn core_use(&self) -> CoreUse;
+    fn core_use_mut(&mut self) -> &mut CoreUse;
 }
 
 /// Architecture abstraction trait - extended with invoke methods.
@@ -257,6 +283,11 @@ pub trait ArchObjects: Sized + 'static {
     /// an FP `AddressSpace` and closes (EL0 and EL1) for any other, so FP
     /// access always follows the `AddressSpace` being entered.
     fn install_translation_context(root_paddr: u64, asid: u16, fp_simd: bool);
+
+    /// Stop translation walks through the user half on this core: it holds
+    /// no `AddressSpace` (SMP C8). The next installed translation turns them
+    /// on again.
+    fn disable_translation_walks();
 
     // ─── Mapping mechanics (hardware descriptor installation) ───
     // The arch layer owns the descriptor format, walk, and vacancy checks;

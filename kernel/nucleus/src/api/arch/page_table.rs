@@ -20,12 +20,15 @@
 //! efficient in the long term once Thread scheduling exists.
 
 use {
-    crate::objects::{
-        ArchObjects, KeyTable,
-        access::Access,
-        arch_objects::{AddressSpaceObject, PageTableObject, PtParent},
-        key_table::CallerTable,
-        object_pool::{IdentityError, PairIdentityError},
+    crate::{
+        api::InvokeOutcome,
+        objects::{
+            ArchObjects, KeyTable, Nucleus,
+            access::Access,
+            arch_objects::{AddressSpaceObject, PageTableId, PageTableObject, PtParent},
+            key_table::CallerTable,
+            object_pool::{IdentityError, PairIdentityError},
+        },
     },
     libobject::{CapError, ObjectType, PageTableOp, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -41,11 +44,12 @@ pub fn invoke<A: ArchObjects>(
     pt_key: RawKey,
     op: u64,
     args: &[u64; 6],
-) -> Result<(u64, u64), CapError> {
+    nucleus: &mut Nucleus<A>,
+) -> Result<InvokeOutcome, CapError> {
     let op = PageTableOp::try_from(op)?;
     match op {
-        PageTableOp::Map => map::<A>(access, caller, pt_key, args),
-        PageTableOp::Unmap => unmap::<A>(access, caller, pt_key, args),
+        PageTableOp::Map => map::<A>(access, caller, pt_key, args).map(InvokeOutcome::Complete),
+        PageTableOp::Unmap => unmap::<A>(access, caller, pt_key, args, nucleus),
     }
 }
 
@@ -158,31 +162,65 @@ fn map<A: ArchObjects>(
     }
 }
 
-/// `Unmap` `1`: clear the installation of the invoked table.
+/// The `PageTable` the caller's `pt_key` names.
+fn page_table_id(
+    access: &Access,
+    caller: CallerTable,
+    pt_key: RawKey,
+) -> Result<PageTableId, CapError> {
+    let caller_table = access.resolve_caller_table(caller)?;
+    let entry = caller_table
+        .lookup(pt_key, caller.guard)
+        .map_err(|e| e.with_key_operand(0))?;
+    if entry.object_type() != ObjectType::PAGE_TABLE {
+        return Err(CapError::TypeMismatch {
+            expected: ObjectType::PAGE_TABLE,
+            found: entry.object_type(),
+        });
+    }
+    entry.page_table_id().map_err(|e| e.with_key_operand(0))
+}
+
+/// `Unmap` `1`: clear the installation of the invoked table. An empty root
+/// is withdrawn only once no other core's `TTBR0_EL1` names it (SMP
+/// C8.2(a)): refused while a Thread of its `AddressSpace` runs on another
+/// core, run again until idle cores holding it have let go of it.
 fn unmap<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,
     pt_key: RawKey,
     args: &[u64; 6],
-) -> Result<(u64, u64), CapError> {
+    nucleus: &mut Nucleus<A>,
+) -> Result<InvokeOutcome, CapError> {
     if args.iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
-
-    let pt_id = {
-        let caller_table = access.resolve_caller_table(caller)?;
-        let entry = caller_table
-            .lookup(pt_key, caller.guard)
-            .map_err(|e| e.with_key_operand(0))?;
-        if entry.object_type() != ObjectType::PAGE_TABLE {
-            return Err(CapError::TypeMismatch {
-                expected: ObjectType::PAGE_TABLE,
-                found: entry.object_type(),
-            });
+    let pt_id = page_table_id(access, caller, pt_key)?;
+    let root_of = {
+        let pt = access
+            .resolve_object::<A::PageTable>(pt_id)
+            .map_err(|error| error.for_key(pt_key, 0))?;
+        match pt.parent() {
+            PtParent::Root { address_space } if A::page_table_is_empty(pt.paddr()) => {
+                Some(address_space)
+            }
+            _ => None,
         }
-        entry.page_table_id().map_err(|e| e.with_key_operand(0))?
     };
+    if let Some(address_space) = root_of
+        && !nucleus.quiesce_address_space(address_space)?
+    {
+        return Ok(InvokeOutcome::Retry);
+    }
+    unmap_now::<A>(access, pt_key, pt_id).map(InvokeOutcome::Complete)
+}
 
+/// Clear the installation of the table `pt_id`, named by `pt_key`.
+fn unmap_now<A: ArchObjects>(
+    access: &Access,
+    pt_key: RawKey,
+    pt_id: PageTableId,
+) -> Result<(u64, u64), CapError> {
     let mut pt = access
         .resolve_object::<A::PageTable>(pt_id)
         .map_err(|error| error.for_key(pt_key, 0))?;
