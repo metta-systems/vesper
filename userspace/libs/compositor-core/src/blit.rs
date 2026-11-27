@@ -23,6 +23,8 @@ pub enum Format {
     Xbgr8888,
     /// 16-bit 5-6-5 with red in the top bits, the high byte first.
     Rgb565Be,
+    /// 16-bit 5-6-5 with red in the top bits, the low byte first.
+    Rgb565,
 }
 
 impl Format {
@@ -31,8 +33,15 @@ impl Format {
     pub const fn pixel_bytes(self) -> usize {
         match self {
             Self::Xrgb8888 | Self::Xbgr8888 => 4,
-            Self::Rgb565Be => 2,
+            Self::Rgb565Be | Self::Rgb565 => 2,
         }
+    }
+
+    /// Whether pixels are 16-bit 5-6-5: such an output is drawn from a
+    /// 32-bit canvas by conversion.
+    #[must_use]
+    pub const fn is_rgb565(self) -> bool {
+        matches!(self, Self::Rgb565Be | Self::Rgb565)
     }
 }
 
@@ -49,7 +58,7 @@ pub const fn swap_red_blue(pixel: u32) -> u32 {
 pub const fn rgb565(pixel: u32, canvas: Format) -> u16 {
     let xrgb = match canvas {
         Format::Xbgr8888 => swap_red_blue(pixel),
-        Format::Xrgb8888 | Format::Rgb565Be => pixel,
+        Format::Xrgb8888 | Format::Rgb565Be | Format::Rgb565 => pixel,
     };
     let red = (xrgb >> 19) & 0x1f;
     let green = (xrgb >> 10) & 0x3f;
@@ -327,6 +336,11 @@ pub fn convert_row(
         (_, Format::Rgb565Be) => {
             for (bytes, &pixel) in target.as_chunks_mut::<2>().0.iter_mut().zip(source) {
                 *bytes = rgb565(pixel, canvas_format).to_be_bytes();
+            }
+        }
+        (_, Format::Rgb565) => {
+            for (bytes, &pixel) in target.as_chunks_mut::<2>().0.iter_mut().zip(source) {
+                *bytes = rgb565(pixel, canvas_format).to_le_bytes();
             }
         }
         _ => {

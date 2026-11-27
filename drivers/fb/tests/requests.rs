@@ -5,7 +5,8 @@ mod tests {
     use {
         fb_impl::{
             ATTRIBUTE_WORDS, Allocation, Attributes, CONFIGURE_WORDS, attributes_request,
-            configure_request, covered_by, physical_address, read_allocation, read_attributes,
+            configure_request, covered_by, physical_address, pixel_bytes, read_allocation,
+            read_attributes,
         },
         mailbox_impl::{check_request, tag},
     };
@@ -32,12 +33,25 @@ mod tests {
     #[test]
     fn the_attributes_request_lays_out_its_tags() {
         let request = attributes_request();
-        assert_eq!(request[0], 64);
+        assert_eq!(request[0], 80);
         assert_eq!(request[2..6], [tag::GET_PIXEL_ORDER, 4, 0, 0]);
         assert_eq!(request[6..10], [tag::SET_ALPHA_MODE, 4, 0, 2]);
         assert_eq!(request[10..14], [tag::GET_PITCH, 4, 0, 0]);
-        assert_eq!(request[14], 0, "the end tag");
+        assert_eq!(request[14..18], [tag::GET_DEPTH, 4, 0, 0]);
+        assert_eq!(request[18], 0, "the end tag");
         assert_eq!(request.len(), ATTRIBUTE_WORDS);
+    }
+
+    #[test]
+    fn the_pitch_tells_the_pixel_size() {
+        // 32-bit rows, with or without padding at the end.
+        assert_eq!(pixel_bytes(1024, 4096), Some(4));
+        assert_eq!(pixel_bytes(1366, 5504), Some(4));
+        // The Raspberry Pi 5's 16-bit rows, whatever depth it reports.
+        assert_eq!(pixel_bytes(1920, 3840), Some(2));
+        // A row too short for either is no mode at all.
+        assert_eq!(pixel_bytes(1024, 2000), None);
+        assert_eq!(pixel_bytes(0, 4096), None);
     }
 
     #[test]
@@ -62,11 +76,14 @@ mod tests {
         answer[5] = 1;
         answer[12] = 0x8000_0004;
         answer[13] = 2560;
+        answer[16] = 0x8000_0004;
+        answer[17] = 32;
         assert_eq!(
             read_attributes(&answer),
             Ok(Attributes {
                 pixel_order: 1,
-                pitch: 2560
+                pitch: 2560,
+                depth: 32
             })
         );
         answer[12] = 4;
@@ -74,6 +91,10 @@ mod tests {
         answer[12] = 0x8000_0004;
         answer[4] = 0;
         assert_eq!(read_attributes(&answer), Err(0));
+        // The depth the firmware did not answer is reported too.
+        answer[4] = 0x8000_0004;
+        answer[16] = 4;
+        assert_eq!(read_attributes(&answer), Err(4));
     }
 
     #[test]

@@ -176,7 +176,7 @@ impl State {
     pub const fn order(&self) -> PixelOrder {
         match self.canvas {
             Format::Xbgr8888 => PixelOrder::Rgb,
-            Format::Xrgb8888 | Format::Rgb565Be => PixelOrder::Bgr,
+            Format::Xrgb8888 | Format::Rgb565Be | Format::Rgb565 => PixelOrder::Bgr,
         }
     }
 

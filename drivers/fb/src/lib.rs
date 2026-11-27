@@ -58,7 +58,7 @@ pub fn read_edid(answer: &[u32; EDID_WORDS]) -> Result<[u8; edid::BLOCK_BYTES], 
 pub const CONFIGURE_WORDS: usize = 22;
 
 /// Words of the attributes request and of its answer.
-pub const ATTRIBUTE_WORDS: usize = 16;
+pub const ATTRIBUTE_WORDS: usize = 20;
 
 /// Bit 31 of a tag's request/response word: set once the firmware answered.
 const TAG_ANSWERED: u32 = 0x8000_0000;
@@ -103,14 +103,16 @@ pub fn read_allocation(answer: &[u32; CONFIGURE_WORDS]) -> Result<Allocation, u3
     })
 }
 
-/// The request that ignores alpha and reads the pixel order and the pitch.
+/// The request that ignores alpha and reads the pixel order, the pitch and
+/// the depth the firmware reports.
 pub fn attributes_request() -> [u32; ATTRIBUTE_WORDS] {
     let mut words = [0; ATTRIBUTE_WORDS];
     words[0] = byte_size(ATTRIBUTE_WORDS);
     words[2..6].copy_from_slice(&[tag::GET_PIXEL_ORDER, 4, 0, 0]);
     words[6..10].copy_from_slice(&[tag::SET_ALPHA_MODE, 4, 0, ALPHA_IGNORED]);
     words[10..14].copy_from_slice(&[tag::GET_PITCH, 4, 0, 0]);
-    // Word 14 is the end tag, word 15 padding.
+    words[14..18].copy_from_slice(&[tag::GET_DEPTH, 4, 0, 0]);
+    // Word 18 is the end tag, word 19 padding.
     words
 }
 
@@ -121,12 +123,16 @@ pub struct Attributes {
     pub pixel_order: u32,
     /// Bytes from the start of one row to the next
     pub pitch: u32,
+    /// Bits per pixel, as the firmware reports them. The Raspberry Pi 5's
+    /// firmware reports 32 for its 16-bit pixels, so [`pixel_bytes`] trusts
+    /// the pitch.
+    pub depth: u32,
 }
 
 /// The attributes the firmware answered `answer` with, or the code word of the
 /// tag it did not answer.
 pub fn read_attributes(answer: &[u32; ATTRIBUTE_WORDS]) -> Result<Attributes, u32> {
-    for code in [answer[4], answer[12]] {
+    for code in [answer[4], answer[12], answer[16]] {
         if code & TAG_ANSWERED == 0 {
             return Err(code);
         }
@@ -134,7 +140,25 @@ pub fn read_attributes(answer: &[u32; ATTRIBUTE_WORDS]) -> Result<Attributes, u3
     Ok(Attributes {
         pixel_order: answer[5],
         pitch: answer[13],
+        depth: answer[17],
     })
+}
+
+/// Bytes per pixel of a `width`-pixel row `pitch` bytes long: 4 when a row
+/// holds 32-bit pixels, 2 when it holds only 16-bit ones, `None` when it
+/// holds neither (the firmware's depth answer is not trusted for this).
+pub fn pixel_bytes(width: u32, pitch: u32) -> Option<u32> {
+    let width = u64::from(width);
+    let pitch = u64::from(pitch);
+    if width == 0 {
+        None
+    } else if pitch >= width * 4 {
+        Some(4)
+    } else if pitch >= width * 2 {
+        Some(2)
+    } else {
+        None
+    }
 }
 
 /// The physical address of the bus address `bus`, given the offset between

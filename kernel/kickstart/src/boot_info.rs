@@ -682,6 +682,35 @@ impl BootInfo {
     /// region possible. In general this means we aim to make the size of the smallest remaining
     /// region smaller (ideally zero) followed by making the size of the largest remaining
     /// region smaller.
+    /// Allocate a `2^size_bits`-byte region aligned to its size that ends at or
+    /// below `limit`, as high under it as free memory allows (the lowest
+    /// memory stays free for whatever needs it more), and record it as used
+    /// under `name`. `NoFreeSlots` when no free region holds one under `limit`.
+    pub fn alloc_region_below(
+        &mut self,
+        size_bits: usize,
+        limit: u64,
+        name: &'static str,
+    ) -> Result<PhysAddr, BootInfoError> {
+        let size = 1_u64 << size_bits;
+        let start = self
+            .free_regions()
+            .filter_map(|region| {
+                let end = region.end_exclusive.as_u64().min(limit) & !(size - 1);
+                let start = end.checked_sub(size)?;
+                (start >= region.start_inclusive.as_u64()).then_some(start)
+            })
+            .max()
+            .ok_or(BootInfoError::NoFreeSlots)?;
+        self.insert_used_region(
+            PhysAddr::new(start),
+            PhysAddr::new(start + size),
+            AttributeFields::default(),
+            name,
+        )?;
+        Ok(PhysAddr::new(start))
+    }
+
     pub fn alloc_region(
         &mut self,
         size_bits: usize,

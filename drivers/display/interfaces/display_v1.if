@@ -27,9 +27,10 @@ local interface display_v1
 
     ## How pixels sit in the output's memory: `xrgb8888` 32-bit with blue in
     ## the lowest byte, `xbgr8888` 32-bit with red in the lowest byte,
-    ## `rgb565_be` 16-bit 5-6-5 with red in the top bits, the high byte first.
+    ## `rgb565_be` 16-bit 5-6-5 with red in the top bits, the high byte first,
+    ## `rgb565` the same with the low byte first.
     enum format {
-        xrgb8888, xbgr8888, rgb565_be
+        xrgb8888, xbgr8888, rgb565_be, rgb565
     }
 
     ## A turn of the output's scan direction, clockwise; in a set of

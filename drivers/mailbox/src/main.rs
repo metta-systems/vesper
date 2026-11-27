@@ -507,6 +507,13 @@ mod component {
             "the firmware cannot reach this memory"
         );
         let bus = init.memory_bus + (paddr - init.memory_paddr);
+        // The mailbox carries the top 28 bits of a 32-bit bus address: a
+        // page above that would reach the firmware as another address (and
+        // it would never answer).
+        assert!(
+            bus < 1 << 32,
+            "mailbox: the bounce page's bus address {bus:#x} is beyond the mailbox's 32 bits"
+        );
 
         REGISTERS_VA.store(registers_va, Ordering::Release);
         BOUNCE_VA.store(bounce_va, Ordering::Release);
