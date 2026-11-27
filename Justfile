@@ -594,9 +594,8 @@ cb-eject board=boards: (build-chainboot board)
 cb-sdimage board=boards: (build-chainboot board)
     "{{ just_executable() }}" sdimage "chainboot-{{ board + profile_suffix }}.bin"
 
-# Make target/images/sdcard.img, the card for the Raspberry Pi 3, 4 and 5 (tools/makesd): pull the firmware when tools/makesd/boot lacks it, put `image` from target/images on the card as kernel8.img (the hardware image built last when not given, e.g. `just sdimage board-test-rpi3+rpi4+rpi5.bin`), then build the card image. Write it with Balena Etcher or Raspberry Pi Imager
-[group("hw")]
-sdimage image='':
+# Pull the Raspberry Pi firmware into tools/makesd/boot when it lacks it: the SD card needs it, and the devicetree host test reads the board device trees there
+_firmware:
     #!/usr/bin/env bash
     set -euo pipefail
     makesd="{{ justfile_directory() / 'tools/makesd' }}"
@@ -605,6 +604,13 @@ sdimage image='':
     if [ ! -f "$makesd/boot/overlays/pwm-2chan.dtbo" ]; then
         "{{ just_executable() }}" -f "$makesd/Justfile" pull-firmware
     fi
+
+# Make target/images/sdcard.img, the card for the Raspberry Pi 3, 4 and 5 (tools/makesd): pull the firmware when tools/makesd/boot lacks it, put `image` from target/images on the card as kernel8.img (the hardware image built last when not given, e.g. `just sdimage board-test-rpi3+rpi4+rpi5.bin`), then build the card image. Write it with Balena Etcher or Raspberry Pi Imager
+[group("hw")]
+sdimage image='': _firmware
+    #!/usr/bin/env bash
+    set -euo pipefail
+    makesd="{{ justfile_directory() / 'tools/makesd' }}"
     image="{{ image }}"
     if [ -z "$image" ]; then
         # The newest hardware boot image: no chainboot, no QEMU builds.
@@ -1097,8 +1103,8 @@ _test-runner binary_path:
 [group("test")]
 test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-compositor-host _test-dispatcher-host _test-log-host _test-vesper-synth _test-chainboot-host _test-makesd-host
 
-# Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
-_host-test package test features='host-tests':
+# Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts); the firmware's device trees are pulled first, for the devicetree test
+_host-test package test features='host-tests': _firmware
     RUSTFLAGS="{{ fixed_rustflags }}" \
     cargo test -p {{ package }} --features={{ features }} --test {{ test }}
 
@@ -1169,8 +1175,8 @@ _clippy-pre-push: _clippy-artifacts (_cross-clippy boards '') (_cross-clippy 'rp
 # Lint every host test and host tool
 _clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-usb-host _clippy-input-host _clippy-compositor-host _clippy-log-host _clippy-vesper-synth _clippy-coc
 
-# Lint one opt-in (`host-tests`) integration test with its native host harness
-_host-clippy package test features='host-tests':
+# Lint one opt-in (`host-tests`) integration test with its native host harness; the firmware's device trees are pulled first, for the devicetree test
+_host-clippy package test features='host-tests': _firmware
     RUSTFLAGS="{{ fixed_rustflags }}" \
     cargo clippy -p {{ package }} --features={{ features }} --test {{ test }} \
       -- --deny warnings --allow deprecated
