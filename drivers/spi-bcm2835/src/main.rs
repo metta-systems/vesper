@@ -117,15 +117,22 @@ mod component {
         (entry != 0).then(|| ((entry & 0xffff) - 1, entry & ACTIVE_LOW != 0))
     }
 
+    /// Set chip select `(pin, active_low)` asserted or released.
+    fn set_chip_select(
+        chip_select: (u32, bool),
+        asserted: bool,
+    ) -> Result<(), impl core::fmt::Debug> {
+        let (pin, active_low) = chip_select;
+        gpio().set_level(pin, asserted != active_low)
+    }
+
     /// Drive chip select `(pin, active_low)` asserted or released.
     fn drive(chip_select: (u32, bool), asserted: bool) {
-        let (pin, active_low) = chip_select;
-        // The pin is the component's own (its node's `cs-gpios`): a refusal
-        // means the chip select never moves and every transaction is lost, so
-        // it ends the component rather than passing for a write.
-        gpio()
-            .set_level(pin, asserted != active_low)
-            .unwrap_or_else(|error| panic!("spi: chip select GPIO {pin}: {error:?}"));
+        // The pin answered when `main` released it: a refusal now means the
+        // chip select never moves and every transaction is lost, so it ends
+        // the component rather than passing for a write.
+        set_chip_select(chip_select, asserted)
+            .unwrap_or_else(|error| panic!("spi: chip select GPIO {}: {error:?}", chip_select.0));
     }
 
     /// The SPI mode of `mode`.
@@ -339,18 +346,42 @@ mod component {
         );
         let mut trace = Trace::new(init);
         // Release every chip select before the pin group makes them outputs,
-        // so no device sees one asserted.
+        // so no device sees one asserted. A pin the GPIO component does not
+        // drive (none is linked, or it refuses the pin: the Raspberry Pi 5's
+        // GPIO sits behind RP1, which has no component) leaves its chip
+        // select unusable: calls naming it fail, the others work.
         let chip_selects = read_chip_selects(&mut trace, init);
-        for number in 0..u32::try_from(chip_selects).unwrap_or(0) {
-            if let Some(chip_select) = chip_select(number) {
-                drive(chip_select, false);
+        for (number, entry) in CHIP_SELECTS.iter().enumerate().take(chip_selects) {
+            let Some(chip_select) = u32::try_from(number).ok().and_then(chip_select) else {
+                continue;
+            };
+            if let Err(error) = set_chip_select(chip_select, false) {
+                trace!(
+                    trace,
+                    "spi: chip select {number} (GPIO {}) cannot be driven: {error:?}; it serves no device",
+                    chip_select.0
+                );
+                entry.store(0, Ordering::Release);
             }
         }
         route_pins(&mut trace, init);
         let mailbox = mailbox_v1::Client::new(mailbox_v1::Bindings::from_imports(init.imports()));
-        let core_max_hz = mailbox
-            .get_max_clock_rate(mailbox_v1::Clock::Core)
-            .unwrap_or_else(|error| panic!("spi: the core clock's fastest rate: {error:?}"));
+        // Every divisor is sized against the core clock's fastest rate: when
+        // the firmware does not tell it, no transfer can be timed, so every
+        // chip select is left unusable and calls naming one fail.
+        let core_max_hz = match mailbox.get_max_clock_rate(mailbox_v1::Clock::Core) {
+            Ok(hz) => hz,
+            Err(error) => {
+                trace!(
+                    trace,
+                    "spi: the core clock's fastest rate is unknown: {error:?}; it serves no device"
+                );
+                for entry in &CHIP_SELECTS {
+                    entry.store(0, Ordering::Release);
+                }
+                0
+            }
+        };
         CORE_MAX_HZ.store(core_max_hz, Ordering::Release);
         // SAFETY: no call is served yet; nothing else touches the block.
         let mut registers = unsafe { registers() };

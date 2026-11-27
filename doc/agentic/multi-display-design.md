@@ -51,6 +51,7 @@ Out of scope:
 | D4 | First answer: the compositor lends its own Frames to a flush output, because it is the only authority over graphics memory. Revised the same day, after the `LENT`-mapping check: `display_v1` declares a `data` area that Kickstart shares between the compositor and each output, so the compositor writes pixels there and `flush` sends from it. A scanout output's memory is still the hardware's (the firmware's framebuffer). |
 | D6 | The desktop origin is renormalized after each change, to the output with the lowest x, then lowest y. Clients see window-relative coordinates, so it doesn't affect them. |
 | D7 | `MAX_OUTPUTS` = 2 for now: only two displays are being tested. |
+| P3 | (a), 2026-11-28: `display_v1`'s `format` gains `rgb565` (16-bit 5-6-5, little-endian), edited in place, and the compositor converts to it. The Raspberry Pi 5 firmware's framebuffer is 16-bit RGB565 whatever depth is asked for, while it reports 32; the fb driver takes the real pixel size from the pitch the firmware returns and describes the mode in that format. |
 
 ## Shape
 
