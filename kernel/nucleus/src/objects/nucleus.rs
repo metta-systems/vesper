@@ -254,11 +254,48 @@ impl<A: ArchObjects> Nucleus<A> {
 
     /// Queue `dispatcher` at the front of `core`'s activations, so it runs
     /// next there. On this core the running Thread is preempted on the way
-    /// out of the kernel.
+    /// out of the kernel; another core is sent `IPI_RESCHEDULE`, and does the
+    /// same when it takes it (SMP cross-core activation).
     fn activate_on(&mut self, core: usize, dispatcher: ThreadId) {
         self.activations[core].push_front(dispatcher);
         if core == self.current_cpu() {
             self.this_core.preempt_requested = true;
+        } else if let Ok(cpu) = u32::try_from(core)
+            && cpu < u32::BITS
+        {
+            super::core_record::send_ipis(1 << cpu, super::core_record::IPI_RESCHEDULE);
+        }
+    }
+
+    /// Bring this core's `dispatched` up to date after another core activated
+    /// a dispatcher here (this core took its `IPI_RESCHEDULE`), as that core
+    /// does for an activation on its own: a `Dispatch` the activation
+    /// completed leaves nothing dispatched, and a child dispatcher activated
+    /// within its grant goes on running under the parent's limit. The other
+    /// core changed only the Schedulers and this core's activations, so
+    /// everything is read from them.
+    pub fn settle_dispatched(&mut self) {
+        if let Some(dispatched) = self.this_core.dispatched
+            && self
+                .scheduler_mut(dispatched.scheduler)
+                .is_none_or(|scheduler| scheduler.parked().is_none())
+        {
+            self.this_core.dispatched = None;
+        }
+        let Some(front) = self.local_activations().peek() else {
+            return;
+        };
+        let Some(child) = self.thread(front).and_then(|thread| thread.dispatches) else {
+            return;
+        };
+        if let Some(object) = self.scheduler_mut(child)
+            && let (Some(parent), Some(grant)) = (object.parent(), object.grant())
+        {
+            self.this_core.dispatched = Some(Dispatched {
+                thread: front,
+                scheduler: parent,
+                deadline_ticks: grant.deadline_ticks,
+            });
         }
     }
 
@@ -298,10 +335,15 @@ impl<A: ArchObjects> Nucleus<A> {
         {
             return;
         }
-        if self
-            .this_core
-            .dispatched
-            .is_some_and(|dispatched| dispatched.scheduler == scheduler)
+        // Another core's state is that core's own: it settles its
+        // `dispatched` when it takes the IPI (`settle_dispatched`).
+        let core = self.scheduler_core(scheduler);
+        let local = core == self.current_cpu();
+        if local
+            && self
+                .this_core
+                .dispatched
+                .is_some_and(|dispatched| dispatched.scheduler == scheduler)
         {
             self.this_core.dispatched = None;
         }
@@ -315,11 +357,10 @@ impl<A: ArchObjects> Nucleus<A> {
                 self.make_runnable(dispatcher);
             }
             (parent, grant) => {
-                let core = self.scheduler_core(scheduler);
                 self.activate_on(core, dispatcher);
                 // Within a grant the parent's limit goes on applying to the
                 // dispatcher.
-                if let (Some(parent), Some(grant)) = (parent, grant) {
+                if local && let (Some(parent), Some(grant)) = (parent, grant) {
                     self.this_core.dispatched = Some(Dispatched {
                         thread: dispatcher,
                         scheduler: parent,

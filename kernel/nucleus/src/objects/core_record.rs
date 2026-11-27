@@ -15,7 +15,7 @@ use {
     core::{
         cell::UnsafeCell,
         ops::{Deref, DerefMut},
-        sync::atomic::{AtomicBool, AtomicU32, AtomicU64},
+        sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     libobject::scheduler_record::FpTotals,
 };
@@ -112,6 +112,23 @@ pub fn of(index: usize) -> Option<&'static CoreRecord> {
     Some(unsafe { &*base.add(index) })
 }
 
+/// Send IPI `kind` (an `IPI_*` bit) to every logical CPU of `cpu_mask`: set the kind in
+/// each core's record with release, then raise their IPI line. Whether the controller
+/// sent it.
+pub fn send_ipis(cpu_mask: u32, kind: u32) -> bool {
+    let mut targets = 0_u32;
+    for cpu in 0..u32::BITS {
+        if cpu_mask & (1 << cpu) == 0 {
+            continue;
+        }
+        if let Some(record) = of(cpu as usize) {
+            record.pending_ipis.fetch_or(kind, Ordering::Release);
+            targets |= 1 << cpu;
+        }
+    }
+    targets != 0 && crate::platform::send_ipi(targets)
+}
+
 /// The record of the core this runs on.
 ///
 /// # Panics
@@ -137,15 +154,17 @@ pub fn try_current() -> Option<&'static CoreRecord> {
 }
 
 /// The record of the nucleus test kernels, which run on one core with no Kickstart and
-/// so no `TPIDR_EL1` record.
+/// so no `TPIDR_EL1` record: core 0 of two, so that [`of`] also finds a second core's
+/// record, which no core runs on.
 #[cfg(test)]
 fn test_record() -> &'static CoreRecord {
-    /// The test kernels' one record.
-    struct TestRecord(CoreRecord);
+    /// The test kernels' records, one run as Kickstart lays them out.
+    struct TestRecords([CoreRecord; 2]);
     // SAFETY: the nucleus tests run on one core, one test at a time.
-    unsafe impl Sync for TestRecord {}
-    static RECORD: TestRecord = TestRecord(CoreRecord::new(0, 1, 0, 0));
-    &RECORD.0
+    unsafe impl Sync for TestRecords {}
+    static RECORDS: TestRecords =
+        TestRecords([CoreRecord::new(0, 2, 0, 0), CoreRecord::new(1, 2, 0, 0)]);
+    &RECORDS.0[0]
 }
 
 /// One core's scheduling state and totals, in its [`CoreRecord`].

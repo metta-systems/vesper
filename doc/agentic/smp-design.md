@@ -51,6 +51,12 @@ All by the maintainer, 2026-11-25.
   another core may push onto under the kernel lock before it sends `IPI_RESCHEDULE`. The
   table of armed `ArmTimer` deadlines stays one table, each entry tagged with its
   Scheduler's core; each core programs its own timer from its own entries.
+- **Cross-core activation (maintainer, 2026-11-27, (b)).** Cores stay loosely coupled, so
+  that the kernel lock can later be split or removed: a core never writes another core's
+  `CoreState`. An activation of another core's dispatcher completes its parked `Dispatch`
+  (shared object state), queues the dispatcher on that core's list and sends it
+  `IPI_RESCHEDULE`; the target core brings its own `dispatched` up to date when it takes
+  the IPI.
 - **Root dispatcher layout (maintainer, 2026-11-27).** One root dispatcher component, one
   AddressSpace, with one Thread per core. Each Thread works its own core's area of the
   scheduler's memory; operations across cores (moving a Thread to another core, pinning
@@ -93,8 +99,8 @@ All by the maintainer, 2026-11-25.
   no machine-wide total.
 - **Secondary EL1 stack (C12(a), 2026-11-26).** A secondary core enters EL1h on its own
   trap stack (`SP_EL1`) with no execution stack: `el_switch` takes the EL1 mode from its
-  caller (EL1t on `SP_EL0` for the boot core, EL1h for a secondary). It runs no Thread, so
-  its code runs as the nucleus's idle path does, and no other stack is carved for it.
+  caller (EL1t on `SP_EL0` for the boot core, EL1h for a secondary). Until it enters its first
+  Thread its code runs as the nucleus's idle path does, and no other stack is carved for it.
 - **No multicore kernel state (C13(a), 2026-11-26).** SMP keeps no kernel lifecycle
   state: what multicore depends on is the kernel lock (SMP2). `libkernel-state` is only
   the init-phase flag `InitStateLock::write` checks (maintainer, 2026-11-26: the
@@ -111,13 +117,13 @@ All by the maintainer, 2026-11-25.
 | Per-core state | In each core's `CoreRecord`: the scheduling state and totals (`CoreState`: `current_thread`, `current_since_ticks`, `dispatched`, `dispatch_next`, `preempt_requested`, `interrupt_ticks`, `idle_ticks`, `fp_totals`), which the `Nucleus` reaches through its `this_core` field (`ThisCore`, by `TPIDR_EL1`), under the kernel lock; and, touched by their own core without the lock, `idling`, the programmed timer deadline and the FP entry guard's exit flag and toggle count | `kernel/nucleus/src/objects/core_record.rs`, `nucleus.rs`, `main.rs`, `timer.rs`, `objects/arch/fp_unit.rs` |
 | Kernel stack | One 512 KiB trap stack per core in `SP_EL1`, mapped by Kickstart in slots after the nucleus's `__STACK_VIRT_BOTTOM` with guard pages; a per-core record (`nucleus::core_record`) in `TPIDR_EL1` on every core; the boot Thread runs EL1t on the init stack after the image, the secondaries EL1h on their trap stacks | `kernel/kickstart/src/cores.rs`, `paging.rs`, `el_switch.rs` |
 | EL2 → EL1 | Kickstart runs at EL2 with the MMU off, builds the tables, releases the secondaries, then `el_switch` sets VBAR, MAIR, TCR (inner shareable), SCTLR and drops to EL1t; each secondary runs the same `el_switch` into EL1h | `kernel/kickstart/src/el_switch.rs`, `secondary.rs` |
-| Secondary cores | Released by the start-method component at EL2; at EL1 each sets its bit in `ONLINE` and goes on into the nucleus's `nucleus_secondary_idle` (`TTBR0` walks and its timers off). It waits on `wfe` until the boot core has installed the interrupt controller (and run its own `init_cpu`), runs `init_cpu` under the kernel lock, then waits on `wfi` with a short unmask window, taking its IPI line as a kernel entry; it runs no Thread. The boot core waits for them for at most 1 s in `el1_entry` | `kernel/kickstart/src/secondary.rs`, `lib.rs`; `kernel/nucleus/src/main.rs` |
+| Secondary cores | Released by the start-method component at EL2; at EL1 each sets its bit in `ONLINE` and goes on into the nucleus's `nucleus_secondary_idle`, a stub that reserves one exception frame at the top of its trap stack and calls `secondary_main` (`TTBR0` walks and its timers off). It waits on `wfe` until the boot core has installed the interrupt controller (and run its own `init_cpu`), then under the kernel lock runs `init_cpu`, unmasks its own timer line and waits in the kernel's idle loop (`idle_until_runnable`) for a dispatcher on its own list, taking its IPI line and timer as kernel entries. The first Thread it selects is entered through the reserved frame and `__restore_context` (TTBR0 walks back on), so `SP_EL1` is the stack's top while the Thread runs; nothing is queued on a secondary until per-core roots exist, so that path has not run yet. The boot core waits for them for at most 1 s in `el1_entry` | `kernel/kickstart/src/secondary.rs`, `lib.rs`; `kernel/nucleus/src/main.rs` |
 | TLB maintenance | Nucleus already uses broadcast forms (`tlbi vae1is`, `tlbi aside1is`, `dsb ish`); Kickstart's boot flush is local `tlbi vmalle1` | `objects/arch/aarch64_objects.rs`, `el_switch.rs` |
 | Interrupt controller ABI | `IrqChipOps`: `init`, `claim` (on the calling CPU), `complete`, `mask`, `unmask`, `set_trigger`, `xlate`. No per-CPU init, no IPI, no routing | `libs/irqchip/src/lib.rs` |
 | BCM2836 component | Drives core 0's local registers only; core 1–3 timer, mailbox and source registers are reserved fields | `drivers/irqchip-bcm2836/src/lib.rs` |
 | GIC-400 component | Routes every SPI to the CPU interface of the core running `init` (from banked `GICD_ITARGETSR0-7`) | `drivers/irqchip-gicv2/src/lib.rs` |
 | Scheduling ABI | A Scheduler has a core (the boot core for the root, the parent's from `Adopt`); `Scheduler.Dispatch` `x6` must name it and the caller must run on it; the Thread record's `cpu` is the running Thread's Scheduler's core; a Time belongs to the core that created it, and Transfer, Merge and Dispatch refuse another core's | [scheduling design](scheduling-design.md#decisions); `objects/scheduler.rs`, `objects/time.rs`, `api/scheduler.rs` |
-| Run state | `Nucleus::activations` is one list per core, a Scheduler's dispatcher on its core's list; a core selects from its own (`local_activations`) and preempts its running Thread only for an activation on its own list. The dispatcher-timer table and the wait timeouts are tagged by core, and each core programs and expires only its own; the secondaries still run no Thread and leave their timer line masked | `objects/nucleus.rs`, `objects/timers.rs`, `objects/completion.rs`, `main.rs` |
+| Run state | `Nucleus::activations` is one list per core, a Scheduler's dispatcher on its core's list; a core selects from its own (`local_activations`); an activation on its own list preempts its running Thread, one on another core's list sends that core `IPI_RESCHEDULE`, and only the target core updates its own `dispatched` (`settle_dispatched`). The dispatcher-timer table and the wait timeouts are tagged by core, and each core programs and expires only its own | `objects/nucleus.rs`, `objects/timers.rs`, `objects/completion.rs`, `main.rs` |
 | Payload ordering | The contract states that multicore needs real Acquire/Release kernel atomics for Signal/Advance publication | [contract, Notification and EventCount](capabilities-contract.md#notification-and-eventcount) |
 | Reserved memory | Kickstart removes `/memreserve/` entries and the `no-map` nodes of `/reserved-memory` from the Untypeds | `kernel/kickstart/src/lib.rs`, `libdevicetree::DeviceTree::no_map_reserved_memory` |
 | QEMU | `raspi3b` and `raspi4b` always model four cores | `Justfile` |
@@ -306,8 +312,11 @@ enough. As built:
   `send_ipi` of the target mask. Taking (`take_ipis`, in `handle_irq` when the claimed
   line is `ipi_line`): swap the kinds out with acquire. The claim acknowledged the line
   first, so a kind set after the swap raises it again.
-- Reschedule sets the core's `preempt_requested`, so the exit path of an interrupt that
-  stopped a Thread selects again; Halt parks; Stop has no work until synchronous
+- Reschedule is sent by `Nucleus::activate_on` when an activation or a top dispatcher's
+  wakeup queues a dispatcher on another core's list; there `handle_irq` settles the
+  core's own `dispatched` from the Schedulers (`Nucleus::settle_dispatched`) and sets its
+  `preempt_requested`, so the exit path of an interrupt that stopped a Thread selects
+  again. `send_ipis` is `core_record::send_ipis`. Halt parks; Stop has no work until synchronous
   retirement.
 
 ### Interrupt-controller ABI
