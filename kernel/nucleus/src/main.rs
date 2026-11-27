@@ -119,22 +119,7 @@ impl KernelLock {
 #[cfg(feature = "smp_test")]
 static PINGING_CORE: AtomicU32 = AtomicU32::new(0);
 
-/// Send IPI `kind` (a `core_record::IPI_*` bit) to every logical CPU of
-/// `cpu_mask`: set the kind in each core's record, then raise their IPI line.
-/// Whether the controller sent it.
-fn send_ipis(cpu_mask: u32, kind: u32) -> bool {
-    let mut targets = 0_u32;
-    for cpu in 0..u32::BITS {
-        if cpu_mask & (1 << cpu) == 0 {
-            continue;
-        }
-        if let Some(record) = nucleus::core_record::of(cpu as usize) {
-            record.pending_ipis.fetch_or(kind, Ordering::Release);
-            targets |= 1 << cpu;
-        }
-    }
-    targets != 0 && nucleus::platform::send_ipi(targets)
-}
+use nucleus::core_record::send_ipis;
 
 /// Take the IPI kinds sent to this core, after claiming its IPI line: a halt
 /// parks the core here; whether a reschedule was asked for. Stop's work
@@ -298,22 +283,43 @@ pub unsafe extern "C" fn nucleus_set_board_console(base: usize) {
     }
 }
 
-/// Where a secondary core waits while it runs no Thread (SMP1). Kickstart's secondary
-/// entry jumps here at `EL1h` on the core's trap stack, interrupts masked, MMU and caches
-/// on, once the core is online.
+// Where a secondary core enters the nucleus (`nucleus_secondary_idle`). Kickstart's
+// secondary entry jumps here at `EL1h` on the core's trap stack, interrupts masked, MMU
+// and caches on, once the core is online. The stub reserves one exception frame at the
+// top of the trap stack, where a trap from a Thread puts its frame, and hands it to
+// `secondary_main`, which enters the first Thread through it.
+core::arch::global_asm!(
+    ".pushsection .text.bootstrap, \"ax\"",
+    ".balign 4",
+    ".global nucleus_secondary_idle",
+    ".type nucleus_secondary_idle, %function",
+    "nucleus_secondary_idle:",
+    "    sub  sp, sp, #{frame}",
+    "    mov  x0, sp",
+    "    b    {main}",
+    ".size nucleus_secondary_idle, . - nucleus_secondary_idle",
+    ".popsection",
+    frame = const core::mem::size_of::<ExceptionContext>(),
+    main = sym secondary_main,
+);
+
+/// A secondary core in the nucleus (SMP4 stage 4), on its trap stack below `frame`, the
+/// exception frame the entry stub reserved at its top.
 ///
-/// Until the boot core installs the interrupt controller, the core waits on `wfe`
-/// (the boot core's `sev` after the install, or a panicking core's, wakes it). It then
-/// prepares itself at the controller (`init_cpu`, under the kernel lock) and waits on
-/// `wfi`, unmasking interrupts only for a moment after each wake, as the boot core's
-/// idle loop does: its IPI line ends the wait, and the interrupt is a kernel entry of
-/// its own. It parks when another core has panicked. Its `TTBR0_EL1` still names
-/// Kickstart's identity map, which is Kickstart's memory, so translation walks through
-/// `TTBR0` stop here; its timers are turned off, since their reset state is UNKNOWN and
-/// a pending one would end every wait.
-#[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.bootstrap")]
-pub extern "C" fn nucleus_secondary_idle() -> ! {
+/// Until the boot core installs the interrupt controller, the core waits on `wfe` (the
+/// boot core's `sev` after the install, or a panicking core's, wakes it). It then
+/// prepares itself at the controller (`init_cpu`) and unmasks its own timer line, under
+/// the kernel lock, and waits in the kernel's idle loop for a dispatcher queued on its
+/// own list, as the boot core does with nothing to run: its IPI line and its timer end
+/// the wait. The first Thread it selects is entered through `frame`, as a trap from that
+/// Thread would return, so `SP_EL1` is the stack's top again while the Thread runs.
+///
+/// Until then its `TTBR0_EL1` still names Kickstart's identity map, which is Kickstart's
+/// memory, so translation walks through `TTBR0` stay off until the first Thread's
+/// translation is installed. Its timers are turned off first, since their reset state is
+/// UNKNOWN and a pending one would end every wait. A core the controller refuses takes
+/// no interrupts and only waits to park.
+extern "C" fn secondary_main(frame: *mut ExceptionContext) -> ! {
     use aarch64_cpu::{
         asm::barrier,
         registers::{CNTP_CTL_EL0, CNTV_CTL_EL0, Read, TCR_EL1, Write},
@@ -332,27 +338,48 @@ pub extern "C" fn nucleus_secondary_idle() -> ! {
     CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::CLEAR + CNTP_CTL_EL0::IMASK::SET);
     CNTV_CTL_EL0.write(CNTV_CTL_EL0::ENABLE::CLEAR + CNTV_CTL_EL0::IMASK::SET);
     let record = nucleus::core_record::current();
-    let mut asked_controller = false;
-    let mut takes_interrupts = false;
-    loop {
+    while !nucleus::platform::is_installed() {
         if another_core_panicked() {
             park_for_panic()
         }
-        if !asked_controller && nucleus::platform::is_installed() {
-            asked_controller = true;
-            let _kernel = KERNEL_LOCK.enter();
-            takes_interrupts = nucleus::platform::init_cpu(record.index);
-        }
-        if takes_interrupts {
-            record.idling.store(true, Ordering::Release);
-            aarch64_cpu::asm::wfi();
-            libexception::asynchronous::local_irq_unmask();
-            barrier::isb(barrier::SY);
-            libexception::asynchronous::local_irq_mask();
-            record.idling.store(false, Ordering::Release);
-        } else {
+        aarch64_cpu::asm::wfe();
+    }
+    let kernel = KERNEL_LOCK.enter();
+    if !nucleus::platform::init_cpu(record.index) {
+        warn!("Interrupt controller refused core {}", record.index);
+        drop(kernel);
+        loop {
+            if another_core_panicked() {
+                park_for_panic()
+            }
             aarch64_cpu::asm::wfe();
         }
+    }
+    if let Some(line) = nucleus::platform::physical_timer_line() {
+        nucleus::platform::unmask(line);
+    }
+    let resumed = idle_until_runnable();
+    install(resumed.translation);
+    // The Thread's own translation is in `TTBR0_EL1` now.
+    TCR_EL1.modify(TCR_EL1::EPD0::EnableTTBR0Walks);
+    barrier::isb(barrier::SY);
+    // SAFETY: `frame` is the stub's reservation at the top of this core's trap stack,
+    // below which this function runs; the whole frame is written here.
+    unsafe {
+        frame.write(ExceptionContext::from(resumed.saved));
+    }
+    reprogram_timer();
+    drop(kernel);
+    // SAFETY: `frame` holds the selected Thread's validated context; `__restore_context`
+    // loads it, leaves `SP_EL1` at the frame's end (the trap stack's top) and returns to
+    // the Thread. Nothing on this function's stack is used again.
+    unsafe {
+        asm!(
+            "mov sp, {frame}",
+            "b   __restore_context",
+            frame = in(reg) frame,
+            options(noreturn)
+        );
     }
 }
 
@@ -389,8 +416,8 @@ fn first_run(address: u64) -> bool {
     false
 }
 
-/// Whether the nucleus has gone idle before. Only loaded and stored.
-static IDLED: AtomicBool = AtomicBool::new(false);
+/// The cores that have gone idle before, by logical index.
+static IDLED: AtomicU32 = AtomicU32::new(0);
 
 /// The boot-carved [`Nucleus`], or `None` before Kickstart records it.
 pub fn nucleus_anchor() -> Option<*mut Nucleus<nucleus::objects::ArchObjectsImpl>> {
@@ -936,8 +963,9 @@ fn handle_irq(frame: &mut ExceptionContext) {
             nucleus.expire_deadlines();
         }
         if reschedule {
-            // Another core changed what may run here: select on the way out,
-            // as for an activation.
+            // Another core activated a dispatcher here: settle this core's
+            // own state and select on the way out, as for a local activation.
+            nucleus.settle_dispatched();
             nucleus.this_core.preempt_requested = true;
         }
         if nested || (!ticked && !nucleus.this_core.preempt_requested) {
@@ -968,9 +996,12 @@ fn handle_irq(frame: &mut ExceptionContext) {
 /// restricted path of [`handle_irq`]). The trap frame that led here stays
 /// untouched below, for the caller to rewrite with the selected Thread.
 fn idle_until_runnable() -> PreparedResume {
-    if !IDLED.load(Ordering::Relaxed) {
-        IDLED.store(true, Ordering::Relaxed);
-        board_line(format_args!("💤 nothing runnable: idle, the first time"));
+    let core = nucleus::core_record::current().index;
+    let bit = 1_u32.checked_shl(core).unwrap_or(0);
+    if IDLED.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
+        board_line(format_args!(
+            "💤 core {core}: nothing runnable: idle, the first time"
+        ));
     }
     loop {
         // The timer runs only for a wait timeout or a dispatcher's timer.

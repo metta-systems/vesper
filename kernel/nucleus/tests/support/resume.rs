@@ -1276,6 +1276,116 @@ fn dispatch_runs_only_on_its_schedulers_core() {
 }
 
 #[test_case]
+fn an_activation_of_another_cores_dispatcher_queues_it_there_and_sends_reschedule() {
+    use crate::objects::{core_record, nucleus::Dispatched};
+    with_resume(|nucleus, waits| {
+        // The tests run on core 0; this Scheduler is core 1's, and its
+        // dispatcher waits in `Dispatch` there.
+        let dispatching = with_dispatcher_on(nucleus, &waits, 1);
+        let record = nucleus
+            .pending
+            .block(
+                waits.source,
+                PendingKind::SchedulerDispatch,
+                dispatching.scheduler_id,
+            )
+            .unwrap_or_else(|e| panic!("park: {:?}", e.code()));
+        scheduler_of(&dispatching).park_dispatcher(record, false);
+        // What this core runs names the Scheduler: only core 1 may change it.
+        let own = Dispatched {
+            thread: waits.tail,
+            scheduler: dispatching.scheduler_id,
+            deadline_ticks: None,
+        };
+        nucleus.this_core.dispatched = Some(own);
+        nucleus.this_core.preempt_requested = false;
+        let core_one = core_record::of(1).expect("the test kernels have a core 1 record");
+        core_one
+            .pending_ipis
+            .store(0, core::sync::atomic::Ordering::Relaxed);
+
+        nucleus.request_activation(dispatching.scheduler_id, activation_reason::EVENT, 0);
+
+        // The shared state changed: the Dispatch completed, and the
+        // dispatcher is first on core 1's list.
+        assert!(scheduler_of(&dispatching).parked().is_none());
+        assert!(matches!(
+            nucleus.pending.state(record),
+            Ok(PendingState::Completed { .. })
+        ));
+        assert_eq!(nucleus.activations[1].peek(), Some(waits.source));
+        // Core 1 was sent a Reschedule; this core's own state is untouched.
+        let sent = core_one
+            .pending_ipis
+            .swap(0, core::sync::atomic::Ordering::Relaxed);
+        assert_ne!(sent & core_record::IPI_RESCHEDULE, 0);
+        assert!(nucleus.local_activations().is_empty());
+        assert!(!nucleus.this_core.preempt_requested);
+        assert_eq!(nucleus.this_core.dispatched, Some(own));
+
+        assert_eq!(nucleus.activations[1].pop(), Some(waits.source));
+        nucleus.this_core.dispatched = None;
+    });
+}
+
+#[test_case]
+fn a_core_settles_its_dispatched_thread_after_another_core_ended_the_dispatch() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, 5_000_000);
+        // Still waiting in `Dispatch`: settling keeps the dispatched Thread.
+        nucleus.settle_dispatched();
+        assert_eq!(
+            nucleus.this_core.dispatched.map(|d| d.thread),
+            Some(waits.tail)
+        );
+        // Another core ends the Dispatch, as `request_activation` does there:
+        // the call completes and the dispatcher is queued on this core.
+        let record = scheduler_of(&dispatching)
+            .take_parked()
+            .expect("the dispatcher waits");
+        nucleus
+            .pending
+            .complete_with_status(record, syscall_status::SUCCESS, activation_reason::EVENT, 0)
+            .unwrap_or_else(|e| panic!("complete: {:?}", e.code()));
+        assert!(nucleus.local_activations().push_front(waits.source));
+        // This core's state is its own to bring up to date.
+        assert!(nucleus.this_core.dispatched.is_some());
+        nucleus.settle_dispatched();
+        assert!(nucleus.this_core.dispatched.is_none());
+    });
+}
+
+#[test_case]
+fn a_core_settles_a_child_dispatcher_activated_within_its_grant() {
+    with_resume(|nucleus, waits| {
+        let domain = with_domain(nucleus, &waits);
+        run_child_dispatcher(nucleus, &domain, u64::MAX);
+        child_dispatches(nucleus, &domain, u64::MAX);
+        let grant = child_object(&domain).grant().expect("a grant");
+        // Another core activates the child dispatcher inside the grant.
+        let record = child_object(&domain)
+            .take_parked()
+            .expect("the child dispatcher waits");
+        nucleus
+            .pending
+            .complete_with_status(record, syscall_status::SUCCESS, activation_reason::EVENT, 0)
+            .unwrap_or_else(|e| panic!("complete: {:?}", e.code()));
+        assert!(nucleus.local_activations().push_front(domain.dc));
+        nucleus.settle_dispatched();
+        // As on one core: the parent's limit goes on applying to the child
+        // dispatcher.
+        let dispatched = nucleus
+            .this_core
+            .dispatched
+            .expect("the child dispatcher is dispatched");
+        assert_eq!(dispatched.thread, domain.dc);
+        assert_eq!(dispatched.scheduler, domain.root.scheduler_id);
+        assert_eq!(dispatched.deadline_ticks, grant.deadline_ticks);
+    });
+}
+
+#[test_case]
 fn dispatch_refuses_a_stranger_a_stale_generation_and_a_thread_that_cannot_run() {
     with_resume(|nucleus, waits| {
         let dispatching = with_dispatcher(nucleus, &waits);
