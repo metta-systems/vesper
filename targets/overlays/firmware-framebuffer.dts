@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: BlueOak-1.0.0
+//
+// The framebuffer node the Raspberry Pi 5's firmware adds to the device tree
+// at boot, for the device tree tests: a `simple-framebuffer` (Linux binding
+// `display/simple-framebuffer.yaml`) whose `reg` is the 1024x768 16-bit
+// framebuffer it left at 0x3f800000, the top of the first RAM region, as the
+// board reports it.
+//
+// `just firmware-framebuffer-dtb` applies it to `targets/bcm2712-rpi-5-b.dtb`
+// with `fdtoverlay`.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			framebuffer@3f800000 {
+				compatible = "simple-framebuffer";
+				reg = <0x0 0x3f800000 0x0 0x3f4800>;
+				width = <1024>;
+				height = <768>;
+				stride = <2048>;
+				format = "r5g6b5";
+				status = "okay";
+			};
+		};
+	};
+};

@@ -1,3 +1,7 @@
+A side finding, not fixed here: the device-region names Kickstart keeps in BOOT_INFO all point into the device tree by physical address. Anything that prints them after the MMU switch would crash the same way. Today only QEMU-only prints use them.
+
+----
+
 - A Time is a budget of CPU time, and each Time belongs to one core.                                  [-]
   - The scheduling rule says Transfer, Merge and Dispatch "reject a Time of another core". The main agent read "another core" as any core except the one making the call. Before, the check only required the two Times to be on the same core.
   - So a dispatcher running on core 0 can't hand budget to a Time that belongs to core 1. Each core's budget can only be refilled by code running on that core.

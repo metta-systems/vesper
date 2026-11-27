@@ -21,6 +21,9 @@ audio_test_dtb    := justfile_directory() / 'targets/audio-test.dtb'
 # The rpi4 tree with the MSP2202 SPI panel on SPI0 CE0, as the board's `mipi-dbi-spi` overlay
 # makes it (`just spi-panel-dtb` remakes it from targets/overlays/spi-panel.dts)
 spi_panel_dtb     := justfile_directory() / 'targets/spi-panel-test.dtb'
+# The rpi5 tree with the framebuffer node its firmware adds at boot
+# (`just firmware-framebuffer-dtb` remakes it from targets/overlays/firmware-framebuffer.dts)
+firmware_fb_dtb   := justfile_directory() / 'targets/firmware-framebuffer-test.dtb'
 
 nucleus_link    := 'linker/nucleus.ld'
 init_link       := 'linker/kickstart.ld'
@@ -354,6 +357,13 @@ spi-panel-dtb:
     @mkdir -p "{{ target_root }}"
     dtc -q -@ -I dts -O dtb -o "{{ target_root / 'spi-panel.dtbo' }}" "{{ justfile_directory() / 'targets/overlays/spi-panel.dts' }}"
     fdtoverlay -i "{{ rpi4_dtb }}" -o "{{ spi_panel_dtb }}" "{{ target_root / 'spi-panel.dtbo' }}"
+
+# Remake targets/firmware-framebuffer-test.dtb after changing the overlay or the rpi5 tree: the rpi5 tree with targets/overlays/firmware-framebuffer.dts applied, the `simple-framebuffer` node the board's firmware adds at boot (needs dtc and fdtoverlay)
+[group("tools")]
+firmware-framebuffer-dtb:
+    @mkdir -p "{{ target_root }}"
+    dtc -q -@ -I dts -O dtb -o "{{ target_root / 'firmware-framebuffer.dtbo' }}" "{{ justfile_directory() / 'targets/overlays/firmware-framebuffer.dts' }}"
+    fdtoverlay -i "{{ rpi5_dtb }}" -o "{{ firmware_fb_dtb }}" "{{ target_root / 'firmware-framebuffer.dtbo' }}"
 
 # Build midi-test's programs: the player, the MIDI synthesiser and the log server, with the trimmed SoundFont and the song they bundle, for the image configuration `board` + `image_features`; only midi-test bundles the player, so it is not in `user_components`
 _build-midi-player board=boards features='qemu' image_features=features: (_cross-build 'midi-player midi-synth log-server' board user_link features '' image_features)

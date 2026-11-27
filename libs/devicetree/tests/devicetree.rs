@@ -62,6 +62,9 @@ mod tests {
     /// The Pi 4 tree the SD image carries for the firmware.
     const RPI4_FIRMWARE: &[u8] = include_bytes!("../../../tools/makesd/boot/bcm2711-rpi-4-b.dtb");
     const RPI5: &[u8] = include_bytes!("../../../targets/bcm2712-rpi-5-b.dtb");
+    /// The Pi 5 tree with the `simple-framebuffer` its firmware adds at boot.
+    const RPI5_FIRMWARE_FB: &[u8] =
+        include_bytes!("../../../targets/firmware-framebuffer-test.dtb");
     /// The Pi 4 tree with the MSP2202 SPI panel on SPI0 CE0 (`just spi-panel-dtb`).
     const SPI_PANEL: &[u8] = include_bytes!("../../../targets/spi-panel-test.dtb");
 
@@ -822,6 +825,38 @@ mod tests {
                 .find(|device| device.compatible == "brcm,bcm2711-l2-intc" && !device.enabled);
             assert!(disabled.is_some());
         });
+        with_tree(RPI5, |tree| {
+            // The Pi 5's TF-A reservation at 0 is RAM: as a device it hid the
+            // video memory below the first gigabyte.
+            assert!(tree.devices().all(|device| device.name != "atf"));
+            assert!(tree.devices().all(|device| device.region.start >= 1 << 30));
+        });
+    }
+
+    #[test]
+    fn the_firmware_framebuffer_is_pixel_memory_and_no_device() {
+        // On the Pi 5 it sits at the top of the first RAM region: as a device
+        // it ended the video memory where the framebuffer starts.
+        with_tree(RPI5_FIRMWARE_FB, |tree| {
+            assert_eq!(
+                tree.simple_framebuffers().collect::<Vec<_>>(),
+                [Region {
+                    start: 0x3f80_0000,
+                    size: 0x3f_4800
+                }]
+            );
+            assert!(tree.devices().all(|device| device.name != "framebuffer"));
+            assert_eq!(
+                tree.devices().count(),
+                81,
+                "the same devices as the Pi 5 tree"
+            );
+        });
+        for dtb in [RPI3, RPI4, RPI5] {
+            with_tree(dtb, |tree| {
+                assert_eq!(tree.simple_framebuffers().count(), 0);
+            });
+        }
     }
 
     #[test]
@@ -829,7 +864,7 @@ mod tests {
         // kickstart sorts the device regions in a fixed array
         // (`MAX_DEVICE_REGIONS`, 256): the Raspberry Pi 4 tree has over a
         // hundred, which overflowed the 100 it once had.
-        for (dtb, regions) in [(RPI3, 48), (RPI4, 102), (RPI5, 84)] {
+        for (dtb, regions) in [(RPI3, 48), (RPI4, 101), (RPI5, 81)] {
             with_tree(dtb, |tree| assert_eq!(tree.devices().count(), regions));
         }
     }

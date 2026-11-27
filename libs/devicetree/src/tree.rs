@@ -42,6 +42,21 @@ fn is_memory(node: &Node<'_, '_, '_>) -> bool {
     property(node, "device_type").is_some_and(|prop| prop.str() == Ok("memory"))
 }
 
+/// Whether `node` is a region of `/reserved-memory` (Devicetree
+/// Specification v0.4, §3.5): a child of that node, which sits at the root.
+fn is_reserved_memory(node: &Node<'_, '_, '_>) -> bool {
+    node.parent().is_some_and(|parent| {
+        parent.name() == Ok("reserved-memory")
+            && parent.parent().is_some_and(|root| root.parent().is_none())
+    })
+}
+
+/// Whether `node` is a `simple-framebuffer` (Linux binding
+/// `display/simple-framebuffer.yaml`): its `reg` is pixel memory.
+fn is_simple_framebuffer(node: &Node<'_, '_, '_>) -> bool {
+    property(node, "compatible").is_some_and(|prop| prop.str() == Ok("simple-framebuffer"))
+}
+
 /// Whether node `name` matches path component `component`: exactly, or by
 /// its name without the unit address when `component` has none.
 fn matches_component(name: &str, component: &str) -> bool {
@@ -167,11 +182,28 @@ impl<'i, 'dt> DeviceTree<'i, 'dt> {
             .filter(|region| region.size != 0)
     }
 
-    /// Every translated `reg` entry of every node that is not memory.
+    /// The pixel memory of the enabled `simple-framebuffer` nodes: the
+    /// framebuffers the firmware set up and left in video memory (the
+    /// Raspberry Pi 5's firmware adds one at boot).
+    pub fn simple_framebuffers(&self) -> impl Iterator<Item = Region> + '_ {
+        self.index
+            .nodes()
+            .filter(|node| is_simple_framebuffer(node) && is_enabled(node))
+            .flat_map(|node| regions(&node))
+            .filter(|region| region.size != 0)
+    }
+
+    /// Every translated `reg` entry of every node that is not memory: neither
+    /// a `/memory` node nor a `/reserved-memory` region, which is RAM (see
+    /// [`no_map_reserved_memory`](Self::no_map_reserved_memory)), nor a
+    /// `simple-framebuffer`, whose `reg` is the framebuffer the firmware left
+    /// in video memory (the Raspberry Pi 5's firmware adds one at boot).
     pub fn devices(&self) -> impl Iterator<Item = Device<'_, 'i, 'dt>> {
         self.index
             .nodes()
-            .filter(|node| !is_memory(node))
+            .filter(|node| {
+                !is_memory(node) && !is_reserved_memory(node) && !is_simple_framebuffer(node)
+            })
             .flat_map(|node| {
                 let name = node.name().unwrap_or("");
                 let name = name.split_once('@').map_or(name, |(base, _)| base);
