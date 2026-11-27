@@ -138,6 +138,10 @@ Memory-attribute and cache-maintenance work is tracked in [`memory-implementatio
 
 Secondary-core bring-up, the kernel lock, IPIs and Threads on several cores are tracked in [`smp-implementation-plan.md`](smp-implementation-plan.md), design in [`smp-design.md`](smp-design.md). The decisions are in the design; open ones are in [`smp-decisions.md`](smp-decisions.md).
 
+## Multiple displays
+
+Display outputs, the compositor's multi-output work and Raspberry Pi 5 HDMI are tracked in [`multi-display-implementation-plan.md`](multi-display-implementation-plan.md).
+
 ## Final integration
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.

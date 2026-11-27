@@ -1,12 +1,10 @@
 # Multi-display design
 
-Status: **paused** (2026-11-25). Slices 1–5 are built and board-verified (see
-Slices). The layout EventCount and slice 6 (hotplug) wait for D3 and D5,
-which are written up under "Paused: D3 and D5". Decisions
-M1–M10 and the three follow-ups were
-answered by the maintainer on 2026-11-24, as were D1, D2, D4, D6 and D7; all are
-recorded here. D3 and D5 (how EventCounts reach the compositor and its clients)
-are still open and will be discussed in more detail later.
+The rules and their reasons; the answered decisions are below. Open questions
+(D3 and D5) are in [multi-display-decisions.md](multi-display-decisions.md),
+open tasks in
+[multi-display-implementation-plan.md](multi-display-implementation-plan.md),
+finished ones in [multi-display-completed.md](multi-display-completed.md).
 
 ## Scope
 
@@ -52,6 +50,7 @@ Out of scope:
 | D6 | The desktop origin is renormalized after each change, to the output with the lowest x, then lowest y. Clients see window-relative coordinates, so it doesn't affect them. |
 | D7 | `MAX_OUTPUTS` = 2 for now: only two displays are being tested. |
 | P3 | (a), 2026-11-28: `display_v1`'s `format` gains `rgb565` (16-bit 5-6-5, little-endian), edited in place, and the compositor converts to it. The Raspberry Pi 5 firmware's framebuffer is 16-bit RGB565 whatever depth is asked for, while it reports 32; the fb driver takes the real pixel size from the pitch the firmware returns and describes the mode in that format. |
+| P6 | (a), 2026-11-28: when the firmware keeps a framebuffer size of its own whatever size is asked for (the Raspberry Pi 5's 1920x1080), the fb driver reads the size back after allocating, configures that, and lists it as its only mode; `set_mode` to any other mode is refused. |
 
 ## Shape
 
@@ -185,9 +184,8 @@ exceptions there take precedence over this sketch.
   - Meddle's `MAX_DATA_BYTES` goes from 64 KiB to 256 KiB. Kickstart lays every
     pair's area out with one cursor over a single 2 MiB data window
     (`data_cursor`, `DATA_WINDOW_BYTES` in `kernel/kickstart/src/drivers.rs`),
-    so the panel's area comes out of the whole image's 2 MiB. Before the
-    compositor image gains the panel (slice 4), measure its current total and
-    raise the window if it doesn't fit.
+    so the panel's area comes out of the whole image's 2 MiB; an image whose
+    areas outgrow it needs the window raised.
   - The area is per interface, so a scanout exporter (fb) gets one too, unused.
     That is 152 KiB per pair, and the compositor has two pairs at most (D7).
   - `rotations` is all four. `rotate` sets MADCTL (36h, ILI9341 datasheet
@@ -218,8 +216,7 @@ exceptions there take precedence over this sketch.
     (revoking the old Frames) would lift this, and is out of scope here.
   - Only the framebuffer's size changes. The HDMI signal's timing stays
     whatever the firmware set it to (config.txt).
-  - `fb_v1` remains, and the compositor still calls `fb_v1.configure(1024, 768,
-    32)` until slice 4 moves it to `display_v1`.
+  - `fb_v1` remains next to it; the compositor uses `display_v1`.
   - The fb driver's calls wait until it has configured its first mode at
     start: a client's call can arrive before that (display-test hit this
     race).
@@ -304,8 +301,8 @@ exceptions there take precedence over this sketch.
 
   The maintainer's words, 2026-11-25: "we will refactor this later into a
   protocol".
-- **Rotation (M5).** Not in slice 4: nothing sets a rotation before
-  `display_layout_v1` (slice 5). Setting a rotation calls the provider's `rotate` when that
+- **Rotation (M5).** A rotation is set through `display_layout_v1`. Setting
+  a rotation calls the provider's `rotate` when that
   rotation is in `rotations`; the viewport then simply takes the returned size.
   Otherwise the compositor rotates while converting, and the viewport takes
   width and height swapped.
@@ -393,7 +390,7 @@ local interface display_layout_v1
 }
 ```
 
-- **As built (slice 5).** The interface lives at
+- **As built.** The interface lives at
   `userspace/gui/compositor/interfaces/display_layout_v1.if`. It differs from
   the sketch above in these ways:
   - A result holds at most 5 words, so `output` returns the id and the
@@ -454,13 +451,13 @@ local interface display_layout_v1
 
 ## Kickstart and Meddle
 
-- Image-build: a manifest entry's `exports = ["dir", ...]` (slice 1) names
+- Image-build: a manifest entry's `exports = ["dir", ...]` names
   further directories whose interfaces the component exports. Every output
   exports `display_v1`, so `display_v1.if` lives in `drivers/display/interfaces`
   instead of in one driver's own directory. Those directories are also searched
   for imports.
 - Image-build: a `layout = true` manifest field (above).
-- Meddle and Kickstart: `via every` (D1, done in slice 3).
+- Meddle and Kickstart: `via every` (D1).
   - The syntax is `uses X via every max N { ... }`, with `every` and `max`
     contextual like `device` and `parent`. The maximum is written out, because
     Meddle can't see the client's constants; the compositor will write
@@ -488,120 +485,3 @@ local interface display_layout_v1
     importing it `via every max 2` gets the first two, each with its own area
     and its own call count. The third is left unlinked.
 - Nothing else changes in Kickstart.
-
-## Slices
-
-1. **`display_v1` on the panel.**
-   - Raise Meddle's `MAX_DATA_BYTES` to 256 KiB.
-   - Add the interface, with `flush` from the data area, `rotate` and the
-     single mode.
-   - Extend panel-test with a small client that writes RGB565 into the data
-     area and flushes rectangles, as the board check.
-   - Add host tests for the rectangle-to-window commands.
-2. **`display_v1` on the fb driver**, next to `fb_v1`:
-   - EDID parsing in a host-tested library, with the format cited;
-   - `modes`, `get_mode`/`set_mode`, the self-configured preferred mode, and
-     `frames`.
-3. **`via every`** in Meddle, image-build and Kickstart, with host tests and a
-   QEMU test kernel that has two exporters of one interface.
-4. **Multi-output compositor core**:
-   - in `compositor-core`: conversion, viewports, pointer union, placement and
-     renormalization, with host tests;
-   - the output table, the frame Thread's per-output composition and the
-     presenter Thread.
-
-   QEMU covers the scanout output; the board covers HDMI and the panel together.
-5. **`display_layout_v1`**, the `compositor_v1.display_layout` function, and the
-   manifest flag and badge bit. A small `layout` test client arranges the
-   outputs and reads them back. The layout EventCount waits for D5. Built on
-   2026-11-25: layout-test passes under QEMU, and the shell's `layout`
-   commands are for the board.
-6. **Hotplug plumbing**: provider EventCounts and the generation path, plus the
-   removal and arrival policy (after D3), tested with a fake provider that
-   comes and goes (`not_present`).
-
-## Paused: D3 and D5
-
-Work stopped here on 2026-11-25 by the maintainer's choice, after slices 1–5
-were built and board-verified. It resumes by discussing D3 and D5 in detail;
-both are still open, and nothing below is decided.
-
-What waits on them:
-- slice 6, hotplug:
-  - providers telling the compositor that an output changed (D3);
-  - the arrival and removal policy (M9, M10). Its core is already built and
-    host-tested (`Layout::rehome`, `Layout::renormalize`,
-    `State::apply_layout`), but nothing triggers it yet;
-- the layout EventCount, which tells layout readers that the arrangement
-  changed (D5).
-
-Nothing in use needs them today:
-- No output changes by itself. The mailbox framebuffer has no hotplug
-  source: the firmware does not report HDMI plug events, so fb would have to
-  poll the firmware for them. The panel is fixed.
-- The only layout client, the shell's `layout` command, reads on demand.
-
-### D3: how a provider's change reaches the compositor
-
-When an output's presence or mode changes, its provider bumps the generation
-that `describe` returns. That much is settled (M9: EventCount + generation).
-The open part is how the compositor learns that it should call `describe`
-again.
-
-- **(a) A channel on `display_v1`.** Kickstart already gives each pair of an
-  interface that declares `channel N;` an io-channel, with an EventCount the
-  exporter advances and the client awaits. `input_v1` reaches the compositor
-  this way.
-  - For: no new mechanism. The channel could also carry a change record.
-  - Against:
-    - a control page per pair (plus data pages if records travel) out of
-      the 2 MiB data window that all pairs share;
-    - the compositor would have to wait on several EventCounts at once (one
-      per output, plus input), which means a WaitSet or a Thread per output.
-- **(b) The compositor polls `describe`** on a slow timer (say once a
-  second), from the frame Thread or a Thread of its own.
-  - For: nothing new in Kickstart, Meddle or the providers.
-  - Against:
-    - a wakeup and a call per output per period, even when nothing changes;
-    - arrival or removal seen up to a period late.
-- **(c) A `display_v1` call that installs an await-only key** to the
-  provider's EventCount in the caller's table, the way `display_layout`
-  installs Invocation keys.
-  - For: one EventCount per output, which a WaitSet can watch; no data
-    window cost.
-  - Against: a new pattern. `Masters` installs Invocation keys only, so
-    installing another kind of key (an EventCount with only the right to
-    await) needs a helper of its own. D5 (a) would use the same helper.
-
-Whichever is chosen, fb also needs its own source of change: polling the
-firmware for the display's presence and EDID.
-
-### D5: how layout readers learn of a change
-
-The compositor bumps `display_layout_v1.generation` on every move or turn,
-and will on every arrival and removal. The open part is how a reader such as
-a panel, a settings tool or a client that keeps its windows on one output
-knows that it should read the layout again.
-
-- **(a) `display_layout` also installs an await-only key** to a compositor
-  EventCount that is advanced on every change. It would go in the slot after
-  the interface's keys.
-  - For: readers wait without polling, and a WaitSet can combine it with
-    their other EventCounts.
-  - Against: the same new key-installing helper as D3 (c), and one more slot
-    and wire key in `display_layout`'s answer.
-- **(b) A `LayoutChanged` record on the client's input io-channel**, which
-  every compositor client already holds and reads.
-  - For: no new mechanism on the kernel side; one new record kind in
-    `vesper-input-event`.
-  - Against:
-    - layout news mixes with window events;
-    - a client that has no buffer posted loses the record. It would then
-      see `Dropped`, and must compare `generation` when it resynchronises;
-    - only clients with an event channel can learn of changes.
-- **(c) Readers poll `generation`.**
-  - For: nothing new.
-  - Against: wakeups and calls for nothing, and changes seen late.
-
-If D3 and D5 both pick "install an await-only key" ((c) and (a)), they share
-one helper.
