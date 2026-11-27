@@ -280,6 +280,10 @@ impl Default for InvocationStack {
 /// capture/restore and the shared per-core stack are entry/backend responsibilities.
 /// The bounded PPC invocation stack is inline below; Call/Return admission
 /// and migration remain separate work.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent notes of the nucleus's bookkeeping, each set and cleared on its own"
+)]
 pub struct Thread {
     // ═══════════════════════════════════════════════════════════
     // PRIVATE SECTION (kernel only, NOT mapped to userspace)
@@ -332,6 +336,12 @@ pub struct Thread {
     /// context: its saved state, pending record and Time stay as they were,
     /// and while it is set nothing queues, dispatches or activates for it.
     pub suspended: bool,
+    /// The core running the Thread, while one does: set as a core enters it,
+    /// cleared as it stops.
+    pub running_on: Option<usize>,
+    /// `Thread.Retire` was asked while the Thread ran on another core: that
+    /// core stops it at its Stop IPI, and nothing dispatches it again.
+    pub retiring: bool,
     /// The Scheduler this Thread is the dispatcher of, once bound.
     pub dispatches: Option<CarvedId>,
     /// The next Thread of the owning Scheduler's list of Threads.
@@ -383,6 +393,8 @@ impl Thread {
             run_time_ticks: 0,
             awaiting_budget: false,
             suspended: false,
+            running_on: None,
+            retiring: false,
             dispatches: None,
             owner_next: None,
             record: None,
@@ -465,6 +477,8 @@ mod tests {
             run_time_ticks: 0,
             awaiting_budget: false,
             suspended: false,
+            running_on: None,
+            retiring: false,
             dispatches: None,
             owner_next: None,
             record: None,
@@ -509,6 +523,8 @@ mod tests {
             run_time_ticks: 0,
             awaiting_budget: false,
             suspended: false,
+            running_on: None,
+            retiring: false,
             dispatches: None,
             owner_next: None,
             record: None,

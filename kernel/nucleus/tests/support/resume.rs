@@ -1650,6 +1650,192 @@ fn binding_another_cores_root_dispatcher_queues_it_there_and_sends_reschedule() 
     });
 }
 
+#[test_case]
+fn retiring_a_thread_running_on_another_core_waits_until_it_stopped_there() {
+    use crate::objects::core_record;
+    with_resume(|nucleus, waits| {
+        let core_one = core_record::of(1).expect("the test kernels have a core 1 record");
+        core_one
+            .pending_ipis
+            .store(0, core::sync::atomic::Ordering::Relaxed);
+        let key = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(70),
+                KeyEntry::new_thread(waits.target, Rights::all(), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|failure| panic!("install: {:?}", failure.error.code()));
+        let retire = |nucleus: &mut Nucleus<ArchObjectsImpl>| {
+            cap_invoke(
+                nucleus,
+                key,
+                libobject::thread::ThreadOp::Retire as u64,
+                &[0; 6],
+            )
+        };
+        // The target runs on core 1.
+        let stopped = nucleus.thread(waits.target).unwrap().context;
+        {
+            let thread = nucleus.thread_mut(waits.target).unwrap();
+            thread.context = ExecutionContext::Running;
+            thread.running_on = Some(1);
+        }
+        // The call waits: the Thread is marked, and core 1 is told once.
+        assert!(matches!(retire(nucleus), Ok(InvokeOutcome::Retry)));
+        assert!(nucleus.thread(waits.target).unwrap().retiring);
+        let sent = core_one
+            .pending_ipis
+            .swap(0, core::sync::atomic::Ordering::Relaxed);
+        assert_ne!(sent & core_record::IPI_STOP, 0);
+        assert!(matches!(retire(nucleus), Ok(InvokeOutcome::Retry)));
+        assert_eq!(
+            core_one
+                .pending_ipis
+                .load(core::sync::atomic::Ordering::Relaxed),
+            0,
+            "the Stop is sent once"
+        );
+        // Core 1 stopped it: the next attempt retires it.
+        {
+            let thread = nucleus.thread_mut(waits.target).unwrap();
+            thread.context = stopped;
+            thread.running_on = None;
+        }
+        assert!(matches!(retire(nucleus), Ok(InvokeOutcome::Complete(_))));
+        assert!(nucleus.thread(waits.target).is_none());
+    });
+}
+
+#[test_case]
+fn a_retiring_current_thread_stops_even_with_nothing_else_to_run() {
+    with_resume(|nucleus, waits| {
+        while nucleus.local_activations().pop().is_some() {}
+        let preempt = |nucleus: &mut Nucleus<ArchObjectsImpl>| {
+            // SAFETY: as in `reject_unchanged`.
+            let access = unsafe { Access::new() };
+            nucleus.preempt_and_select(&access, SOURCE_SAVED)
+        };
+        // Alone and not retiring, it runs on.
+        assert!(matches!(preempt(nucleus), Ok(None)));
+        nucleus.thread_mut(waits.source).unwrap().retiring = true;
+        // Retiring, it stops, is not queued again, and the core idles.
+        assert!(matches!(preempt(nucleus), Ok(Some(Switch::Idle))));
+        let source = nucleus.thread(waits.source).unwrap();
+        assert!(matches!(source.context, ExecutionContext::Preempted { .. }));
+        assert_eq!(source.running_on, None);
+        assert!(nucleus.local_activations().is_empty());
+    });
+}
+
+#[test_case]
+fn a_core_holds_and_runs_the_address_space_it_enters_until_it_lets_go() {
+    use crate::objects::arch_objects::CoreUse;
+    with_resume(|nucleus, waits| {
+        let source_as = nucleus.thread(waits.source).unwrap().address_space;
+        let core_use =
+            |nucleus: &Nucleus<ArchObjectsImpl>, id| nucleus.address_space(id).unwrap().core_use();
+        nucleus.enter_address_space(waits.target_as);
+        assert_eq!(core_use(nucleus, waits.target_as).installed, 1);
+        assert_eq!(core_use(nucleus, waits.target_as).running, 1);
+        // Entering another moves both bits there.
+        nucleus.enter_address_space(source_as);
+        assert_eq!(core_use(nucleus, waits.target_as), CoreUse::NONE);
+        assert_eq!(core_use(nucleus, source_as).installed, 1);
+        // Its Thread stops: the core still holds it, running nothing of it.
+        nucleus.stop_running_address_space();
+        assert_eq!(core_use(nucleus, source_as).installed, 1);
+        assert_eq!(core_use(nucleus, source_as).running, 0);
+        // A core running a Thread keeps it; an idle one lets go.
+        assert!(!nucleus.let_go_of_address_space());
+        let current = nucleus.this_core.current_thread.take();
+        assert!(nucleus.let_go_of_address_space());
+        nucleus.this_core.current_thread = current;
+        assert_eq!(core_use(nucleus, source_as), CoreUse::NONE);
+        assert_eq!(nucleus.this_core.installed_address_space, None);
+    });
+}
+
+#[test_case]
+fn an_address_space_held_elsewhere_waits_and_one_running_elsewhere_is_refused() {
+    use crate::objects::{arch_objects::CoreUse, core_record};
+    with_resume(|nucleus, waits| {
+        let core_one = core_record::of(1).expect("the test kernels have a core 1 record");
+        core_one
+            .pending_ipis
+            .store(0, core::sync::atomic::Ordering::Relaxed);
+        let set = |nucleus: &mut Nucleus<ArchObjectsImpl>, core_use: CoreUse| {
+            *nucleus
+                .address_space_mut(waits.target_as)
+                .unwrap()
+                .core_use_mut() = core_use;
+        };
+        // One of its Threads runs on core 1: refused.
+        set(
+            nucleus,
+            CoreUse {
+                installed: 1 << 1,
+                running: 1 << 1,
+                stopping: false,
+            },
+        );
+        assert!(matches!(
+            nucleus.quiesce_address_space(waits.target_as),
+            Err(CapError::InvalidOperation)
+        ));
+        // Core 1 only holds it: told once, and the caller waits.
+        set(
+            nucleus,
+            CoreUse {
+                installed: 1 << 1,
+                running: 0,
+                stopping: false,
+            },
+        );
+        assert!(matches!(
+            nucleus.quiesce_address_space(waits.target_as),
+            Ok(false)
+        ));
+        let sent = core_one
+            .pending_ipis
+            .swap(0, core::sync::atomic::Ordering::Relaxed);
+        assert_ne!(sent & core_record::IPI_STOP, 0);
+        assert!(matches!(
+            nucleus.quiesce_address_space(waits.target_as),
+            Ok(false)
+        ));
+        assert_eq!(
+            core_one
+                .pending_ipis
+                .load(core::sync::atomic::Ordering::Relaxed),
+            0,
+            "the Stop is sent once"
+        );
+        // Core 1 let go; this core's own use does not count.
+        set(
+            nucleus,
+            CoreUse {
+                installed: 1,
+                running: 1,
+                stopping: true,
+            },
+        );
+        assert!(matches!(
+            nucleus.quiesce_address_space(waits.target_as),
+            Ok(true)
+        ));
+        assert!(
+            !nucleus
+                .address_space(waits.target_as)
+                .unwrap()
+                .core_use()
+                .stopping
+        );
+        set(nucleus, CoreUse::NONE);
+    });
+}
+
 fn arm_timer_call(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     dispatching: &Dispatching,

@@ -1,6 +1,7 @@
 use {
     crate::objects::{
-        NucleusObject, carved::CarvedObject, key_table::KeyTableBinding, stack_pool::StackPools,
+        NucleusObject, arch_objects::CoreUse, carved::CarvedObject, key_table::KeyTableBinding,
+        stack_pool::StackPools,
     },
     libobject::{CapError, ObjectType},
 };
@@ -47,6 +48,8 @@ pub struct AArch64AddressSpace {
     stack_pools: StackPools,
     /// Whether code here may execute FP/SIMD instructions; fixed at creation.
     fp_simd: bool,
+    /// Which cores hold and run it.
+    core_use: CoreUse,
 }
 
 impl AArch64AddressSpace {
@@ -61,6 +64,7 @@ impl AArch64AddressSpace {
             unhandled_faults: 0,
             stack_pools: StackPools::new(),
             fp_simd,
+            core_use: CoreUse::NONE,
         }
     }
 
@@ -133,5 +137,13 @@ impl crate::objects::arch_objects::AddressSpaceObject for AArch64AddressSpace {
 
     fn fp_simd(&self) -> bool {
         self.fp_simd
+    }
+
+    fn core_use(&self) -> CoreUse {
+        self.core_use
+    }
+
+    fn core_use_mut(&mut self) -> &mut CoreUse {
+        &mut self.core_use
     }
 }

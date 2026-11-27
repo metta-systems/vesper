@@ -29,7 +29,6 @@ The scheduling part of SMP4 in [`smp-implementation-plan.md`](smp-implementation
 
 Per-core roots came in stages (done: see [`scheduling-completed.md`](scheduling-completed.md#phase-11--multicore)); every managed Thread is still the boot core's until the cross-core move below.
 
-- [ ] Synchronous retirement of a Thread running on another core and of an AddressSpace current on other cores (SMP C8(a)): `IPI_STOP` to those cores, the kernel lock released until every core acknowledged, an "active on" core mask in the AddressSpace before its ASID is reused. Tests in `smp-test`: retirement of a Thread running on another core, and of an AddressSpace current on two cores.
 - [ ] The cross-core Thread move: the Thread's bound Time must be empty, and the Thread is rebound to a Time of the destination core in the same call. `Scheduler.MoveThread` also moves between Schedulers of different cores, taking the destination Time key, with `WRITE` on both Schedulers, the Thread and that Time. A moved Thread that waits with a timeout has that timeout re-tagged to the destination core: the pending record names the core whose timer counts it, set once when the timeout is set, and the old core would fire it late or never.
 - [ ] Tests: a cross-core move, including one of a Thread waiting with a timeout that then fires on the destination core; the existing preempt, sync and ppc suites run on core 1.
 

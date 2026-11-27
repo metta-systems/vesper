@@ -211,6 +211,28 @@ impl ArchObjects for AArch64 {
                 options(nostack),
             );
         }
+        // With a translation in TTBR0, walks through it are on again: a core
+        // turns them off before its first Thread and when it lets go of an
+        // `AddressSpace` at a Stop.
+        {
+            use aarch64_cpu::{
+                asm::barrier,
+                registers::{Read, TCR_EL1, Write},
+            };
+            if TCR_EL1.is_set(TCR_EL1::EPD0) {
+                TCR_EL1.modify(TCR_EL1::EPD0::EnableTTBR0Walks);
+                barrier::isb(barrier::SY);
+            }
+        }
+    }
+
+    fn disable_translation_walks() {
+        use aarch64_cpu::{
+            asm::barrier,
+            registers::{Read, TCR_EL1, Write},
+        };
+        TCR_EL1.modify(TCR_EL1::EPD0::DisableTTBR0Walks);
+        barrier::isb(barrier::SY);
     }
 
     fn install_table_entry(

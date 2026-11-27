@@ -267,12 +267,20 @@ impl<A: ArchObjects> Nucleus<A> {
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
+        let retiring = current_thread.retiring;
         // Charge the interval whether or not the Thread is switched away from,
         // so a Thread running alone is metered too.
         self.charge_current(current);
         // A tick consumes a preemption request: the dispatcher it asked for
         // is at the front of the queue now.
         self.this_core.preempt_requested = false;
+        // Another core is retiring the Thread (its Stop IPI brought this core
+        // here): it stops now, and its dispatch ends as an exit would.
+        if retiring
+            && let Some(dispatched) = self.this_core.dispatched.filter(|d| d.thread == current)
+        {
+            self.request_activation(dispatched.scheduler, activation_reason::EXITED, 0);
+        }
         // A dispatched Thread that reached its limit or ran out of budget
         // activates the dispatcher.
         if let Some(dispatched) = self.this_core.dispatched.filter(|d| d.thread == current) {
@@ -311,7 +319,8 @@ impl<A: ArchObjects> Nucleus<A> {
         }
         // An exhausted Thread must stop even when nothing is queued: the
         // nucleus idles.
-        let can_switch = !self.local_activations().is_empty() || self.thread_exhausted(current);
+        let can_switch =
+            retiring || !self.local_activations().is_empty() || self.thread_exhausted(current);
         if !can_switch {
             return Ok(None);
         }
@@ -322,8 +331,11 @@ impl<A: ArchObjects> Nucleus<A> {
             None,
         )?;
         // switch_away dequeued the front, and a running Thread is never
-        // queued. An exhausted Thread waits off the queue for budget.
-        self.requeue_preempted(current);
+        // queued. An exhausted Thread waits off the queue for budget; a
+        // retiring one is never queued again.
+        if !retiring {
+            self.requeue_preempted(current);
+        }
         Ok(Some(resumed))
     }
 
@@ -466,8 +478,11 @@ impl<A: ArchObjects> Nucleus<A> {
                     self.this_core.fp_totals.fp_thread_switches.wrapping_add(1);
             }
         }
+        self.enter_address_space(translation.address_space);
+        let core = self.current_cpu();
         let entering = self.thread_mut(next).expect("validated target Thread");
         entering.context = ExecutionContext::Running;
+        entering.running_on = Some(core);
         if entering_fp {
             // The whole register file becomes this frame's, as saved when it
             // stopped (zero for a Thread that never ran in an FP frame).
@@ -513,7 +528,9 @@ impl<A: ArchObjects> Nucleus<A> {
         ) && self
             .thread(current)
             .is_some_and(|thread| self.address_space_fp(thread.address_space));
+        self.stop_running_address_space();
         let leaving = self.thread_mut(current).expect("validated current Thread");
+        leaving.running_on = None;
         leaving.last_stop = stop as u32;
         leaving.last_run_ticks = elapsed;
         leaving.context = *parked;

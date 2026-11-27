@@ -124,7 +124,9 @@ use nucleus::core_record::send_ipis;
 /// Take the IPI kinds sent to this core, after claiming its IPI line: a halt
 /// parks the core here; whether a reschedule was asked for. Stop's work
 /// comes with synchronous retirement.
-fn take_ipis() -> bool {
+/// Take this core's pending IPI kinds: Halt parks here, the others are
+/// returned for the interrupt's kernel entry to act on.
+fn take_ipis() -> u32 {
     let record = nucleus::core_record::current();
     record.ipis_taken.fetch_add(1, Ordering::Relaxed);
     let kinds = record.pending_ipis.swap(0, Ordering::Acquire);
@@ -136,7 +138,7 @@ fn take_ipis() -> bool {
         let pinging = PINGING_CORE.load(Ordering::Relaxed);
         send_ipis(1 << pinging, nucleus::core_record::IPI_PONG);
     }
-    kinds & nucleus::core_record::IPI_RESCHEDULE != 0
+    kinds
 }
 
 /// The kernel-lock holder id of the core that panicked first, or 0. The other cores
@@ -359,10 +361,8 @@ extern "C" fn secondary_main(frame: *mut ExceptionContext) -> ! {
         nucleus::platform::unmask(line);
     }
     let resumed = idle_until_runnable();
+    // Installing the Thread's translation turns TTBR0 walks on.
     install(resumed.translation);
-    // The Thread's own translation is in `TTBR0_EL1` now.
-    TCR_EL1.modify(TCR_EL1::EPD0::EnableTTBR0Walks);
-    barrier::isb(barrier::SY);
     // SAFETY: `frame` is the stub's reservation at the top of this core's trap stack,
     // below which this function runs; the whole frame is written here.
     unsafe {
@@ -880,6 +880,12 @@ fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
             semi::println!("{}", "✅ Thread::Return()".on_cyan());
             return;
         }
+        Ok(nucleus::api::InvokeOutcome::Retry) => {
+            // Back to the `svc` with every register as the caller left it:
+            // the call runs again once this core has released the lock.
+            frame.elr_el1 = saved.elr_el1.wrapping_sub(4);
+            return;
+        }
         Err(e) => e.code(),
     };
     // Return values
@@ -917,6 +923,7 @@ fn handle_irq(frame: &mut ExceptionContext) {
     let ipi_line = nucleus::platform::ipi_line();
     let mut ticked = false;
     let mut reschedule = false;
+    let mut stop = false;
     // Interrupt handling is timed, line by line and in all: the interrupted
     // Thread is not charged for it, and each line's record counts it.
     let entered = nucleus::timer::counter();
@@ -934,7 +941,9 @@ fn handle_irq(frame: &mut ExceptionContext) {
             ticked = true;
         } else if Some(line) == ipi_line {
             // The claim acknowledged it; the kinds are in this core's record.
-            reschedule |= take_ipis();
+            let kinds = take_ipis();
+            reschedule |= kinds & nucleus::core_record::IPI_RESCHEDULE != 0;
+            stop |= kinds & nucleus::core_record::IPI_STOP != 0;
         } else {
             nucleus::platform::mask(line);
             if !deliver_irq(line) {
@@ -968,7 +977,15 @@ fn handle_irq(frame: &mut ExceptionContext) {
             nucleus.settle_dispatched();
             nucleus.this_core.preempt_requested = true;
         }
-        if nested || (!ticked && !nucleus.this_core.preempt_requested) {
+        // At a Stop an idle core lets go of the AddressSpace it still holds,
+        // with TTBR0 walks off before the lock is released: another core is
+        // about to release its ASID or root (SMP C8.1(a), C8.2(a)).
+        if stop && nucleus.let_go_of_address_space() {
+            ArchObjectsImpl::disable_translation_walks();
+        }
+        // A Stop leaves the running Thread only if another core is retiring
+        // it; an idle core runs nothing to stop.
+        if nested || (!ticked && !stop && !nucleus.this_core.preempt_requested) {
             return Ok(None);
         }
         // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other

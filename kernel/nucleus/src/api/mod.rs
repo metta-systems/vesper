@@ -68,6 +68,11 @@ pub enum InvokeOutcome {
     /// `Thread.Return` hit a protocol fault (nothing popped). Entry delivers
     /// it to the fault handler as a fault at the Return's `svc`.
     Fault(libobject::fault::FaultKind),
+    /// The call waits for another core to act on a Stop IPI (SMP C8(a)):
+    /// entry returns to the caller at its `svc` again, unchanged, so the call
+    /// runs again with the kernel lock released between the attempts and
+    /// this core taking interrupts. Nothing is committed and nothing traced.
+    Retry,
 }
 
 // ═════════════════════════════
@@ -291,8 +296,7 @@ fn arch_invoke<A: ArchObjects>(
         }
 
         ArchType::PageTable => {
-            crate::api::arch::page_table::invoke::<A>(access, caller, key, op, args)
-                .map(InvokeOutcome::Complete)
+            crate::api::arch::page_table::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
         ArchType::AddressSpace => {

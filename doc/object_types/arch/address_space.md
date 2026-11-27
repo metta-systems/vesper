@@ -40,10 +40,12 @@ The supported AArch64 configuration is a four-level, 48-bit translation with a 4
 
 Destroys an AddressSpace other than the caller's. Its root must be unmapped first ([`PageTable.Unmap`](page_table.md#unmap) on the root). Retire flushes every TLB entry tagged with its ASID, returns the ASID to its pool and retires the AddressSpace: every capability to it then fails with `ObjectRetired`, and its memory is not reused. Threads still in it fail on their next invocation; retire them with [`Thread.Retire`](../core/thread.md#retire).
 
+On several cores, Retire returns once no other core still holds the AddressSpace's translation: a core left idle after running one of its Threads is interrupted and lets go of it first. While one of its Threads runs on another core Retire is refused; stop or retire those Threads first.
+
 | Error | Cause |
 |---|---|
 | `InsufficientRights` | The capability lacks `Retire` |
-| `InvalidOperation` | It is the caller's own AddressSpace, or its root is still installed |
+| `InvalidOperation` | It is the caller's own AddressSpace, its root is still installed, or one of its Threads runs on another core |
 | `InconsistentKey` | The AddressSpace was already retired (`ObjectRetired`) |
 
 ### Bind

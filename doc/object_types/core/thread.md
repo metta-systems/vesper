@@ -62,6 +62,8 @@ Tears down a named Thread: cancels its pending waits, cancels any activation it 
 
 A Thread may retire itself with its own capability. That call never returns: the nucleus first selects the next Thread, and only then tears the caller down, and if nothing else can run the kernel idles until something does. A Thread run by a [dispatcher](scheduler.md#dispatch) activates it with the `EXITED` reason, and the Thread's record ends `Dying`. Mid-call, the whole Thread goes, callee included.
 
+A Thread running on another core is stopped there first: the call returns once that core has taken it off the CPU, and nothing dispatches it meanwhile. Its dispatcher's `Dispatch` returns with `EXITED`. The caller keeps its core while it waits and takes interrupts. A Thread that runs with interrupts masked (a kernel test fixture) stops only when it next enters the kernel.
+
 | Error | Cause |
 |---|---|
 | `InsufficientRights` | The capability lacks `Retire` |

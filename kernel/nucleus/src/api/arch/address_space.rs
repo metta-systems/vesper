@@ -93,7 +93,7 @@ pub fn invoke<A: ArchObjects>(
 ) -> Result<InvokeOutcome, CapError> {
     match op {
         0 => activate::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Activate),
-        1 => retire::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Complete),
+        1 => retire::<A>(access, caller, as_key, args, nucleus),
         2 => bind::<A>(access, caller, as_key, args).map(InvokeOutcome::Complete),
         3 => create_invocation::<A>(access, caller, as_key, args, x8).map(InvokeOutcome::Complete),
         4 => create_stack_pool::<A>(access, caller, as_key, args, nucleus)
@@ -379,7 +379,7 @@ fn activate<A: ArchObjects>(
     caller: CallerTable,
     as_key: RawKey,
     args: &[u64; 6],
-    nucleus: &Nucleus<A>,
+    nucleus: &mut Nucleus<A>,
 ) -> Result<PreparedTranslationContext, CapError> {
     if args.iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
@@ -412,7 +412,9 @@ fn activate<A: ArchObjects>(
     // Hardware transition: idempotent installation of the same context.
     // Implementation status: the entry performs that transition after this
     // prepared value has left the locked invocation; no guard escapes here.
-    prepare_translation_context::<A>(access, as_id)
+    let prepared = prepare_translation_context::<A>(access, as_id)?;
+    nucleus.enter_address_space(as_id);
+    Ok(prepared)
 }
 
 /// `Retire` `1`: tear down the invoked `AddressSpace`.
@@ -429,7 +431,7 @@ fn retire<A: ArchObjects>(
     as_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
-) -> Result<(u64, u64), CapError> {
+) -> Result<InvokeOutcome, CapError> {
     if args.iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
@@ -447,6 +449,22 @@ fn retire<A: ArchObjects>(
     // A still-installed translation root means the address space has live
     // translation structures: they are torn down first through the
     // empty-table-gated `PageTable.Unmap` path.
+    if access
+        .resolve_object::<A::AddressSpace>(as_id)
+        .map_err(|error| error.for_key(as_key, 0))?
+        .translation_root()
+        .is_some()
+    {
+        return Err(CapError::InvalidOperation);
+    }
+
+    // No other core may still hold it before its ASID goes back to the pool
+    // (SMP C8.1(a)): refused while one of its Threads runs elsewhere; the
+    // call runs again until idle cores holding it have let go of it.
+    if !nucleus.quiesce_address_space(as_id)? {
+        return Ok(InvokeOutcome::Retry);
+    }
+
     let bound_asid = {
         let mut address_space = access
             .resolve_object::<A::AddressSpace>(as_id)
@@ -480,5 +498,5 @@ fn retire<A: ArchObjects>(
     unsafe { Carved::<A::AddressSpace>::retire(as_id) }
         .map_err(|error| error.for_key(as_key, 0))?;
     semi::println!("✅ AddressSpace::Retire()");
-    Ok((0, 0))
+    Ok(InvokeOutcome::Complete((0, 0)))
 }
