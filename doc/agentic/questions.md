@@ -160,10 +160,10 @@ Room's config file is never loaded or saved
 
 Compositor:
 
-- Clients: nothing receives the routed events. They only go to the trace. Real clients and per-client channels are C3 and C4. The three windows are hardcoded.
-- Pointer events: nothing sends events to clients yet (the C4 stage).
+- Clients: nothing receives the routed events. They only go to the trace. Real clients and per-client channels are P-UI-COMPOSITOR-3 and P-UI-COMPOSITOR-4. The three windows are hardcoded.
+- Pointer events: nothing sends events to clients yet (the P-UI-COMPOSITOR-4 stage).
 - Mouse: the mouse path is still untested, in QEMU and on hardware.
-- Cursor motion: I haven't injected pointer motion in QEMU to confirm it moves. That is the stated C2 exit check.
+- Cursor motion: I haven't injected pointer motion in QEMU to confirm it moves. That is the stated P-UI-COMPOSITOR-7 exit check.
 - Real board: next step is `just _boot-compositor-test`, which includes the framebuffer, and a production image build on the Pi.
 
 ---

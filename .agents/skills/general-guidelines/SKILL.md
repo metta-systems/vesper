@@ -50,6 +50,7 @@ Every numbered section and item in an area's documents carries an ID made of the
 
 - Each kind is numbered on its own within its area: `AUDIO-5`, `Q-AUDIO-5`, `P-AUDIO-5` and `N-AUDIO-5` are four different items.
 - A number is never reused. A closed item keeps its ID in the area's `-completed` file, so the next item of that kind takes the next number after the highest one ever given.
+- An item is either completed or open, never both. When only part of an item is done, the done part closes under the item's ID in the `-completed` file, and the remaining part becomes a new item with the next number of its kind.
 - `Q-` numbers are the exception: they are transient. A new question takes the number after the highest `Q-<AREA>-<N>` in the decisions file now; a number used by an answered question may come back.
 - Always write the full ID, `AUDIO-5`; never a short form such as `A5`, `5` or `Q5`, even next to the area's own heading.
 - An answered question becomes a new design section with the next `<AREA>-<N>`, and the question leaves the decisions file, usually in the same change. The new section does not refer to the old `Q-` ID; version control links the two. In the same change, every reference to the answered `Q-` ID, in documents and in code, is replaced by a reference to the design section that answers it: no `Q-` ID outlives its question.

@@ -1,11 +1,10 @@
 # UI compositor design
 
-Status: the compositor owns the screen and the input and serves windows; the
-implementation plan says what is still open. Q1 to Q12 are answered and recorded here;
-`ui-compositor-completed.md` lists them, and no compositor decision is open.
-Implementation order is in `ui-compositor-implementation-plan.md`.
-
-## Scope
+The compositor owns the screen and the input and serves windows. The numbered
+sections are the maintainer's decisions; the sections after them describe the
+mechanism. No compositor decision is open. Open tasks are in
+`ui-compositor-implementation-plan.md`, finished ones in
+`ui-compositor-completed.md`; several outputs are in `multi-display-design.md`.
 
 Only one component can hold the framebuffer: `fb_v1.frames lends (key_table)`
 hands its Frames out once. The compositor holds it. `userspace/libs/framebuffer`
@@ -20,6 +19,65 @@ should receive it.
 
 The input side is shared with `input-design.md`: the event record and channel
 layout come from there, and the pointer and focus policy lives in the compositor.
+
+## UI-COMPOSITOR-1: the compositor owns the surface Frames
+
+2026-10-19. The compositor carves the surface Frames and installs them in the
+client's lent table; the client just draws.
+
+## UI-COMPOSITOR-2: surfaces are 2 MiB Frames
+
+2026-10-18, rule 2026-10-19. Granularity by size: a surface is its bytes
+rounded up to a multiple of 2 MiB, made of 2 MiB Frames.
+
+## UI-COMPOSITOR-3: one event io-channel per client
+
+2026-10-18. One event io-channel per client, with the window id in each record.
+
+## UI-COMPOSITOR-4: the compositor routes input itself
+
+2026-10-18. The compositor is the input router; a separate `inputd`-style
+router is future work.
+
+## UI-COMPOSITOR-5: client-side decorations
+
+2026-10-18. Decorations are drawn by the client; the compositor runs the
+Alt-drag grab.
+
+## UI-COMPOSITOR-6: premultiplied alpha, hit-testing by rectangles
+
+2026-10-18. Surfaces are ARGB with premultiplied blending from version 1;
+hit-testing uses window rectangles.
+
+## UI-COMPOSITOR-7: a frame timer while damage exists
+
+2026-10-18, rule 2026-10-19. A fixed 33 ms timer that runs only while damage
+exists. The answer asks for an adaptive target frame rate; the adaptation rule
+is deferred.
+
+## UI-COMPOSITOR-8: two `uses` forms
+
+2026-10-18. Kickstart wires imports by `uses ... via device ...` and
+`uses ... via component ...`.
+
+## UI-COMPOSITOR-9: the component's home
+
+2026-10-18. The compositor lives in `userspace/gui/compositor`, a program like
+the shell.
+
+## UI-COMPOSITOR-10: input decisions first
+
+2026-10-18. The input decisions the routing needed (input D1 to D4, D13) were
+answered before the routing was built.
+
+## UI-COMPOSITOR-11: a full client channel drops the newest delivery
+
+2026-10-18. A client channel's overflow drops the newest delivery, emits
+`Dropped` and resyncs from state.
+
+## UI-COMPOSITOR-12: a new window gets the focus
+
+2026-10-27. A new window gets the focus; a click still moves it.
 
 ## Prior art
 
@@ -60,8 +118,8 @@ flowchart LR
     comp -- "fb_v1 (WC map)" --> fb["framebuffer"]
 ```
 
-- **Component `compositor`** (`userspace/gui/compositor`, a program like the shell,
-  Q9). Imports `fb_v1` and the input channel. Exports a
+- **Component `compositor`** (`userspace/gui/compositor`, UI-COMPOSITOR-9).
+  Imports `fb_v1` and the input channel. Exports a
   `local` interface `compositor_v1.if`. The framebuffer mapping code currently in
   `display.rs` (`map_framebuffer`) moves into a shared library that the compositor
   uses. Interfaces are prototypes and are edited in place.
@@ -71,30 +129,32 @@ flowchart LR
   commit needs no queue of its own. Compositor state is protected by one lock,
   because more than one compositor Thread may run.
 - **Server to client: io-channel in receive mode.** `compositor_v1` declares
-  `channel 1;`, so Kickstart gives each client one channel (Q3): a control page,
-  a data page and an EventCount the compositor advances, as `input_v1` does for
-  its client. The client posts empty IO_Recs, and the compositor fills one with
-  the records a routed input frame sends to the client's windows and advances the
-  client's EventCount. Records are the `input-event` record from
-  `input-design.md`, with coordinates translated to window-local space and the
-  window id in `subject`; each window's records end with a `Sync`. Window-level
-  notifications (`Focus`, `Enter`, `Leave`, `ResizeOffer`, `CloseRequest`) are
-  kinds of the same record. Overflow (Q11): a delivery that finds no buffer, or
-  one too small, is dropped whole, the next one starts with `Dropped` (`subject`
-  0), and the client resyncs with `compositor_v1.snapshot`, which writes the
-  records that rebuild its focus, held keys and pointer. Deliveries happen under
-  the compositor's turn, so each channel has one producer at a time: the input
+  `channel 1;`, so Kickstart gives each client one channel (UI-COMPOSITOR-3): a
+  control page, a data page and an EventCount the compositor advances, as
+  `input_v1` does for its client. The client posts empty IO_Recs, and the
+  compositor fills one with the records a routed input frame sends to the
+  client's windows and advances the client's EventCount. Records are the
+  `input-event` record from `input-design.md`, with coordinates translated to
+  window-local space and the window id in `subject`; each window's records end
+  with a `Sync`. Window-level notifications (`Focus`, `Enter`, `Leave`,
+  `ResizeOffer`, `CloseRequest`) are kinds of the same record. Overflow
+  (UI-COMPOSITOR-11): a delivery that finds no buffer, or one too small, is
+  dropped whole, the next one starts with `Dropped` (`subject` 0), and the
+  client resyncs with `compositor_v1.snapshot`, which writes the records that
+  rebuild its focus, held keys and pointer. Deliveries happen under the
+  compositor's turn, so each channel has one producer at a time: the input
   Thread after each frame, and `create_window` for the focus a new window takes.
   Both ends live in `userspace/libs/compositor-core` (`events`).
 - **Surfaces.** Pixels are 32-bit, in the framebuffer's native order, which
-  `fb_v1.pixel_order` reports. Surfaces are ARGB with premultiplied alpha, blended by the compositor. Surface pixels contain no
+  `fb_v1.pixel_order` reports. Surfaces are ARGB with premultiplied alpha,
+  blended by the compositor (UI-COMPOSITOR-6). Surface pixels contain no
   pointers, so the compositor does not need the same virtual address in every
-  AddressSpace. A surface is its bytes rounded up to a multiple of 2 MiB, made of 2 MiB
-  Frames. The compositor carves them and installs a copy of each in the table the
-  client lends to `create_window`; the client maps them where it likes in its
-  surface window (`SURFACE_WINDOW_VA`), which Kickstart provisions in importers of
-  `compositor_v1`, as it does the framebuffer window (`FB_WINDOW_VA`) for
-  importers of `fb_v1`.
+  AddressSpace. A surface is made of 2 MiB Frames (UI-COMPOSITOR-2). The
+  compositor carves them and installs a copy of each in the table the client
+  lends to `create_window` (UI-COMPOSITOR-1); the client maps them where it
+  likes in its surface window (`SURFACE_WINDOW_VA`), which Kickstart provisions
+  in importers of `compositor_v1`, as it does the framebuffer window
+  (`FB_WINDOW_VA`) for importers of `fb_v1`.
 - **Compositing.** Software, on the single core, with fixed-capacity arrays and
   no allocation on the frame path. The back buffer is cacheable RAM. Damage is a
   bounded set of rectangles, merged into their bounding box when full. One frame:
@@ -103,14 +163,13 @@ flowchart LR
   rectangles to the write-combining framebuffer. Layers in version 1 are
   background, normal windows, overlay (panel) and cursor. The compositor never reads
   the framebuffer back: it is write-combining, and hit-testing uses rectangles.
-- **Redraw trigger (Q7).** A fixed 33 ms timer (`FRAME_NS` in
-  `userspace/gui/compositor/src/frame.rs`) that runs only while damage exists. The
-  answer asks for an adaptive target frame rate; the adaptation rule is deferred.
-- **Input routing.** The compositor is the router. It clamps the pointer to the
-  display, keeps button and modifier state through the `input-event` state
-  tracker, and gives focus to a new window (Q12) and on click, raising the
-  window. A press makes an implicit grab: motion and release go to that window
-  until all buttons are up.
+- **Redraw trigger (UI-COMPOSITOR-7).** The timer is `FRAME_NS` in
+  `userspace/gui/compositor/src/frame.rs`.
+- **Input routing (UI-COMPOSITOR-4).** The compositor is the router. It clamps
+  the pointer to the display, keeps button and modifier state through the
+  `input-event` state tracker, and gives focus to a new window
+  (UI-COMPOSITOR-12) and on click, raising the window. A press makes an
+  implicit grab: motion and release go to that window until all buttons are up.
   Hover produces enter and leave events. Keyboard events go to the focused window
   as physical codes; modifier keys are ordinary `Key` records for the physical press and
   release, and the client tracks which modifiers are active. Keymaps and key repeat stay in the
@@ -120,8 +179,8 @@ flowchart LR
   (`userspace/wood/vesper`) is the first client that reads the channel: it maps
   keyboard usages to Doom keys and releases held keys on losing the focus or on
   `Dropped`.
-- **Decorations.** A client-side library. Version 1 has none; Alt-drag moves
-  windows.
+- **Decorations (UI-COMPOSITOR-5).** A client-side library. Version 1 has none;
+  Alt-drag moves windows.
 - **Shell.** `draw` creates a window. The lava thread draws into the surface and
   commits each frame. The shell's direct mapping of the framebuffer is removed.
 
@@ -130,13 +189,14 @@ flowchart LR
 - `fb_v1.frames` hands out the framebuffer once. The compositor is the one client
   that receives it, so the shell has no direct path.
 - Driver and program tables are 256 slots. A 1024x768 surface built only of 4 KiB
-  Frames needs 768 slots, so surfaces are 2 MiB Frames (Q2).
-- Kickstart wires imports by one of two `uses` forms (Q8): `uses mailbox_v1 via
-  device firmware, mboxes { property }` follows a device-tree link (`via device
-  compatible "..."` is the compatible-string form), and `uses fb_v1 via component fb`
-  names a manifest component, whose one loaded instance exporting the interface is the
-  exporter; none leaves the import not granted, and more than one is reported and not
-  granted. A program has no device-tree node, so `via component` is how it can export.
+  Frames needs 768 slots, so surfaces are 2 MiB Frames (UI-COMPOSITOR-2).
+- Kickstart wires imports by one of two `uses` forms (UI-COMPOSITOR-8):
+  `uses mailbox_v1 via device firmware, mboxes { property }` follows a
+  device-tree link (`via device compatible "..."` is the compatible-string
+  form), and `uses fb_v1 via component fb` names a manifest component, whose
+  one loaded instance exporting the interface is the exporter; none leaves the
+  import not granted, and more than one is reported and not granted. A program
+  has no device-tree node, so `via component` is how it can export.
 - The USB HID component publishes keyboard and mouse events on `input_v1`'s
   io-channel and serves `descriptor` and `snapshot` calls. The compositor can be
   tested with injected events first.
@@ -145,27 +205,28 @@ flowchart LR
 
 ## Hazards
 
-Facts that shaped the answers above.
+Facts that shaped the decisions above.
 
 - **Revocation can reach the compositor's reads.** If a client owned surface memory
   the compositor reads and its authority were withdrawn, the next compositor read
   would fault, and the expected policy is Thread termination
-  (`capabilities-contract.md`). The compositor owning the surface Frames (Q1) keeps a
-  hostile client from taking it down this way. Selective Revoke is not enabled.
+  (`capabilities-contract.md`). The compositor owning the surface Frames
+  (UI-COMPOSITOR-1) keeps a hostile client from taking it down this way.
+  Selective Revoke is not enabled.
 - **Table size.** A 1024x768 surface of 32-bit pixels is 3 MiB: 768 4 KiB Frames, or
   two 2 MiB Frames. Lent tables have 1024 slots in the shell and 256 in drivers, so
-  surfaces of 4 KiB Frames would exhaust them quickly (Q2).
+  surfaces of 4 KiB Frames would exhaust them quickly (UI-COMPOSITOR-2).
 - **Write-combining is a ceiling, not a guarantee.** Surfaces in RAM are cacheable, so
   damaged rectangles reach the framebuffer through its write-combining mapping.
 - **Reading client pixels.** Yutani hit-tests by reading each window's pixels, which
   couples input latency to client behaviour and needs client memory to stay readable.
-  Hit-testing uses window rectangles, also with alpha (Q6).
+  Hit-testing uses window rectangles, also with alpha (UI-COMPOSITOR-6).
 
 ## Future work
 
-- **Separate `inputd`-style router.** A multiplexer between input producers and the
-  compositor, as Redox `inputd` does, for when more than one consumer needs input. Not
-  planned for version 1 (Q4).
+- **N-UI-COMPOSITOR-1: a separate `inputd`-style router.** A multiplexer between
+  input producers and the compositor, as Redox `inputd` does, for when more than
+  one consumer needs input. Not planned for version 1 (UI-COMPOSITOR-4).
 
 ## Related
 

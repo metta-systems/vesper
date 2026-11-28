@@ -66,7 +66,7 @@ Pointer Events, SDL's controller database, Wayland key repeat.
    typematic repeat, gamepad standard mapping, gestures.
 
 Routing (focus, pointer, grabs) belongs to the compositor and is not part of this
-layer (D9, answered 2026-10-18 with the compositor's Q4: the compositor routes input
+layer (D9, answered 2026-10-18 with UI-COMPOSITOR-4: the compositor routes input
 itself; a separate `inputd`-style router is future work in
 [ui-compositor-design.md](ui-compositor-design.md)).
 

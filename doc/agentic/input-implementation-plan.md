@@ -17,8 +17,8 @@ need a producer only for hardware checks.
   monotonic physical counter in nanoseconds.
 - The io-channel (`libs/io-channel`) carries the records.
 - The compositor consumes the record ([ui-compositor-implementation-plan.md](ui-compositor-implementation-plan.md),
-  stages C1 and C5). C1 can start on injected events. C5 needs a
-  producer.
+  P-UI-COMPOSITOR-1 and P-UI-COMPOSITOR-5). P-UI-COMPOSITOR-1 can start on
+  injected events. P-UI-COMPOSITOR-5 needs a producer.
 
 ## INPUT2: overflow and replay
 

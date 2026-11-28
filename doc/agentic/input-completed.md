@@ -11,7 +11,7 @@ Open items stay in [input-implementation-plan.md](input-implementation-plan.md) 
   ids; `input-design.md`, sections Event record and Behaviour rules.
 - [x] D8 (2026-10-29): the console is an adapter presenting a serial-compatible byte
   channel; `input-design.md`, section Consumers.
-- [x] D9 (2026-10-18, with the compositor's Q4): the compositor routes input itself;
+- [x] D9 (2026-10-18, with UI-COMPOSITOR-4): the compositor routes input itself;
   `input-design.md`, section Layers.
 
 ## Design
