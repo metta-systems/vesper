@@ -1,6 +1,6 @@
 # FP/SIMD implementation plan
 
-Companion to [simd-design.md](simd-design.md), which holds the design and its
+Companion to [simd-design.md](simd-design.md), which holds the decisions and the
 correctness argument. No FP/SIMD decision is open; future work is at the end of this
 file.
 
@@ -8,51 +8,17 @@ This file holds only open work, in order. Each step is verified before the next 
 starts. Mark an item `- [x]` only after its verification has passed. A finished item
 leaves this file as a one-line marker in [simd-completed.md](simd-completed.md).
 
-Done: S0 (the contract), S1 (object layer), S2 (routines and switch hooks), S3 (build
-side) and S4 (end to end, with F11(c)); see
-[simd-completed.md](simd-completed.md).
+Done: P-SIMD-0 (the contract), P-SIMD-1 (object layer), P-SIMD-2 (routines and
+switch hooks), P-SIMD-3 (build side) and P-SIMD-4 (end to end, with SIMD-12);
+see [simd-completed.md](simd-completed.md).
 
-When an S1 to S4 step implements part of the design, it also rewrites the matching
-"Planned changes" note in `doc/object_types` into the page's normal description, and
-drops the "not implemented" status from the contract text it fulfils.
+## P-SIMD-5: measure, then the less eager variant
 
-## S1: object layer and model check
+The first implementation is plain eager save and restore. This starts only after
+its statistics have been measured on the board (SIMD-10).
 
-Done:
-- the FP data layout;
-- the counter storage and its publication;
-- the AddressSpace flag;
-- `FpUnit`;
-- the transition logic for Thread switches, Call and Return, with its counting;
-- the row tests and the bounded model check;
-- the fault frame, and the model check's fault, handler-Return and exit steps.
-
-See [simd-completed.md](simd-completed.md).
-
-- Verify: the nucleus tests, `just clippy`, and `just _test-fp-trap`, which still traps,
-  since no hardware FP is enabled yet.
-
-## S2: aarch64 routines and the switch hooks
-
-Done; see [simd-completed.md](simd-completed.md). F11 stays open until S4 measures the
-guard.
-
-## S3: build side
-
-Done; see [simd-completed.md](simd-completed.md).
-
-## S4: end-to-end
-
-Done: `fp-test` in QEMU and on the Pi 4, the F11 measurement and F11(c); see
-[simd-completed.md](simd-completed.md).
-
-## S5: measure, then the less eager variant
-
-S1 to S4 are plain eager save and restore. S5 starts only after their statistics have
-been measured on the board.
-
-- [ ] Measure the eager baseline with the FP statistics (from S1 and S2) on a
-  representative FP workload, and record the numbers. The workload is `midi-synth-fp`,
+- [ ] Measure the eager baseline with the FP statistics on a representative FP
+  workload, and record the numbers. The workload is `midi-synth-fp`,
   the MIDI synthesiser with its f64 engine (audio decision D9.7): `_test-midi-fp` in QEMU,
   midi-test with the `fp-mode` feature on the board. On its integer engine (the engine
   packet) the same component is an FP AddressSpace that does little or no FP, the case
@@ -62,13 +28,13 @@ been measured on the board.
   it, as the design's "Later" section describes.
   - The owed state is written into `Thread.fp` before the trap.
   - Choose N from the measurements.
-  - Update invariants I1 and I2, the model check and `fp-test`.
+  - Update SIMD-14 and SIMD-15, the model check and `fp-test`.
 - [ ] Owner tracking: remember the (Thread, call depth) frame whose state the hardware
   holds, so FP → integer-only → the same FP frame skips the save and the load. On one
   core this is a field next to `current_thread`, and per-core once there is multicore.
 - [ ] Measure again and compare with the baseline, using `first_use_traps`, `decays`
   and `owner_hits`.
-- [ ] Shrink the Thread, now that its size is accepted (F7(a)): for example, keep the
+- [ ] Shrink the Thread, now that its size is accepted (SIMD-8): for example, keep the
   FP part of call records in a side table used only by FP callers.
 
 ## Future work
@@ -76,10 +42,10 @@ been measured on the board.
 Ideas that might be pursued later. They need no decision now and constrain nothing
 current.
 
-- **A crate marker for hard-float builds** (formerly F5.1(b)). A crate declares itself
+- **N-SIMD-1: a crate marker for hard-float builds.** A crate declares itself
   FP, for example with `[package.metadata.vesper] fp_simd = true`, and the Justfile
   derives its `fp_components` list from `cargo metadata`. The crate then states its own
   nature, and the list cannot drift from it.
-- **Checking the scan against the crate marker.** Once the marker exists, image-build
-  compares the `fp-scan` result with each crate's marker instead of with the Justfile
-  list. A component with FP hits but no marker fails the build.
+- **N-SIMD-2: checking the scan against the crate marker.** Once N-SIMD-1 exists,
+  image-build compares the `fp-scan` result with each crate's marker instead of with
+  the Justfile list. A component with FP hits but no marker fails the build.

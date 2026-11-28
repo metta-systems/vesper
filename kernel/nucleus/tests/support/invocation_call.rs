@@ -2582,7 +2582,8 @@ fn preempted_fp_threads_keep_their_own_registers() {
 /// file after its fault is handled), and after every step the register file
 /// of an FP frame must hold exactly that. This checks integrity and
 /// confidentiality together: no frame ever sees another frame's values. The
-/// `FPEN` gate (I1) needs the hardware switching of S2 and is not modelled.
+/// `FPEN` gate (SIMD-14) needs the hardware switching of P-SIMD-2 and is not
+/// modelled.
 /// Blocking on a wait parks through the same save as a preemption and is not
 /// a separate step.
 #[test_case]

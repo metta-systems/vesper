@@ -96,7 +96,7 @@ options that were weighed are summarised after each answer.
     the default (Room's `vesper-synth` feature).
   - **D9.7. An f64 mode behind the `fp-mode` feature** (maintainer decision,
     2026-11-21, M1(c), M2(b), M3(b), M4(a)), as the representative FP workload for the
-    FP/SIMD plan's S5. Without `fp-mode` the synthesiser stays integer-only, as Doom
+    FP/SIMD plan's P-SIMD-5. Without `fp-mode` the synthesiser stays integer-only, as Doom
     was, and `clippy::float_arithmetic` stays denied with the `_synth-no-float` check.
     With it, the crate and the `midi-synth` component build hard-float, and a runtime
     switch (the `midi_synth_v1` mode command) picks the integer or the f64 engine; the
@@ -619,7 +619,7 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
 
 ### Constraints that shape the options
 
-- **Integer-only execution** ([FP/SIMD design](simd-design.md#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19)): components
+- **Integer-only execution** ([FP/SIMD design, SIMD-18](simd-design.md#simd-18-fpsimd-per-addressspace)): components
   build soft-float, `CPACR_EL1` traps FP/SIMD at EL0 and EL1, no FP state is saved. An
   `f32` operation compiles to a `compiler-builtins` call (tens of cycles each). FP/SIMD
   per AddressSpace is designed but not implemented ([simd-design.md](simd-design.md)).

@@ -1,5 +1,6 @@
 //! The f64 engine (`fp-mode`, audio decision D9.7): a voice in double
-//! precision, the representative FP/SIMD workload of the FP/SIMD plan's S5.
+//! precision, the representative FP/SIMD workload of the FP/SIMD plan's
+//! P-SIMD-5.
 //!
 //! It plays what the integer engine plays, on the same grid of blocks, with
 //! the same stages and slopes; only the arithmetic differs. The sample

@@ -1,67 +1,143 @@
 # FP/SIMD design
 
-Status: the selected rules are in [FP/SIMD per AddressSpace](#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19) below (S0), and the plain eager
-design (S1–S4) is implemented and checked in QEMU and on the Pi 4; see
+The numbered sections are the model (SIMD-18), the maintainer's decisions
+(SIMD-1 to SIMD-13) and the invariants the design keeps (SIMD-14 to SIMD-17);
+the sections between them describe the mechanism and argue its correctness. No FP/SIMD decision is open.
+Open tasks and future work are in
+[simd-implementation-plan.md](simd-implementation-plan.md), finished ones in
 [simd-completed.md](simd-completed.md).
 
-- Decided by the maintainer:
-  - F1(a), 2026-11-18: FP/SIMD is opt-in, chosen per component.
-  - F2(a), 2026-11-19: the right to execute FP comes from the AddressSpace and is fixed
-    at its creation.
-  - F3, 2026-11-19: the first implementation, S1–S4, is plain eager save and restore.
-    Later, in S5, a Thread that uses FP is tracked and restored eagerly only while it is
-    in an FP AddressSpace.
-  - F4(a2), 2026-11-19: a Call enters the target with the register file zeroed, and
-    Return restores `q8..q15`, FPCR and FPSR.
-  - F5.1(a), 2026-11-19: a Justfile list chooses which crates build hard-float. A
-    marker in the crate is future work.
-  - F5.2(a), 2026-11-19: the runtime FP flag is derived by scanning the ELF. The Rust
-    checker that does it also replaces the disassembly in `_audit-fp-simd`. A component
-    with FP hits that is not in `fp_components` fails the build.
-  - F6(b), 2026-11-18: a fault handler can inspect the faulting frame's FP state.
-  - F8(d), 2026-11-19: the handler gets the faulting state as a fault frame. Where the
-    frame lives is F12(b1).
-    - F8.1: the frame includes the general registers.
-    - F8.2: the handler may write the frame back.
-    - F8.3(iii): the kernel keeps only the general registers, and the FP state lives
-      only in the frame. See "The fault frame".
-  - F7(a), 2026-11-18: the Thread holds everything inline, at about 6 KiB, and shrinks
-    later in the measured optimisation pass.
-  - F9, 2026-11-19: S5 uses a decaying usage flag together with owner tracking, and the
-    first-use trap arrives with it. FP statistics are counted per Thread from S1 on.
-  - F10(b), 2026-11-19: the FP statistics are published in the scheduler-shared
-    records. They are scheduling information, which the root scheduler can read and act
-    on, so the FP policy can become adaptive later.
-  - F11(c), 2026-11-21: the kernel-entry FP guard is on in debug kernels and off in
-    release kernels, whose guarantee is an audit that fails when it scans nothing. See
-    "The model".
-  - F12(b1), 2026-11-21: the kernel never touches pool stacks. The fault frame goes
-    into the *fault area* of the handler's pool, a RAM Frame registered at
-    `CreateStackPool`, and the kernel writes it through its own mapping of that Frame.
-    See "The fault frame".
-- No FP/SIMD decision is open; future work is at the end of
-  [simd-implementation-plan.md](simd-implementation-plan.md).
-- The work order is in [simd-implementation-plan.md](simd-implementation-plan.md).
+FP/SIMD is opt-in, chosen per component, and the plain eager design is
+implemented and checked in QEMU and on the Pi 4. On the nucleus side: the flag,
+`FPEN` set by every translation install, eager save/restore through the
+nucleus's only FP routines (`kernel/nucleus/src/objects/arch/fp_unit.rs`,
+allow-listed by `_audit-fp-simd`), the counters, and the entry guard behind
+`fp_entry_trap`. They are exercised by the nucleus tests (transition logic
+against a fake unit, the routines against the hardware registers) and by
+`fp-trap-test`, whose FP AddressSpace executes FP at EL0 (`_test-fp-trap`,
+`_test-fp-entry-trap`). On the build side: the hard-float target, the
+Justfile's `fp_components`, `tools/fp-scan` deciding `ComponentImage::fp_simd`
+in image-build and running `_audit-fp-simd`, `Builder::component` taking the
+flag from the image, and the `libsyscall` FP clobbers. `fp-test` exercises it
+end to end in QEMU (`_test-fp`): two FP components preempted with sentinels in
+every V register, FPCR and FPSR, a Call from one into the other, a Call into an
+integer-only component whose FP instruction traps, and a handled fault. It
+passes on the Pi 4 too (`just boot-fp-test`).
 
-## FP/SIMD per AddressSpace (maintainer decisions, 2026-11-18 and 2026-11-19)
+## SIMD-18: FP/SIMD per AddressSpace
 
-The selected rules. FP/SIMD is opt-in, chosen per component. The design discussion and correctness argument follow in the rest of this document, and the work is in [`simd-implementation-plan.md`](simd-implementation-plan.md).
+The model in one place. FP/SIMD is opt-in, chosen per component (SIMD-1). The
+right to execute FP belongs to the AddressSpace: a flag fixed at its creation,
+from which every translation install sets `CPACR_EL1.FPEN`, so an integer-only
+AddressSpace traps FP at EL0 and EL1 (SIMD-2). The register state belongs to
+the Thread and is switched eagerly, skipping integer-only frames (SIMD-3). A
+Call enters its target zeroed and Return restores the preserved registers
+(SIMD-4); a fault hands the handler a fault frame (SIMD-9) in its pool's fault
+area (SIMD-13). Whatever the path, the kernel keeps the invariants SIMD-14 to
+SIMD-17: FP only in an FP frame, the register file written in full before an FP
+frame is entered, no kernel FP outside its routines, and a frame's state saved
+before anything overwrites it. The nucleus counts FP transitions for the
+schedulers (SIMD-11), and debug kernels add a hardware check of the kernel's
+abstinence (SIMD-12).
 
-- **The right to use FP.** An AddressSpace carries an FP flag, set at creation (bit 8 of `Untyped.Retype`'s `x3` for an AddressSpace; the bit is reserved zero for every other kind) and never changed.
-- **Access control.** Every installation of a translation context also sets `CPACR_EL1.FPEN`. An FP AddressSpace runs untrapped; any other traps FP/SIMD at EL0 and EL1, and a use there is an execution fault, as before. SVE stays trapped everywhere. The kernel and integer-only components still build soft-float. FP components build for a hard-float target.
-- **State.** The register state is per Thread: V0–V31, FPCR and FPSR (528 B), held in `Thread.fp` while the Thread is off the CPU. A Thread starts with it zero. Switching is eager and skips integer-only frames: leaving an FP frame saves what that frame needs back, and entering one first writes the whole register file, from saved state or zeros. Transitions between integer-only frames cost nothing.
-- **Invariants.** I1: `FPEN` permits FP only in an FP frame. I2: before an FP frame is entered, the whole register file has been written in that kernel entry, with values belonging to that frame (its saved state, its preserved call-record registers with the rest zero, or its validated fault frame) or zeros. I3: the kernel executes FP instructions only in its save, load and zero routines; the soft-float build and `_audit-fp-simd` enforce it, and an optional entry guard (below) adds a hardware check. I4: when an FP frame stops, everything it may need back is copied out in the same kernel entry, before anything overwrites the register file.
-- **Calls and faults.** Call and Return follow the [register table](capabilities-contract.md#call-invocationcall-op-0); a fault follows [fault delivery](capabilities-contract.md#fault-delivery).
-- **Statistics.** The nucleus counts FP transitions per Thread and publishes them in the Thread's scheduler record, with totals in the root Scheduler's record (see the record layouts in [`scheduling-design.md`](scheduling-design.md#scheduler-shared-records-maintainer-decision-2026-10-17)). The counters are scheduling information that schedulers may act on.
-- **Entry guard (maintainer decision, 2026-11-21, F11(c)).** A nucleus feature `fp_entry_trap` turns FP off at every kernel entry from an FP frame and back on before the `eret` into one, so a stray kernel FP instruction traps at EL1. `debug_kernel` turns it on; release kernels run without it ("we expect the privileged nucleus to be small and simple enough to never use fp/simd, so the overhead is actually a waste there"). Measured on the Pi 4 at 0.3 % of a Signal and 1.3 to 2.4 % of a Call from an FP frame (`doc/simd-performance.md`). In release kernels I3 rests on the build and the audit, which therefore must not pass while checking nothing: `_audit-fp-simd` finds every soft-float image the build produced by itself, the release kernels included, and fails when an image has no code to scan, when a function the allow-list names holds no FP instruction (each image linking the nucleus thus shows the scan sees its routines), and when `fp-probe`, which executes FP on purpose, shows none. Debug kernels, which the test kernels are, check the audit at run time: a kernel FP instruction it missed traps on any tested path.
-- **Later.** A per-Thread usage flag with a decaying budget and owner tracking, with a first-use trap, replace plain eager switching only after the eager baseline has been measured.
-- Implementation status: the nucleus side is implemented. The flag, `FPEN` set by every translation install, eager save/restore through the nucleus's only FP routines (`kernel/nucleus/src/objects/arch/fp_unit.rs`, allow-listed by `_audit-fp-simd`), the counters, and the entry guard behind `fp_entry_trap`. Exercised by the nucleus tests (transition logic against a fake unit, the routines against the hardware registers) and by `fp-trap-test`, whose FP AddressSpace executes FP at EL0 (`_test-fp-trap`, `_test-fp-entry-trap`). The build side is implemented too: the hard-float target, the Justfile's `fp_components`, `tools/fp-scan` deciding `ComponentImage::fp_simd` in image-build and running `_audit-fp-simd`, `Builder::component` taking the flag from the image, and the `libsyscall` FP clobbers. `fp-test` exercises it end to end in QEMU (`_test-fp`): two FP components preempted with sentinels in every V register, FPCR and FPSR, a Call from one into the other, a Call into an integer-only component whose FP instruction traps, and a handled fault. It passes on the Pi 4 too (`just boot-fp-test`).
+## SIMD-1: FP/SIMD is opt-in, per component
+
+2026-11-18. FP/SIMD is opt-in, chosen per component. The kernel and
+integer-only components still build soft-float; FP components build for a
+hard-float target.
+
+## SIMD-2: the right to use FP comes from the AddressSpace
+
+2026-11-19. An AddressSpace carries an FP flag, set at creation (bit 8 of
+`Untyped.Retype`'s `x3` for an AddressSpace; the bit is reserved zero for every
+other kind) and never changed. Every installation of a translation context also
+sets `CPACR_EL1.FPEN`. An FP AddressSpace runs untrapped; any other traps
+FP/SIMD at EL0 and EL1, and a use there is an execution fault, as before. SVE
+stays trapped everywhere.
+
+## SIMD-3: plain eager save and restore first
+
+2026-11-19. The register state is per Thread: V0–V31, FPCR and FPSR (528 B),
+held in `Thread.fp` while the Thread is off the CPU. A Thread starts with it
+zero. The first implementation switches eagerly and skips integer-only frames:
+leaving an FP frame saves what that frame needs back, and entering one first
+writes the whole register file, from saved state or zeros. Transitions between
+integer-only frames cost nothing. Usage tracking comes later (SIMD-10).
+
+## SIMD-4: a Call enters zeroed, Return restores the preserved registers
+
+2026-11-19. A Call enters the target with the register file zeroed, and Return
+restores `q8..q15`, FPCR and FPSR. Call and Return follow the
+[register table](capabilities-contract.md#call-invocationcall-op-0); a fault
+follows [fault delivery](capabilities-contract.md#fault-delivery).
+
+## SIMD-5: a Justfile list chooses the hard-float crates
+
+2026-11-19. A list in the Justfile, `fp_components`, chooses which crates build
+hard-float. A marker in the crate itself is future work (N-SIMD-1).
+
+## SIMD-6: the runtime FP flag comes from scanning the ELF
+
+2026-11-19. The runtime FP flag is derived by scanning the ELF. The Rust
+checker that does it also replaces the disassembly in `_audit-fp-simd`. A
+component with FP hits that is not in `fp_components` fails the build.
+
+## SIMD-7: a fault handler can inspect the FP state
+
+2026-11-18. A fault handler can inspect the faulting frame's FP state.
+
+## SIMD-8: the Thread holds everything inline
+
+2026-11-18. The Thread holds all FP state inline, at about 6 KiB, and shrinks
+later in the measured optimisation pass.
+
+## SIMD-9: the handler gets a fault frame
+
+2026-11-19. The handler gets the faulting state as a fault frame; where the
+frame lives is SIMD-13.
+- The frame includes the general registers.
+- The handler may write the frame back.
+- The kernel keeps only the general registers, and the FP state lives only in
+  the frame. See "The fault frame".
+
+## SIMD-10: usage tracking with decay and owner tracking, later
+
+2026-11-19. After the eager baseline has been measured, a decaying usage flag
+together with owner tracking replaces plain eager switching, and the first-use
+trap arrives with it. FP statistics are counted per Thread from the start.
+
+## SIMD-11: FP statistics in the scheduler-shared records
+
+2026-11-19. The nucleus counts FP transitions per Thread and publishes them in
+the Thread's scheduler record, with totals in the root Scheduler's record (see
+the record layouts in
+[`scheduling-design.md`](scheduling-design.md#scheduler-shared-records-maintainer-decision-2026-10-17)).
+They are scheduling information, which the root scheduler can read and act on,
+so the FP policy can become adaptive later.
+
+## SIMD-12: the entry guard runs in debug kernels
+
+2026-11-21. A nucleus feature `fp_entry_trap` turns FP off at every kernel
+entry from an FP frame and back on before the `eret` into one, so a stray
+kernel FP instruction traps at EL1. `debug_kernel` turns it on; release kernels
+run without it ("we expect the privileged nucleus to be small and simple enough
+to never use fp/simd, so the overhead is actually a waste there"). Measured on
+the Pi 4 at 0.3 % of a Signal and 1.3 to 2.4 % of a Call from an FP frame
+(`doc/simd-performance.md`). In release kernels SIMD-16 rests on the build and
+the audit, which therefore must not pass while checking nothing: see "The
+model".
+
+## SIMD-13: the fault frame goes into a registered fault area
+
+2026-11-21. The kernel never touches pool stacks. The fault frame goes into the
+*fault area* of the handler's pool, a RAM Frame registered at
+`CreateStackPool`, and the kernel writes it through its own mapping of that
+Frame. See "The fault frame".
 
 ## Scope
 
-Execution in an AddressSpace without the FP flag is integer-only, as
-[FP/SIMD per AddressSpace](#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19)
-says. It is enforced at four points:
+Execution in an AddressSpace without the FP flag is integer-only (SIMD-2). It is
+enforced at four points:
 
 - The kernel and every component build soft-float (`targets/aarch64-metta-none-eabi.json`,
   `-neon,-fp-armv8`).
@@ -124,7 +200,7 @@ from one AddressSpace into another:
    from an FP frame starts with FP enabled. A kernel FP instruction at that point would
    silently corrupt the frame's live registers.
 
-   The entry guard (F11(c), 2026-11-21) turns FP off at every entry from an FP frame,
+   The entry guard (SIMD-12) turns FP off at every entry from an FP frame,
    and back on before the `eret` into one, so the kernel runs trapped outside its own
    routines. It is the nucleus feature `fp_entry_trap`, which `debug_kernel` turns on;
    release kernels run without it, since the nucleus is expected never to use FP and
@@ -165,21 +241,21 @@ preserved in full unless they are named. Keeping all 128 bits means `libsyscall`
 `ppc_call` needs no FP spills of its own.
 
 FPCR holds the rounding mode and other controls, which AAPCS64 says a call preserves.
-FPSR holds the cumulative exception flags. It is preserved too (F4(a2)), so a caller
+FPSR holds the cumulative exception flags. It is preserved too (SIMD-4), so a caller
 that tests its flags across a call keeps them. The record is 128 + 4 + 4 bytes, the
 136 B in the table. Every value is restored from the caller's own record, so nothing
 from the callee leaks back.
 
 A fault interrupts the frame between two arbitrary instructions, so every V register
-is live, and its full FP state has to be kept. Under F8.3(iii) the kernel keeps only the
+is live, and its full FP state has to be kept. Under SIMD-9 the kernel keeps only the
 general registers, in `ThreadFault.frame`, as it does today. The FP state's only copy is
 the fault frame in the handler pool's fault area, described below. There is no
 `ThreadFault.fp`.
 
 ### The fault frame
 
-The handler receives the faulting state as a fault frame (F8(d)), in its pool's fault
-area (F12(b1)). The kernel never touches pool stacks.
+The handler receives the faulting state as a fault frame (SIMD-9), in its pool's fault
+area (SIMD-13). The kernel never touches pool stacks.
 
 - **Where it lives.** A pool that serves a fault handler is made with a *fault area*:
   a RAM Frame (`READ|WRITE`), mapped in the pool's AddressSpace, passed in
@@ -196,7 +272,7 @@ area (F12(b1)). The kernel never touches pool stacks.
     and stays valid because the nucleus does not reclaim Frame memory.
 - **What it holds** (`libobject::fault::FaultFrame`, 832 B, 16-aligned):
   - a header with size, version and flags, including whether an FP part is present;
-  - the faulting general registers (F8.1): `x0..x30`, SP, PC, `pstate`, `TPIDR_EL0`;
+  - the faulting general registers (SIMD-9): `x0..x30`, SP, PC, `pstate`, `TPIDR_EL0`;
   - for an FP frame, the V registers, FPCR and FPSR.
 - **How it is written.**
   - At delivery, `FpUnit::save` puts the faulting FP state into a kernel-stack copy of
@@ -210,9 +286,10 @@ area (F12(b1)). The kernel never touches pool stacks.
     Thread becomes `Faulted` with its general registers, and its FP state is dropped.
   - A handler that unmaps the Frame later finds nothing at `x0`; the kernel's write
     still lands in the Frame.
-  - The software walk that (a) used is kept, unused, in `kernel/nucleus/src/user_memory.rs`
-    for a DebugConsole that reads its caller's buffer by address.
-- **Write-back (F8.2).** At a Retry or Skip Return, the kernel resumes from the frame,
+  - The software walk that the frame's first placement used is kept, unused, in
+    `kernel/nucleus/src/user_memory.rs` for a DebugConsole that reads its caller's
+    buffer by address.
+- **Write-back (SIMD-9).** At a Retry or Skip Return, the kernel resumes from the frame,
   which the handler may have changed. This needs no new trust: the handler can change
   only the state of the Thread it handles, which it is already trusted with. The kernel
   still checks `pstate`, because that check protects the kernel, not the Thread.
@@ -226,7 +303,7 @@ area (F12(b1)). The kernel never touches pool stacks.
     the general registers, `ThreadFault.frame`, as today. The original state is never
     silently resumed.
   - Terminate leaves the frame in the slot for inspection.
-- **Which copy counts (F8.3(iii)).**
+- **Which copy counts (SIMD-9).**
   - The kernel keeps the general registers in `ThreadFault.frame`. That copy is the
     fallback for `Faulted` and the unhandled-fault path.
   - The FP state lives only in the frame.
@@ -245,13 +322,13 @@ area (F12(b1)). The kernel never touches pool stacks.
 |---|---|
 | `Thread.fp` | 528 B |
 | 16 call records × 136 B | 2176 B |
-| `Thread.fp_stats`, plus `fp_budget` from S5 | 64 B, plus 1 B |
+| `Thread.fp_stats`, plus `fp_budget` from P-SIMD-5 | 64 B, plus 1 B |
 
 - The carve size follows the type (`carved_layout::<Thread>()`), so Untyped
   accounting adjusts by itself.
 - The 176 B continuation assert in `kernel/nucleus/src/objects/thread.rs` must be
   updated.
-- The size is accepted (F7(a)). Shrinking the Thread belongs to the measured
+- The size is accepted (SIMD-8). Shrinking the Thread belongs to the measured
   optimisation pass that comes after correctness.
 
 ## Transitions
@@ -308,12 +385,12 @@ go through it, so no site can forget the trap.
 
 ## FP statistics
 
-The kernel counts from S1 on. The eager baseline is therefore measured before S5
-changes anything. Every counter is a `u64` that wraps, and the kernel only increments
-it.
+The kernel counts from the start (SIMD-10). The eager baseline is therefore measured
+before usage tracking changes anything. Every counter is a `u64` that wraps, and the
+kernel only increments it.
 
 **Per Thread.** The counters live in `Thread.fp_stats` and are published in the
-Thread's scheduler-shared record (F10(b)). `ThreadRecord`
+Thread's scheduler-shared record (SIMD-11). `ThreadRecord`
 (`libs/object/src/scheduler_record.rs`) has `reserved: [AtomicU64; 8]`. That is
 exactly these eight counters, so the record's 128 B size and its stride stay as they
 are. The fields get names in the layout, and `LAYOUT_VERSION` is not bumped, because
@@ -329,9 +406,9 @@ record keeps them in `Thread.fp_stats` only.
 | `fp_loads` | Full loads of a saved state |
 | `fp_zeroes` | Entries into an FP frame with the register file zeroed (Call and first start) |
 | `preserved_saves` | `q8..q15`, FPCR and FPSR saved to a call record |
-| `first_use_traps` | From S5: first-use traps taken |
-| `decays` | From S5: times the usage flag decayed |
-| `owner_hits` | From S5: saves and loads skipped because the hardware still held this Thread's frame |
+| `first_use_traps` | With usage tracking: first-use traps taken |
+| `decays` | With usage tracking: times the usage flag decayed |
+| `owner_hits` | With usage tracking: saves and loads skipped because the hardware still held this Thread's frame |
 
 **Totals.** These live in the nucleus next to `current_thread`, and are published in
 the root Scheduler's `SchedulerRecord`, which also has eight reserved words:
@@ -355,16 +432,17 @@ the copy into the record at the switch away.
 What the counters answer:
 
 - whether Threads in FP AddressSpaces really use FP all the time, for hard-float Rust
-  (`first_use_traps` against `fp_entries`, from S5);
+  (`first_use_traps` against `fp_entries`, with usage tracking);
 - how much the eager baseline costs (`fp_saves`, `fp_loads` and the FP share of Thread
   switches);
 - what the decay budget N should be, and whether owner tracking pays off (`decays` and
   `owner_hits`).
 
-## Later: usage tracking with decay and owner tracking (S5)
+## Later: usage tracking with decay and owner tracking
 
-S1 to S4 are plain eager save and restore, with no FP trap. S5 adds the following, and
-the first-use trap comes with it.
+The first implementation is plain eager save and restore, with no FP trap. Usage
+tracking (SIMD-10, planned in P-SIMD-5) adds the following, and the first-use trap
+comes with it.
 
 **Usage flag with a decaying budget.**
 
@@ -377,7 +455,7 @@ the first-use trap comes with it.
 
 While FP is enabled the kernel cannot see whether a Thread uses it. Re-arming the trap
 every N entries is how it notices that the Thread stopped. A Thread that keeps using FP
-pays one trap every N entries. N comes from the S2 to S4 counters.
+pays one trap every N entries. N comes from the eager baseline's counters.
 
 **Pending state lives in `Thread.fp`.** A Thread whose budget is zero may still own FP
 state. That is the case when its budget decayed, when a Return owes it `q8..q15` and
@@ -407,9 +485,10 @@ register write, and keeps a single load path.
 
 **Changes to the invariants.**
 
-- I1 becomes: FP is enabled only in an FP frame of a Thread whose budget is non-zero.
-- I2 becomes: the register file was either written in this entry or is still owned by
-  this frame.
+- SIMD-14 becomes: FP is enabled only in an FP frame of a Thread whose budget is
+  non-zero.
+- SIMD-15 becomes: the register file was either written in this entry or is still
+  owned by this frame.
 
 The model check gains the trap, the budget and the owner record as extra steps.
 
@@ -419,36 +498,48 @@ The model check gains the trap, the budget and the owner record as extra steps.
 
 These hold at every `eret` to EL0, and at every return to an `EL1t` Thread.
 
-- **I1, gate.** `FPEN` permits FP if and only if the frame being entered is an FP frame.
-- **I2, full write on entry.** Before an FP frame is entered, the whole register file has
-  been written in the same kernel entry. The values come from one of four places:
-  - the frame's own saved state;
-  - zeros;
-  - its `q8..q15`, FPCR and FPSR from its own call record, with the rest zeroed;
-  - for a fault Return, the FP part of its validated fault frame.
-- **I3, kernel abstinence.** Kernel code executes no FP instruction outside the
-  `FpUnit` routines. The soft-float build and `_audit-fp-simd` enforce this.
-- **I4, save before overwrite.** When an FP frame stops, everything it may need back is
-  copied out in the same kernel entry, before anything overwrites the register file:
-  everything at a Thread switch or a fault, and `q8..q15`, FPCR and FPSR at a Call. By I3, the
-  copy sees exactly the frame's values.
+#### SIMD-14: the gate
+
+`FPEN` permits FP if and only if the frame being entered is an FP frame.
+
+#### SIMD-15: full write on entry
+
+Before an FP frame is entered, the whole register file has been written in the
+same kernel entry. The values come from one of four places:
+- the frame's own saved state;
+- zeros;
+- its `q8..q15`, FPCR and FPSR from its own call record, with the rest zeroed;
+- for a fault Return, the FP part of its validated fault frame.
+
+#### SIMD-16: kernel abstinence
+
+Kernel code executes no FP instruction outside the `FpUnit` routines. The
+soft-float build and `_audit-fp-simd` enforce this, and the entry guard
+(SIMD-12) adds a hardware check in debug kernels.
+
+#### SIMD-17: save before overwrite
+
+When an FP frame stops, everything it may need back is copied out in the same
+kernel entry, before anything overwrites the register file: everything at a
+Thread switch or a fault, and `q8..q15`, FPCR and FPSR at a Call. By SIMD-16,
+the copy sees exactly the frame's values.
 
 ### Lemmas
 
-- **Confidentiality.** FP registers are readable only in an FP frame (I1). Every entry
+- **Confidentiality.** FP registers are readable only in an FP frame (SIMD-14). Every entry
   into an FP frame first overwrites the whole register file with that frame's own
-  values or with zeros (I2). So no frame observes another frame's values in the
+  values or with zeros (SIMD-15). So no frame observes another frame's values in the
   registers. This covers other Threads, a callee looking at its caller, and a caller
   looking at its callee. The one deliberate exception is the fault frame: the faulting
-  AddressSpace's own handler sees the faulting state in memory, by design (F8).
+  AddressSpace's own handler sees the faulting state in memory, by design (SIMD-9).
 - **Integrity.** An FP frame gets back what it is owed:
-  - after preemption, blocking or a fault: its full state (I4 and the load);
+  - after preemption, blocking or a fault: its full state (SIMD-17 and the load);
   - after a Call returns: `q8..q15`, FPCR and FPSR as they were and the rest zero, which
     AAPCS64 permits for a call.
 
 ### Edge cases
 
-Each of these satisfies I1 to I4.
+Each of these satisfies SIMD-14 to SIMD-17.
 
 - **FP → integer-only → FP, including A→B→A.** The inner A frame is entered zeroed. The
   B→A record stores nothing, because B is integer-only, and its bit says so. The Return
@@ -459,7 +550,7 @@ Each of these satisfies I1 to I4.
 - **Blocking inside an FP callee.** A full save to `Thread.fp`, and a full load when it
   resumes.
 - **Preemption at any instruction of an FP frame.** A full save. Interrupt handling
-  touches no FP (I3).
+  touches no FP (SIMD-16).
 - **A fault in an FP frame, with the handler in an FP or an integer-only AddressSpace.**
   - The full state goes into the fault frame in the handler pool's fault area. The
     handler is entered zeroed or trapped. If the pool has no fault area, the fault is
@@ -469,15 +560,15 @@ Each of these satisfies I1 to I4.
     the frame stays in its slot.
   - A fault inside the handler is unhandled, as today, and parks the Thread.
 - **A Thread retired, terminated or exiting while its values are live in hardware.**
-  Nothing is saved. The values are unreadable (I1) and are overwritten at the next FP
-  entry (I2).
+  Nothing is saved. The values are unreadable (SIMD-14) and are overwritten at the next FP
+  entry (SIMD-15).
 - **The caller's AddressSpace retired before Return (`ReturnTargetRetired`).** Nothing
-  is loaded. The existing fault path runs, and I1 and I2 hold for whatever frame comes
-  next.
-- **`EL1t` fixture Threads.** They run in integer-only AddressSpaces, so I1 traps EL1
-  again on entry, and `fp-trap-test`'s EL1t check stays valid.
+  is loaded. The existing fault path runs, and SIMD-14 and SIMD-15 hold for whatever
+  frame comes next.
+- **`EL1t` fixture Threads.** They run in integer-only AddressSpaces, so SIMD-14 traps
+  EL1 again on entry, and `fp-trap-test`'s EL1t check stays valid.
 - **The kernel running with `FPEN` = `0b11` after an entry from an FP frame.** In a
-  release kernel, the build and the audit are the only guarantee of I3. This is the
+  release kernel, the build and the audit are the only guarantee of SIMD-16. This is the
   weakest point of the design, which is why the audit fails when it scans nothing (see
   "The model"). In a debug kernel, the entry guard makes the hardware trap a stray kernel
   FP instruction. In both cases the audit stays part of `just lint`.
@@ -485,7 +576,7 @@ Each of these satisfies I1 to I4.
   entry loads it.
 - **`Activate`, CallWithKey, `Scheduler.Dispatch` and `Thread.Suspend`.** These reduce
   to rows of the transition table: no change, a Call, and a Thread switch.
-- **Multicore, later.** The save is eager at the switch away, so a Thread's FP state is
+- **Multicore.** The save is eager at the switch away, so a Thread's FP state is
   never left live on another core, and migrating a Thread needs nothing extra. A
   lazy-ownership optimisation would give this up.
 
@@ -501,7 +592,7 @@ Each of these satisfies I1 to I4.
   Return, block, resume, preempt, fault, handler Return or retire. The steps run through
   the real object-layer code against a fake `FpUnit` that tags every value with the
   frame that wrote it. After each step the test asserts:
-  - I1;
+  - SIMD-14;
   - that EL0 observes only its own frame's tags or zero;
   - that each resumed frame holds the tags it is owed.
 - **End-to-end `fp-test` kernel,** in QEMU and on the Pi 4.
@@ -512,9 +603,9 @@ Each of these satisfies I1 to I4.
   ABI, `+neon,+fp-armv8`. Soft-float and hard-float objects cannot be linked together,
   so shared libraries are built for both targets. Cargo keeps them in separate
   `target/<spec>/` directories.
-- **The Justfile builds FP components separately (F5.1(a)).** An `fp_components` list
+- **The Justfile builds FP components separately (SIMD-5).** An `fp_components` list
   is built by a `_cross-build` that takes the target spec as a parameter. A marker in
-  the crate itself is future work (see the decisions file).
+  the crate itself is future work (N-SIMD-1).
 - **One Rust checker, `fp-scan`.** It is a host crate under `tools/`, with a library and
   a binary.
   - It reads an ELF and tests every 32-bit word of its executable segments against the
@@ -524,7 +615,7 @@ Each of these satisfies I1 to I4.
     - SVE;
     - the `mrs`/`msr` encodings for FPCR and FPSR.
   - It reports each hit with the symbol it falls in.
-  - **The image-build library uses it (F5.2(a)).** When `libs/image-build` packs a
+  - **The image-build library uses it (SIMD-6).** When `libs/image-build` packs a
     component, a hit sets `ComponentImage`'s FP flag. `Builder::component`
     (`libs/component-loader/src/component.rs`) takes the image and passes its flag to
     Retype's `x3`, so no loader can create a component's AddressSpace with the wrong
@@ -552,10 +643,8 @@ Each of these satisfies I1 to I4.
 
 ## Where the selected contract lives
 
-FP per AddressSpace and invariants I1 to I4 are in
-[FP/SIMD per AddressSpace](#fpsimd-per-addressspace-maintainer-decisions-2026-11-18-and-2026-11-19)
-above; the rest of this document is the design discussion behind them. The parts that
-are capability wire rules stay in `capabilities-contract.md`:
+The FP/SIMD rules are SIMD-1 to SIMD-18 above. The parts that are capability
+wire rules stay in `capabilities-contract.md`:
 
 - **The Retype `x3` schema:** the AddressSpace flag in bit 8.
 - **The Call register table:** the FP rows, and the call-record size.
@@ -563,6 +652,4 @@ are capability wire rules stay in `capabilities-contract.md`:
 - **The scheduler-record layouts:** the FP counters.
 - **The decision register:** D7.
 
-The user-facing pages in `doc/object_types` (Invocation, Thread, AddressSpace,
-Scheduler) carry short planned-change notes until the implementation lands.
 `audio-design.md` option 4 points here. The synthesiser stays integer-only.

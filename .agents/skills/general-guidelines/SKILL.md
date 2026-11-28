@@ -39,7 +39,7 @@ Work that is not about capabilities themselves (SMP, FP/SIMD, USB, input, audio,
 
 ### Section and item IDs
 
-Every numbered section and item in an area's documents carries an ID made of the area's prefix in capitals (its row in the [document index](#document-index), with the same hyphens) and a number, with a kind letter in front for everything outside the design. This replaces every older scheme (bare letters such as `D3`, `M7`, `C5`, `S2b`, or area stages such as `USB4`, `SMP1`, `INPUT1`, `MEM2`); those are renamed when their documents are reindexed. The capabilities gates `D1`–`D9` become `CAPABILITIES-<N>` sections (their open parts `Q-CAPABILITIES-<N>` questions), and other labelled lists such as the FP/SIMD invariants `I1`–`I4` are renamed too: once reindexing is done, no short label remains.
+Every numbered section and item in an area's documents carries an ID made of the area's prefix in capitals (its row in the [document index](#document-index), with the same hyphens) and a number, with a kind letter in front for everything outside the design. This replaces every older scheme (bare letters such as `D3`, `M7`, `C5`, `S2b`, or area stages such as `USB4`, `SMP1`, `INPUT1`, `MEM2`); those are renamed when their documents are reindexed. The capabilities gates `D1`–`D9` become `CAPABILITIES-<N>` sections (their open parts `Q-CAPABILITIES-<N>` questions), and other labelled lists (such as invariants) are renamed too: once reindexing is done, no short label remains.
 
 | ID | Where | Example |
 |---|---|---|
@@ -71,7 +71,7 @@ Every document in `doc/agentic/` belongs to one row. **Keep this table current:*
 | `scheduling` | Time, the root and child Schedulers, Thread configuration and start, per-Thread architectural state (TLS, timer access, interrupt masking), scheduler-shared records, userspace scheduling policy | `-design` (ends with the background design discussion), `-decisions`, `-implementation-plan`, `-completed`; background `-research` (survey of existing systems, Composite tcap comparison) |
 | `components` | Meddle interfaces and imports, Kickstart's wiring (device memory, mailbox, PCI, data areas, channels), the shell, component loading, driver components | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `smp` | Secondary cores, the kernel lock, per-core state, IPIs | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
-| `simd` | FP/SIMD per AddressSpace, invariants I1–I4, the entry guard (the Retype bit, Call register rows and fault frame stay in the capabilities contract) | `-design`, `-implementation-plan`, `-completed` |
+| `simd` | FP/SIMD per AddressSpace, its invariants, the entry guard (the Retype bit, Call register rows and fault frame stay in the capabilities contract) | `-design`, `-implementation-plan`, `-completed` |
 | `usb` | USB host controllers and the USB stack | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `input` | Input devices and events | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `audio` | Audio output (PWM jack, DMA, `cprman` clocks), mixing and synthesis | `-design`, `-implementation-plan`, `-completed`; background `audio-profiling.md` |
