@@ -117,15 +117,16 @@ inside that AddressSpace.
 
 ### SMP-17: placement
 
-A pinned component runs on its core; an unpinned one is placed by dispatcher
-policy at run time.
+A pinned component runs only on the cores of its set (SMP-18); an unpinned one
+is placed by dispatcher policy at run time.
 
 ### SMP-18: pin declaration
 
-A component declares its core next to its priority (a byte in `driver_threads!`
-entries and an `entry_cpu!`-style section for the first Thread), and its manifest
-entry may override it. Kickstart hands the result to the dispatchers like
-`DispatchInit::priorities`.
+2026-11-28. A component declares the set of cores its Thread may run on, a core
+bitmask, next to its priority (in `driver_threads!` entries and an
+`entry_cpu!`-style section for the first Thread), and its manifest entry may
+override it. A set holding one core pins the Thread to that core. Kickstart
+hands the result to the dispatchers like `DispatchInit::priorities`.
 
 ### SMP-19: no default pin
 

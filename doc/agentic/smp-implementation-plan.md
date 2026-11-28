@@ -28,7 +28,7 @@ interrupts) and P-SMP-4 (Threads on secondary cores); see
 Needs: P-SMP-4. Nothing is pinned by default (SMP-19), so components run unpinned and
 what breaks is fixed.
 
-- [ ] The pin declaration (SMP-18): a core bitmask in `driver_threads!` entries and an
+- [ ] The pin declaration (SMP-18): the allowed-core bitmask in `driver_threads!` entries and an
   `entry_cpu!`-style section for the first Thread, a manifest override in `image.toml`,
   read by Kickstart and handed to the dispatchers like `DispatchInit::priorities`.
 - [ ] The root dispatchers place unpinned Threads across cores at run time (SMP-17).
