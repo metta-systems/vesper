@@ -1,7 +1,7 @@
 //! The PCM stream of `audio_v1`: the io-channel that carries a client's
 //! signed 16-bit stereo frames, their conversion into the PWM's FIFO words,
 //! the periods of the DMA ring and which of them to refill, and the underrun
-//! count (decisions D6 and D7 of `doc/agentic/audio-design.md`).
+//! count (AUDIO-6 and AUDIO-7 of `doc/agentic/audio-design.md`).
 //!
 //! A client frame is four bytes: the left sample, then the right one, each
 //! signed 16-bit little-endian. A FIFO frame is two words, right first: the

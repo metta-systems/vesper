@@ -1,126 +1,170 @@
 # Audio design (Raspberry Pi 3, PWM jack output with DMA)
 
-Status: D1 to D8 answered 2026-10-27 (section Decisions below); stages A1 (the `cprman`
-driver with `clock_v1`), A2 (the `dma` driver with `dma_v1`), A3 (the audio driver
-serving `audio_v1` from a DMA ring, with a test client) and A4 (Wood's sound effects,
-mixed by Room's mixer on a playback Thread) are built and checked in QEMU, their
-hardware checks are pending; the maintainer reported on 2026-10-28 that sound output
-on the board worked (the detailed hardware exits are not yet re-run). D9 (music) was
-answered on 2026-10-28 (section Decisions); its research is section Music below. Stage
-A5b (the synthesiser crate and the bank-trimming tool, host-tested) is built; D10 (Wood
-pulls the synthesiser component's `midi_synth_v1` and mixes) was answered the same day,
-and A5c (that component and Wood's music) is built and checked in QEMU; nothing of A5
-has run on the board. No audio decision is open; the answered ones are listed in
-[audio-completed.md](audio-completed.md). Stages are in
-[audio-implementation-plan.md](audio-implementation-plan.md). Interfaces named here are
-drafts until written; once written they are prototypes and are edited in place.
+The numbered sections under Decisions are the maintainer's decisions; the sections
+after them are the hardware facts, the architecture and the music research behind
+them. Sound effects and music are built and checked in QEMU; the maintainer reported
+on 2026-10-28 that sound output on the board worked, and the detailed board checks
+are pending. No audio decision is open. Open tasks are in
+[audio-implementation-plan.md](audio-implementation-plan.md), finished ones in
+[audio-completed.md](audio-completed.md). Interfaces named here are drafts until
+written; once written they are prototypes and are edited in place.
 
 ## Decisions
 
-D1 to D8 were answered by the maintainer on 2026-10-27, each with the option the
-decisions file recommended; D9 on 2026-10-28, partly against the recommendations. The
-options that were weighed are summarised after each answer.
+AUDIO-1 to AUDIO-8 were answered by the maintainer on 2026-10-27, each with the
+option the decisions file recommended; AUDIO-9 on 2026-10-28, partly against the
+recommendations. The options that were weighed are summarised after each answer.
 
-- **D1. Who programs the DMA controller: a separate `dma` driver** for the
-  `brcm,bcm2835-dma` node exporting `dma_v1`, the sole holder of the DMA register page and
-  the channel interrupts. The audio driver names its ring by bus address for now (B1a);
-  lending Frames checked with `Frame.GetAddress` (B1b) comes when an untrusted client
-  needs DMA. Not chosen: the audio driver owning the DMA page itself; a `dma` driver
-  handing out one channel's registers (impossible, the channels share one page).
-- **D2. How the PWM clock is set: a `cprman` driver** for `brcm,bcm2835-cprman` exporting
-  `clock_v1`, linked from the PWM node's `clocks` property. Not chosen: a typed
-  `mailbox_v1.set_clock_rate` (undocumented whether the firmware programs the PWM clock);
-  the audio driver mapping the CPRMAN pages (every clock generator and PLL).
-- **D3. The audio driver binds to the PWM node** (`brcm,bcm2835-pwm`). On the board the
-  node is enabled with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in
-  `config.txt`; QEMU uses a test device tree with the node enabled. Not chosen: the
-  firmware audio node (no `reg`); a program with fixed addresses.
-- **D4. 44.1 kHz nominal from 100 MHz** (PLLD per / 5, integer divider), `RNG` 2268
-  (44 092 Hz, about 11 bits), `MSEN=0`. If 11 bits sound noisy on hardware, 250 MHz
-  (PLLD per / 2, `RNG` 5669) is the next thing to try. Not chosen: 22.05 kHz (audible
-  carrier); exact 44 100 Hz with a MASH divider (jitter).
-- **D5. Mixing in Wood's playback Thread**: a no_std mixer in Room, run by a second Wood
-  Thread; the driver is a plain PCM sink. A mixing service component stays future work.
-- **D6. An io-channel of signed 16-bit interleaved stereo** declared in `audio_v1`; the
-  driver copies and converts into its DMA ring. Not chosen: zero copy into the ring.
-- **D7. Underrun: mid-scale silence and a counter**; the DMA ring keeps running. Not
-  chosen: repeating the last period; stopping the DMA.
-- **D8. No special scheduling at first**: a ring of 4 periods and an ordinary Time
-  budget, underruns measured on hardware; the isochronous scheduler only if they show.
-  - **Follow-up (answered 2026-10-29)** after the board showed 20–31 ms stalls of the
-    playback Thread ([audio-profiling.md](audio-profiling.md)), all three with the
-    maintainer's words:
-    - *Thread priority in the root dispatcher*: "declare priority with the thread, two
-      levels should be enough for now, keep room for extending in the future, no
-      starvation guard for this round". Wood's playback Thread is declared high
-      priority (`driver_threads!(playback => Priority::HIGH)`); the rule is in the
-      [scheduling design](scheduling-design.md#decisions). Still
-      no isochronous scheduler and no special Time budget.
-    - *Input between the program and audio* (same day, after keys felt sluggish and
-      some were lost on the board): "the usb is probably in need of priority between
-      the main app and the audio?". The input path's Threads (the DWC2 component's,
-      `usb-hid`'s, the compositor's input Thread) run at `Priority::INPUT`, below
-      the playback Thread's `Priority::HIGH`, which stays the highest.
-    - *Starvation guard* (same day, after `boot-wood-test` froze the board: a
-      spinning input Thread starved the audio driver, and the DMA ring replayed
-      its last buffers): "delay_ms(1) should just park the thread until 1ms
-      passes, not busy wait / add starvation guard too". This reverses "no
-      starvation guard for this round": a raised Thread that runs a whole slice
-      without blocking is dispatched as a normal one until it blocks, so the
-      playback Thread keeps its precedence only while it blocks every period.
-    - *Wood queues its first buffers before it opens the output*: "yep".
-    - *Queue depth*: "8 buffers might be good". Wood and midi-test's player keep 8
-      buffers (93 ms) queued, the four data pages of `audio_v1`'s channel; effects
-      reach the jack within about 150 ms instead of 100 ms.
-- **D9. Music: an integer SoundFont wavetable synthesiser** (answered 2026-10-28,
-  option A; the research is section Music below). New `no_std` code with no floating
-  point, rendering General MIDI from the Standard MIDI Files Room's `mus2midi` makes.
-  Not chosen: OPL emulation with the IWAD's `GENMIDI` (B, the recommendation), music
-  pre-rendered on the host (C), hardware floating point for Wood (D), no music (E).
-  Its sub-decisions:
-  - **D9.1. A separate music component**, not Wood's playback Thread (option b, against
-    the recommendation a). How its output reaches the jack is D10.
-  - **D9.2 and D9.3** (OPL engine, chip mode) do not apply: no OPL engine is built.
-  - **D9.4. The SC-55 v1.2b bank trimmed by a host tool** to the programs and drum
-    notes the bundled IWAD's MUS tracks use (option b); a build artifact under
-    `target/`, rebuilt per IWAD. Not chosen: the whole file (a), GeneralUser GS (c).
-  - **D9.5. Rendered at the full output rate**, 44 091.71 Hz (option a). Not chosen:
-    half rate interpolated up (b).
-  - **D9.6. The renderer is per platform**: the host keeps `rustysynth` (with the
-    SC-55) as its production renderer, the new synthesiser is for Vesper only (option
-    a). So the synthesiser is not part of Room's engine: it is its own `no_std` crate
-    on the Vesper side (`userspace/synth`, `vesper-synth`), used by the music
-    component; Room's `mus2midi` stays the source of the MIDI. Clarified the same day:
-    the new synthesiser may be plugged into Room's host build for testing (listening
-    checks, comparison with `rustysynth`) behind an opt-in switch, `rustysynth` staying
-    the default (Room's `vesper-synth` feature).
-  - **D9.7. An f64 mode behind the `fp-mode` feature** (maintainer decision,
-    2026-11-21, M1(c), M2(b), M3(b), M4(a)), as the representative FP workload for the
-    FP/SIMD plan's P-SIMD-5. Without `fp-mode` the synthesiser stays integer-only, as Doom
-    was, and `clippy::float_arithmetic` stays denied with the `_synth-no-float` check.
-    With it, the crate and the `midi-synth` component build hard-float, and a runtime
-    switch (the `midi_synth_v1` mode command) picks the integer or the f64 engine; the
-    `fp-mode` component starts in f64.
-    - The f64 engine is a whole voice in f64 (M2(b)): sample position and pitch step,
-      the envelope, the attenuation and pan curves, computed with `libm` (the `no_std`
-      port of musl's maths library) instead of the integer tables.
-    - It is plain f64 code, left to the compiler's vectorizer (M3(b)); the loop and the
-      flags are tuned until the mixing loop is shown to be vectorized.
-    - Correctness (M4(a)): a host test renders the test song with both engines and
-      bounds their difference; a midi-test variant boots the `fp-mode` component. Its
-      output hash is used only once repeated runs show it stable; the integer hashes
-      stay as they are.
-- **D10. Wood pulls `midi_synth_v1` and mixes locally** (answered 2026-10-28, option a
-  of the decisions file with the interface renamed). The maintainer's words: "rename
-  music_v1 to midi_synth_v1; the bidirectional xbufs would send midi data in one
-  direction and rendered audio in another; for now wood pulls the midi_synth_v1 from the
-  play music scaffolding, mixing locally and sending a single audio stream to
-  audio_v1". So the synthesiser component exports `midi_synth_v1`; its io-channel
-  carries the MIDI from Wood to the synthesiser and the rendered s16 stereo back; Wood's
-  playback Thread asks for each period, adds the effect voices on top and stays the one
-  `audio_v1` client. Not chosen: a mixing service (b); the audio driver mixing several
-  clients (c). Built in A5c (section "`midi_synth_v1` and the synthesiser component"
-  below).
+### AUDIO-1: a separate `dma` driver programs the DMA controller
+
+2026-10-27. A `dma` driver for the `brcm,bcm2835-dma` node exports `dma_v1`, the
+sole holder of the DMA register page and the channel interrupts. The audio driver
+names its ring by bus address for now; lending Frames checked with
+`Frame.GetAddress` comes when an untrusted client needs DMA. Not chosen: the audio
+driver owning the DMA page itself; a `dma` driver handing out one channel's
+registers (impossible, the channels share one page).
+
+### AUDIO-2: a `cprman` driver sets the PWM clock
+
+2026-10-27. A `cprman` driver for `brcm,bcm2835-cprman` exports `clock_v1`, linked
+from the PWM node's `clocks` property. Not chosen: a typed
+`mailbox_v1.set_clock_rate` (undocumented whether the firmware programs the PWM
+clock); the audio driver mapping the CPRMAN pages (every clock generator and PLL).
+
+### AUDIO-3: the audio driver binds to the PWM node
+
+2026-10-27. The audio driver binds to `brcm,bcm2835-pwm`. On the board the node is
+enabled with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in `config.txt`;
+QEMU uses a test device tree with the node enabled. Not chosen: the firmware audio
+node (no `reg`); a program with fixed addresses.
+
+### AUDIO-4: 44.1 kHz nominal from 100 MHz
+
+2026-10-27. PLLD per / 5, integer divider, `RNG` 2268 (44 092 Hz, about 11 bits),
+`MSEN=0`. If 11 bits sound noisy on hardware, 250 MHz (PLLD per / 2, `RNG` 5669) is
+the next thing to try. Not chosen: 22.05 kHz (audible carrier); exact 44 100 Hz with
+a MASH divider (jitter).
+
+### AUDIO-5: mixing in Wood's playback Thread
+
+2026-10-27. A no_std mixer in Room, run by a second Wood Thread; the driver is a
+plain PCM sink. A mixing service component stays future work.
+
+### AUDIO-6: an io-channel of signed 16-bit interleaved stereo
+
+2026-10-27. Declared in `audio_v1`; the driver copies and converts into its DMA
+ring. Not chosen: zero copy into the ring.
+
+### AUDIO-7: underrun plays mid-scale silence and counts
+
+2026-10-27. The DMA ring keeps running. Not chosen: repeating the last period;
+stopping the DMA.
+
+### AUDIO-8: no special scheduling at first
+
+2026-10-27. A ring of 4 periods and an ordinary Time budget, underruns measured on
+hardware; the isochronous scheduler only if they show. The follow-ups AUDIO-11 to
+AUDIO-15 (2026-10-29) came after the board showed 20–31 ms stalls of the playback
+Thread ([audio-profiling.md](audio-profiling.md)), each with the maintainer's words.
+
+### AUDIO-11: Thread priority in the root dispatcher
+
+2026-10-29. "declare priority with the thread, two levels should be enough for now,
+keep room for extending in the future, no starvation guard for this round". Wood's
+playback Thread is declared high priority
+(`driver_threads!(playback => Priority::HIGH)`); the rule is in the
+[scheduling design](scheduling-design.md#decisions). Still no isochronous scheduler
+and no special Time budget.
+
+### AUDIO-12: input between the program and audio
+
+2026-10-29, after keys felt sluggish and some were lost on the board: "the usb is
+probably in need of priority between the main app and the audio?". The input path's
+Threads (the DWC2 component's, `usb-hid`'s, the compositor's input Thread) run at
+`Priority::INPUT`, below the playback Thread's `Priority::HIGH`, which stays the
+highest.
+
+### AUDIO-13: a starvation guard
+
+2026-10-29, after `boot-wood-test` froze the board: a spinning input Thread starved
+the audio driver, and the DMA ring replayed its last buffers. "delay_ms(1) should just
+park the thread until 1ms passes, not busy wait / add starvation guard too". This
+reverses AUDIO-11's "no starvation guard for this round": a raised Thread that runs a
+whole slice without blocking is dispatched as a normal one until it blocks, so the
+playback Thread keeps its precedence only while it blocks every period.
+
+### AUDIO-14: Wood queues its first buffers before it opens the output
+
+2026-10-29: "yep".
+
+### AUDIO-15: queue depth of 8 buffers
+
+2026-10-29: "8 buffers might be good". Wood and midi-test's player keep 8 buffers
+(93 ms) queued, the four data pages of `audio_v1`'s channel; effects reach the jack
+within about 150 ms instead of 100 ms.
+
+### AUDIO-9: music from an integer SoundFont wavetable synthesiser
+
+2026-10-28; the research is section Music below. New `no_std` code with no floating
+point, rendering General MIDI from the Standard MIDI Files Room's `mus2midi` makes.
+Not chosen: OPL emulation with the IWAD's `GENMIDI` (the recommendation), music
+pre-rendered on the host, hardware floating point for Wood, no music. Its
+sub-decisions are AUDIO-16 to AUDIO-20; the OPL engine and chip mode do not apply,
+since no OPL engine is built.
+
+### AUDIO-16: a separate music component
+
+2026-10-28. Not Wood's playback Thread (against the recommendation). How its output
+reaches the jack is AUDIO-10.
+
+### AUDIO-17: the SC-55 v1.2b bank trimmed by a host tool
+
+2026-10-28. Trimmed to the programs and drum notes the bundled IWAD's MUS tracks
+use; a build artifact under `target/`, rebuilt per IWAD. Not chosen: the whole file,
+GeneralUser GS.
+
+### AUDIO-18: rendered at the full output rate
+
+2026-10-28. 44 091.71 Hz. Not chosen: half rate interpolated up.
+
+### AUDIO-19: the renderer is per platform
+
+2026-10-28. The host keeps `rustysynth` (with the SC-55) as its production
+renderer, the new synthesiser is for Vesper only. So the synthesiser is not part of
+Room's engine: it is its own `no_std` crate on the Vesper side (`userspace/synth`,
+`vesper-synth`), used by the music component; Room's `mus2midi` stays the source of
+the MIDI. Clarified the same day: the new synthesiser may be plugged into Room's host
+build for testing (listening checks, comparison with `rustysynth`) behind an opt-in
+switch, `rustysynth` staying the default (Room's `vesper-synth` feature).
+
+### AUDIO-20: an f64 mode behind the `fp-mode` feature
+
+2026-11-21, as the representative FP workload for the FP/SIMD plan's P-SIMD-5.
+Without `fp-mode` the synthesiser stays integer-only, as Doom was, and
+`clippy::float_arithmetic` stays denied with the `_synth-no-float` check. With it,
+the crate and the `midi-synth` component build hard-float, and a runtime switch (the
+`midi_synth_v1` mode command) picks the integer or the f64 engine; the `fp-mode`
+component starts in f64.
+- The f64 engine is a whole voice in f64: sample position and pitch step, the
+  envelope, the attenuation and pan curves, computed with `libm` (the `no_std` port
+  of musl's maths library) instead of the integer tables.
+- It is plain f64 code, left to the compiler's vectorizer; the loop and the flags are
+  tuned until the mixing loop is shown to be vectorized.
+- Correctness: a host test renders the test song with both engines and bounds their
+  difference; a midi-test variant boots the `fp-mode` component. Its output hash is
+  used only once repeated runs show it stable; the integer hashes stay as they are.
+
+### AUDIO-10: Wood pulls `midi_synth_v1` and mixes locally
+
+2026-10-28, with the interface renamed. The maintainer's words: "rename music_v1 to
+midi_synth_v1; the bidirectional xbufs would send midi data in one direction and
+rendered audio in another; for now wood pulls the midi_synth_v1 from the play music
+scaffolding, mixing locally and sending a single audio stream to audio_v1". So the
+synthesiser component exports `midi_synth_v1`; its io-channel carries the MIDI from
+Wood to the synthesiser and the rendered s16 stereo back; Wood's playback Thread asks
+for each period, adds the effect voices on top and stays the one `audio_v1` client.
+Not chosen: a mixing service; the audio driver mixing several clients. Built in
+P-AUDIO-5 (section "`midi_synth_v1` and the synthesiser component" below).
 
 Goal: sound effects (and later music) for Wood, the Room Doom port
 (`userspace/wood/README.md`, Phase 3: PWM DMA audio, SoundFont MIDI player, mixer,
@@ -133,7 +177,7 @@ silent, and are marked as secondary where they are cited.
 
 Primary:
 
-- **[P1]** Broadcom, *BCM2835 ARM Peripherals*, 6 February 2012,
+- **[BCM2835-PERIPHERALS]** Broadcom, *BCM2835 ARM Peripherals*, 6 February 2012,
   <https://datasheets.raspberrypi.com/bcm2835/bcm2835-peripherals.pdf> (now redirects to
   `pip.raspberrypi.com/documents/RP-008249-DS-bcm2835-peripherals.pdf`). Sections used:
   §1.2.3 and §1.2.4 (ARM physical and bus addresses, footnote 1 on the L2 cache), §4.1,
@@ -141,48 +185,48 @@ Primary:
   `0xfe0`, `ENABLE` `0xff0`), §4.2.1.3 (DREQ table), §4.5 (DMA Lite engines), §6.2
   (alternate functions), §6.3 (general purpose clocks, tables 6-32 to 6-35), chapter 9
   (PWM, §9.1 to §9.6).
-- **[P2]** Raspberry Pi 3 Model B reduced schematic, rev 1.2,
+- **[RPI3B-SCHEMATIC]** Raspberry Pi 3 Model B reduced schematic, rev 1.2,
   <https://datasheets.raspberrypi.com/rpi3/raspberry-pi-3-b-reduced-schematics.pdf>,
   audio block (U11, R16 to R19, C58 to C62, R60, R61).
-- **[P3]** The device tree in the repository, `targets/bcm2710-rpi-3-b-plus.dtb`
+- **[RPI3-DEVICE-TREE]** The device tree in the repository, `targets/bcm2710-rpi-3-b-plus.dtb`
   (decompiled with `dtc`): nodes `pwm@7e20c000`, `dma@7e007000`, `cprman@7e101000`,
   `audio_pins`, `bcm2835_audio`. And, for the Pi 3 B, `bcm2710-rpi-3-b.dts` in
   <https://github.com/raspberrypi/linux> (branch `rpi-6.6.y`), node `audio_pins`.
-- **[P4]** Raspberry Pi documentation on the BCM2837: the peripherals are those of the
+- **[RPI-BCM2837-DOCS]** Raspberry Pi documentation on the BCM2837: the peripherals are those of the
   BCM2835 with the ARM physical base at `0x3F00_0000` instead of `0x2000_0000`
   (<https://www.raspberrypi.com/documentation/computers/processors.html>).
 
 Secondary (implementations, not specifications):
 
-- **[S1]** Linux `drivers/clk/bcm/clk-bcm2835.c`: `CM_PWMCTL` `0x0a0`, `CM_PWMDIV`
+- **[LINUX-CLK-BCM2835]** Linux `drivers/clk/bcm/clk-bcm2835.c`: `CM_PWMCTL` `0x0a0`, `CM_PWMDIV`
   `0x0a4`, 12 fractional divider bits. NetBSD `sys/arch/arm/broadcom/bcm2835_cm.h`: the
   same offsets, PLLD per as 500 MHz.
-- **[S2]** QEMU 11.1.2 (installed) and its sources: `hw/dma/bcm2835_dma.c`,
+- **[QEMU-BCM2835]** QEMU 11.1.2 (installed) and its sources: `hw/dma/bcm2835_dma.c`,
   `hw/arm/bcm2835_peripherals.c`, `include/hw/misc/bcm2835_cprman_internals.h`.
-- **[S3]** Circle (<https://github.com/rsta2/circle>), `lib/sound/pwmsoundbasedevice.cpp`
+- **[CIRCLE-PWM-SOUND]** Circle (<https://github.com/rsta2/circle>), `lib/sound/pwmsoundbasedevice.cpp`
   and `lib/machineinfo.cpp`: a working bare-metal PWM DMA sound driver.
 - The Broadcom note *BCM2835 Audio & PWM clocks* (G.J. van Loo, 2013) is the vendor's
   description of the PCM and PWM clock registers. It is referenced by the community
   datasheet errata page (elinux.org, which refused automated access); it was not
-  retrieved for this design. The register layout below rests on [P1] §6.3 plus [S1] and
-  [S2], which agree with each other.
+  retrieved for this design. The register layout below rests on [BCM2835-PERIPHERALS] §6.3 plus [LINUX-CLK-BCM2835] and
+  [QEMU-BCM2835], which agree with each other.
 
 ## Hardware summary
 
 ### The jack
 
-- Pins. GPIO40 ALT0 is PWM0 and GPIO41 ALT0 is PWM1 ([P1] §9.5 and §6.2). The Pi 3 B
+- Pins. GPIO40 ALT0 is PWM0 and GPIO41 ALT0 is PWM1 ([BCM2835-PERIPHERALS] §9.5 and §6.2). The Pi 3 B
   and the Pi 3 B+ both route the jack from GPIO40 and GPIO41 (`audio_pins`:
   `brcm,pins = <40 41>`, `brcm,function = <4>`, which is ALT0 in the pin controller's
-  numbering; [P3] for both boards). GPIO45 (also PWM1 on ALT0) was the right channel on
+  numbering; [RPI3-DEVICE-TREE] for both boards). GPIO45 (also PWM1 on ALT0) was the right channel on
   the earlier B+ and Pi 2 boards, not on the Pi 3.
 - Left and right are swapped relative to the channel numbers. On the Pi 3 B schematic
-  ([P2]) `AUD_PWM1` drives buffer input A1, whose output goes to `AUDIO_L`, and
+  ([RPI3B-SCHEMATIC]) `AUD_PWM1` drives buffer input A1, whose output goes to `AUDIO_L`, and
   `AUD_PWM0` drives A2, whose output goes to `AUDIO_R`. So **PWM channel 2 (GPIO41) is
   left and PWM channel 1 (GPIO40) is right**. Circle agrees: its `ArePWMChannelsSwapped()`
-  is true for the 3 B and 3 B+ ([S3], secondary). The Pi 3 B+ schematic was not checked.
+  is true for the 3 B and 3 B+ ([CIRCLE-PWM-SOUND], secondary). The Pi 3 B+ schematic was not checked.
   The first hardware test plays one side at a time to confirm.
-- Output stage ([P2]). U11 is an NC7WZ16 dual buffer powered from a separate `AUD_3V3`
+- Output stage ([RPI3B-SCHEMATIC]). U11 is an NC7WZ16 dual buffer powered from a separate `AUD_3V3`
   rail. Each side then has 220 Ω in series, 100 nF and 100 Ω to ground, a 47 µF coupling
   capacitor and 1.8 kΩ to ground at the jack. Worked out from those values (not
   measured): the low-pass corner is about 23 kHz (220 Ω ∥ 100 Ω = 68.75 Ω with 100 nF),
@@ -191,11 +235,11 @@ Secondary (implementations, not specifications):
   44.1 kHz is only about 6 dB down at the jack. That is out of hearing range, but a
   carrier at 11 or 22 kHz would be audible or close to it.
 
-### The PWM block ([P1] chapter 9)
+### The PWM block ([BCM2835-PERIPHERALS] chapter 9)
 
-- Base: bus address `0x7E20_C000` (ARM physical `0x3F20_C000` on the BCM2837, [P4]);
+- Base: bus address `0x7E20_C000` (ARM physical `0x3F20_C000` on the BCM2837, [RPI-BCM2837-DOCS]);
   the datasheet gives only offsets, and the base comes from the device tree node
-  `pwm@7e20c000` ([P3]).
+  `pwm@7e20c000` ([RPI3-DEVICE-TREE]).
 - Registers (§9.6): `CTL` `0x00`, `STA` `0x04`, `DMAC` `0x08`, `RNG1` `0x10`, `DAT1`
   `0x14`, `FIF1` `0x18`, `RNG2` `0x20`, `DAT2` `0x24`.
 - `CTL` bits: `PWEN1` 0, `MODE1` 1, `RPTL1` 2, `SBIT1` 3, `POLA1` 4, `USEF1` 5, `CLRF1` 6,
@@ -212,7 +256,7 @@ Secondary (implementations, not specifications):
   period of M = `RNG` cycles (the algorithm of §9.3), which pushes the carrier energy
   up towards the clock rate. `MSEN=1` sends one pulse of N cycles per period
   (classic mark/space). The serialiser mode (`MODE=1`) shifts out the word's bits and is
-  not useful here. Circle uses `MSEN=0` ([S3]).
+  not useful here. Circle uses `MSEN=0` ([CIRCLE-PWM-SOUND]).
 - DMA pacing. "PWM DMA is mapped to DMA channel 5" (§9.5) means DREQ 5 in the DMA
   controller's peripheral map (§4.2.1.3), the `PERMAP` value of the control block.
 - Datasheet slips seen while reading (not in the errata page because it was not
@@ -233,7 +277,7 @@ Candidate setups, all with an integer divider (no MASH jitter):
 |---|---|---|---|---|
 | 19.2 MHz | oscillator / 1 | `RNG` 435 → 44 138 Hz, 8.8 bits | 871 → 22 044 Hz, 9.8 bits | 1741 → 11 028 Hz, 10.8 bits |
 | 100 MHz | PLLD per (500 MHz) / 5 | 2268 → 44 092 Hz, 11.1 bits | 4535 → 22 051 Hz, 12.1 bits | 9070 → 11 025.4 Hz, 13.1 bits |
-| 250 MHz | PLLD per / 2 (Circle's choice on Pi ≤ 3, [S3]) | 5669 → 44 100.2 Hz, 12.5 bits | 11338 → 22 049.7 Hz | 22676 → 11 024.9 Hz |
+| 250 MHz | PLLD per / 2 (Circle's choice on Pi ≤ 3, [CIRCLE-PWM-SOUND]) | 5669 → 44 100.2 Hz, 12.5 bits | 11338 → 22 049.7 Hz | 22676 → 11 024.9 Hz |
 
 The carrier is at the sample rate, so 11.025 kHz and 22.05 kHz outputs put it in or at
 the edge of the audible band, above the jack filter's 23 kHz corner only at 44.1 kHz.
@@ -241,54 +285,54 @@ Doom's 11 025 Hz effects are therefore upsampled by the mixer (×4 to 44.1 kHz),
 played at their native rate. An exact 44 100 Hz is possible with a fractional (MASH)
 divider, at the cost of the divider jitter §6.3 describes; a 0.02 % rate error is
 inaudible, and the mixer resamples to whatever rate the driver reports. Clock and rate
-are D4: 100 MHz and `RNG` 2268.
+are AUDIO-4: 100 MHz and `RNG` 2268.
 
-PLLD per = 500 MHz on the Pi 3 is from [S1] and Circle; the datasheet does not give PLL
-frequencies. Stage A2 measures the real rate (period interrupts against the generic
+PLLD per = 500 MHz on the Pi 3 is from [LINUX-CLK-BCM2835] and Circle; the datasheet does not give PLL
+frequencies. P-AUDIO-2 measures the real rate (period interrupts against the generic
 timer), so a wrong assumption shows up as a rate error.
 
-### The PWM clock ([P1] §6.3, [S1], [S2])
+### The PWM clock ([BCM2835-PERIPHERALS] §6.3, [LINUX-CLK-BCM2835], [QEMU-BCM2835])
 
 - The PWM clock generator is in the clock manager ("CPRMAN", `cprman@7e101000`, two
-  pages, [P3]), at `CM_PWMCTL` `0x7E10_10A0` and `CM_PWMDIV` `0x7E10_10A4`. §6.3 documents
+  pages, [RPI3-DEVICE-TREE]), at `CM_PWMCTL` `0x7E10_10A0` and `CM_PWMDIV` `0x7E10_10A4`. §6.3 documents
   only the general purpose clocks `CM_GP0..2`; the PWM registers have the same format
-  according to [S1] and [S2]:
+  according to [LINUX-CLK-BCM2835] and [QEMU-BCM2835]:
   - `CTL`: `PASSWD` 31:24 (must be `0x5a` on every write), `MASH` 10:9, `FLIP` 8, `BUSY` 7,
     `KILL` 5, `ENAB` 4, `SRC` 3:0 (0 GND, 1 oscillator 19.2 MHz, 2 and 3 test, 4 PLLA per,
     5 PLLC per, 6 PLLD per, 7 HDMI auxiliary, 8 to 15 GND; Table 6-34).
   - `DIV`: `PASSWD` 31:24, `DIVI` 23:12, `DIVF` 11:0 (Table 6-35). Table 6-32 divides
-    `DIVF` by 1024 although the field is 12 bits; Linux uses 4096 ([S1]).
+    `DIVF` by 1024 although the field is 12 bits; Linux uses 4096 ([LINUX-CLK-BCM2835]).
   - Sequence (Table 6-34's rules): clear `ENAB`, wait for `BUSY` to clear, write `DIV`,
     write `SRC` and `MASH` with `ENAB` clear, then set `ENAB`. Never change source, divider
     or MASH while `BUSY` is set.
 - The same pages hold every other clock generator (UART, EMMC, PCM, the GP clocks) and,
   at `0x7E10_2000`, the PLL controls. Whoever maps them can stop the UART or the SD
-  card. That is why the clock is not simply given to the audio driver (D2).
+  card. That is why the clock is not simply given to the audio driver (AUDIO-2).
 - The firmware alternative. `mailbox_v1` already names a `pwm` clock (firmware clock id
   10) and has `get_clock_rate`. Setting it would need `SET_CLOCK_RATE` (`0x0003_8002`),
   which `drivers/mailbox` refuses on purpose ("tags that change clocks or power, which
   have typed functions or wait for per-client policy"), so it would be a new typed
   function. Whether the firmware actually programs the PWM clock on that request is not
-  documented: Linux drives the PWM clock through CPRMAN directly ([S1]), not through the
+  documented: Linux drives the PWM clock through CPRMAN directly ([LINUX-CLK-BCM2835]), not through the
   firmware. It would have to be tried on hardware, and QEMU cannot show it.
 - The capability contract already expects a `cprman` component as a firmware-service
   component (contract, device memory section: "later `cprman`, `axiperf` and `vcsm`").
 
-### The DMA controller ([P1] chapter 4)
+### The DMA controller ([BCM2835-PERIPHERALS] chapter 4)
 
 - 16 channels. Channels 0 to 14 are at bus `0x7E00_7000 + 0x100 × n`, all in one 4 KiB
   page together with the global `INT_STATUS` (`0xfe0`) and `ENABLE` (`0xff0`); channel 15
   is at `0x7EE0_5000` (§4.2). One page holding every channel means a component that
-  maps it can program every channel (D1).
+  maps it can program every channel (AUDIO-1).
 - Which channels the ARM may use: the device tree's `brcm,dma-channel-mask = <0x7f35>`
-  ([P3]): channels 0, 2, 4, 5, 8 to 14. The firmware uses the others. The firmware
+  ([RPI3-DEVICE-TREE]): channels 0, 2, 4, 5, 8 to 14. The firmware uses the others. The firmware
   may edit the mask at boot, so it is read from the tree, not hard-coded. Circle uses
-  `0x1f35` on Pi 1 to 3 (it leaves 13 and 14 alone; [S3]).
+  `0x1f35` on Pi 1 to 3 (it leaves 13 and 14 alone; [CIRCLE-PWM-SOUND]).
 - Lite channels (§4.5): half the bandwidth, no 2D mode, a 16-bit length (65 536 bytes
   per control block). Which channels are Lite is not listed in §4.5; the `DEBUG`
   register's `LITE` bit (28) says so per channel at run time (Linux and Circle treat 7 to
   14 as Lite). A Lite channel is plenty for 353 KB/s of PWM words.
-- Interrupts ([P3]): channels 0 to 10 have their own lines (GPU interrupts 16 to 26);
+- Interrupts ([RPI3-DEVICE-TREE]): channels 0 to 10 have their own lines (GPU interrupts 16 to 26);
   channels 11 to 14 share line 27; line 28 is "dma-shared-all". The node lists line 27
   four times; Kickstart issues a line the node repeats once, at its first position, so
   the `dma` driver receives 13 interrupts: channels 0 to 10 at their own number, the
@@ -304,7 +348,7 @@ timer), so a wrong assumption shows up as a rate error.
   `NO_WIDE_BURSTS` 26. §4.2.1.3: writes to a peripheral must be paced by DREQ, and
   several writes can be in flight before the peripheral drops DREQ; `WAIT_RESP` keeps one
   write in flight, which is the safe setting for an eight-word FIFO with DREQ threshold 7.
-  Circle uses `DMAC = ENAB | PANIC 7 | DREQ 7` ([S3]).
+  Circle uses `DMAC = ENAB | PANIC 7 | DREQ 7` ([CIRCLE-PWM-SOUND]).
 - Bus addresses (§1.2.3, §1.2.4): DMA uses bus addresses. Peripherals are at
   `0x7Ennnnnn`; RAM is seen at the `0xC000_0000` alias, which bypasses the VideoCore L2
   cache (footnote 1: "accesses to memory are routed either via or around the L2 cache
@@ -338,7 +382,7 @@ without an interrupt.
 - Eight logical channels (`Platform::sound_start(lump, channel 0..8, vol 0..=127, sep 0..=254)`,
   `sound_stop`, `sound_update`, `sound_is_playing` in
   `userspace/wood/room/src/engine/platform.rs`). Pan law from `gains_from`:
-  `left = vol·(254 − sep)/(127·254)`, `right = vol·sep/(127·254)`. Settled in A4: the
+  `left = vol·(254 − sep)/(127·254)`, `right = vol·sep/(127·254)`. Settled in P-AUDIO-4: the
   engine centres a sound at 128 (`NORM_SEP` of `s_sound.c`, `128 − swing·sin`, 32 to
   224); the law, Chocolate Doom's `i_sdlsound.c` one, is symmetric about 127, so a
   centred sound plays at 126 : 128 (0.14 dB). Vanilla's own mixer (linuxdoom
@@ -347,8 +391,8 @@ without an interrupt.
   host and Vesper pan alike (`mixer::CENTRE_SEPARATION`).
 - Music: the host renders the MIDI the engine converts from MUS with `rustysynth` and an
   SF2 SoundFont (`platform/host/audio/music.rs`). That crate uses `std`; Room itself is
-  `no_std` with `alloc` now. On Vesper, music is stage A5: Vesper's own integer
-  synthesiser in a music component (D9; section Music below).
+  `no_std` with `alloc` now. On Vesper, music is P-AUDIO-5: Vesper's own integer
+  synthesiser in a music component (AUDIO-9; section Music below).
 - What reaches the hardware: interleaved stereo FIFO words, each a value 0..`RNG`,
   right first. The mixer should not know that. The proposal: clients send signed 16-bit
   interleaved stereo at the rate the driver reports, and the driver converts while
@@ -373,20 +417,20 @@ without an interrupt.
 
 The decided options are drawn; each box below names the decision it rests on.
 
-- **`audio` driver** (`drivers/audio-pwm-bcm2835`, written in A3). Binds to the PWM node
-  (`brcm,bcm2835-pwm`, D3). Owns the PWM register page. Sets its pins through
+- **`audio` driver** (`drivers/audio-pwm-bcm2835`, written in P-AUDIO-3). Binds to the PWM node
+  (`brcm,bcm2835-pwm`, AUDIO-3). Owns the PWM register page. Sets its pins through
   `gpio_v1` from the node's `pinctrl-0` (as `sdhost-bcm2835` does; Kickstart passes the
-  pins in `DriverInit::pins`). Gets the PWM clock through `clock_v1` (D2). Owns the ring
+  pins in `DriverInit::pins`). Gets the PWM clock through `clock_v1` (AUDIO-2). Owns the ring
   memory, carved from its own `DriverInit.memory`, so it knows each period's bus address
   (`memory_bus` plus offset) without asking the kernel. Configures `RNG1 = RNG2`,
-  `CTL = PWEN1|USEF1|PWEN2|USEF2` with `MSEN` per D4, `CLRF1` first, `DMAC = ENAB | PANIC 7 |
+  `CTL = PWEN1|USEF1|PWEN2|USEF2` with `MSEN` per AUDIO-4, `CLRF1` first, `DMAC = ENAB | PANIC 7 |
   DREQ 7`. Exports `audio_v1` (section `audio_v1` below: its threading, refill path and
   open/close behaviour as written).
-- **`dma` driver** (`drivers/dma-bcm2835`, D1, written in A2). Binds to
+- **`dma` driver** (`drivers/dma-bcm2835`, AUDIO-1, written in P-AUDIO-2). Binds to
   `brcm,bcm2835-dma`, the only holder of the DMA page and of the channel interrupts.
   Because the BCM2837 has no IOMMU, any DMA programmer can write all of RAM: the `dma`
   driver is in the trusted base like the USB host controller; clients name memory by
-  bus address for now (B1a). As written:
+  bus address for now (AUDIO-1). As written:
   - *Channels.* Kickstart passes the node's `brcm,dma-channel-mask` in
     `DriverInit::dma_channel_mask`; `claim` hands out the lowest granted, unclaimed
     channel whose interrupt the driver holds, resets it (`CS.RESET`), clears its `DEBUG`
@@ -419,30 +463,30 @@ The decided options are drawn; each box below names the decision it rests on.
     line.
   - *Stopping* pauses the channel (`ACTIVE` clear), waits up to 1 ms for its writes to be
     answered, and resets it.
-- **`cprman` driver** (new, D2). Binds to `brcm,bcm2835-cprman`, exports `clock_v1`
+- **`cprman` driver** (new, AUDIO-2). Binds to `brcm,bcm2835-cprman`, exports `clock_v1`
   (`set_rate(clock, hz)`, `enable`, `disable`) for the clocks its clients' nodes name in
   `clocks` (`pwm` is `<&clocks 30>`), refusing others. Linked from the PWM node with
   `uses clock_v1 via device clocks { … }`, the same `via` form `fb` uses for `firmware,
   mboxes`.
-- **Client transport** (D6). An io-channel in transmit mode (`libs/io-channel`): Wood
+- **Client transport** (AUDIO-6). An io-channel in transmit mode (`libs/io-channel`): Wood
   submits packets of full PCM buffers from the channel's data pages and gets each back
   when the driver has copied it into the ring. The driver is paced by the DMA, not by
   the client: at each period interrupt it takes as many queued bytes as the period needs
   and completes the packets it emptied, advancing the channel EventCount the client
   waits on. The interface declares the channel (`channel 4;`), and Kickstart provisions
-  it per client, as for `input_v1`. As written in A3: section `audio_v1`.
-- **Underrun** (D7). A period with too few client frames is filled up with mid-scale
+  it per client, as for `input_v1`. As written in P-AUDIO-3: section `audio_v1`.
+- **Underrun** (AUDIO-7). A period with too few client frames is filled up with mid-scale
   silence and an underrun counter goes up; the ring never stops while the output is open.
   Opening ramps from 0 to `RNG/2` over one period, closing from the last frame to 0 over
   one period, against the turn-on pop.
-- **Mixing** (D5). In Wood, in a second Thread (the README's "isochronous playback
+- **Mixing** (AUDIO-5). In Wood, in a second Thread (the README's "isochronous playback
   thread"): eight voices of 8-bit DMX data, a fixed-point step resampler (11 025 Hz to the
   reported rate), `gains_from` panning, 32-bit accumulation, clipping to 16 bits. The game
   Thread only changes voice state (start, stop, volume, separation) through a small
   lock-free table; the playback Thread waits on the channel EventCount and keeps two or
   three buffers queued. The mixer is pure `no_std` code in Room, shared with nothing
   platform-specific, so it is host-testable and could also replace the rodio voice path
-  on the host later. As written in A4:
+  on the host later. As written in P-AUDIO-4:
   - *Mixer* (`room::engine::sound::mixer`). `Mixer` holds eight voices, each a sound,
     a 32.32 position and step (`step = rate·2³²·1000 / output mHz`, 0.250 04 for
     11 025 Hz at 44 091.71 Hz) and two 16.16 gains (`gains`, the law above); a frame is
@@ -470,14 +514,14 @@ The decided options are drawn; each box below names the decision it rests on.
     of 512 frames (93 ms) queued: each packet back is mixed into and put again. On
     `sound_shutdown` it stops refilling, calls `close` right after the last packet, takes
     the rest back and answers again.
-- **Scheduling** (D8 and its follow-up). The driver's ring of 4 periods (46 ms) and
+- **Scheduling** (AUDIO-8 and its follow-ups AUDIO-11 to AUDIO-15). The driver's ring of 4 periods (46 ms) and
   Wood's queue of 8 buffers (93 ms) cover scheduling jitter. The root dispatcher runs the
   playback Thread at high priority, so a buffer coming back wakes it ahead of the
   engine, the compositor and the lava lamp instead of after their 10 ms slices. The
   isochronous scheduler in the Future work of
   [scheduling-decisions.md](scheduling-decisions.md) is still not needed.
 
-### `audio_v1` (written in A3)
+### `audio_v1` (written in P-AUDIO-3)
 
 `drivers/audio-pwm-bcm2835/interfaces/audio_v1.if`, a prototype edited in place: `local`,
 `badged;` (the driver tells clients and their io-channels apart by the badge of their
@@ -525,7 +569,7 @@ periods it replayed are counted late. Each period is filled by `Stream::fill`: p
 order, records in order, each frame converted to `[word(right), word(left)]` with
 `word = ((s + 32768) · RNG) >> 16` (0 for -32768, `RNG/2` for 0, `RNG - 1` for 32767),
 then `CleanData` on the slot. Too few frames: the rest of the period is silence (`RNG/2`)
-and, once a packet has come since `open`, it counts as an underrun (D7).
+and, once a packet has come since `open`, it counts as an underrun (AUDIO-7).
 
 Open and close. `close` does not cut the stream: the refill Thread keeps taking the
 queued packets (`Stream::drain`, the end of the stream is no underrun), at most 8 periods
@@ -539,7 +583,7 @@ completions against `CNTVCT_EL0`, the `STA` flags and `dma_v1.errors`). A client
 wants its tail played closes right after its last packet; one that waits for every
 packet first leaves a silent period behind it, which counts as an underrun.
 
-### `dma_v1` (written in A2, D1)
+### `dma_v1` (written in P-AUDIO-2, AUDIO-1)
 
 `drivers/dma-bcm2835/interfaces/dma_v1.if`, a prototype edited in place. It is `local`
 and `badged;` (the driver tells clients apart by the badge of their keys) and declares
@@ -552,7 +596,7 @@ of a ring, a block of a copy); the io-channel's FIFOs carry nothing yet. The fun
   PWM) or for memory (0); raises `no_channel` or `unknown_request`.
 - `copy(dma_channel, source, destination, block_bytes, blocks)`: a finite chain of up to
   eight linked blocks, unpaced, each with its interrupt (QEMU tests, and the capture
-  mode of A3).
+  mode of P-AUDIO-3).
 - `start_ring(dma_channel, ring, period_bytes, periods)`: a circular chain of up to
   eight periods into the channel's peripheral FIFO, paced by its DREQ; raises
   `unknown_request` on a memory channel.
@@ -575,14 +619,14 @@ invalidate it again before reading it. Memory is named by its bus address,
 `DriverInit::memory_bus` plus the offset into the client's memory.
 
 Checking that a client's ranges are RAM it owns (lent Frames with `GRANT` and
-`Frame.GetAddress`, B1b) waits for an untrusted client.
+`Frame.GetAddress`, AUDIO-1) waits for an untrusted client.
 
-## Music (stage A5, research for D9)
+## Music (P-AUDIO-5, research for AUDIO-9)
 
-Research for D9, written 2026-10-28 before it was answered (the answer, option 2 as a
+Research for AUDIO-9, written 2026-10-28 before it was answered (the answer, option 2 as a
 separate component, is in section Decisions; what was built is subsection "The
-synthesiser as built (A5b)" below). Sources for this section are listed at its end
-([M1] to [M12]); sizes and counts marked "measured" were taken from the files in the
+synthesiser as built" below). Sources for this section are listed at its end
+(Music sources); sizes and counts marked "measured" were taken from the files in the
 repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
 
 ### What there is to play
@@ -625,7 +669,7 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
   per AddressSpace is designed but not implemented ([simd-design.md](simd-design.md)).
   Until it is, this holds for every component, and it stays true for the synthesiser.
 - **CPU.** The Pi 3 B's Cortex-A53 runs at 600 to 1 200 MHz (`arm_freq` 1 200,
-  `arm_freq_min` 600 in the `config.txt` defaults [M11]; Vesper does not set the ARM clock
+  `arm_freq_min` 600 in the `config.txt` defaults [RPI-CONFIG-TXT]; Vesper does not set the ARM clock
   through the mailbox, so which of the two the board runs at under Vesper is unmeasured
   and must be checked before any budget is trusted). The kernel is single-core: the
   engine Thread (35 tics/s, plus rendering), Wood's playback Thread, the compositor and
@@ -640,13 +684,13 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
   Resources reach a component as mapped pages of the image (`ResourceRecord`
   base and length in Kickstart's `DriverInit`), not as copies in its memory, so they do
   not use Wood's 16 MiB (12 MiB heap, 2 MiB engine stack); state parsed from them does.
-- **The playback Thread** (A4) already mixes 8 buffers of 512 frames (11.6 ms each)
+- **The playback Thread** (P-AUDIO-4) already mixes 8 buffers of 512 frames (11.6 ms each)
   ahead; a music renderer that fills the same buffers has 11.6 ms of wall time per
   buffer, shared with everything else on the core.
 
 ### Option 1: OPL emulation with GENMIDI (what vanilla Doom did)
 
-- **How Chocolate Doom does it.** `src/i_oplmusic.c` [M1] (GPL-2.0-or-later) loads the
+- **How Chocolate Doom does it.** `src/i_oplmusic.c` [CHOCOLATE-DOOM-OPLMUSIC] (GPL-2.0-or-later) loads the
   `GENMIDI` lump, reads a MIDI file (`src/midifile.c`, Chocolate Doom also converts MUS
   to MIDI first) and drives an OPL chip: 9 voices in OPL2 mode, 18 in OPL3 mode
   (`num_opl_voices`), DMX's voice allocation and its quirks per driver version
@@ -659,7 +703,7 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
   change, which MUS songs never have (one tempo meta event at the start).
 - **The emulator.** Chocolate Doom now vendors **Nuked-OPL3 1.8 in the "fast" fork**
   (`opl/opl3.c`, `opl3.h`, `wf_rom.h`; LGPL-2.1-or-later; "bit-exact
-  performance-optimized fork", [M2], [M3]); earlier releases used DOSBox's DBOPL
+  performance-optimized fork", [CHOCOLATE-DOOM-OPL3], [NUKED-OPL3-FAST]); earlier releases used DOSBox's DBOPL
   (GPL-2.0). Nuked-OPL3 is a cycle-accurate integer emulation (log-sine and exponent
   ROM tables, integer envelope and phase generators); its only floating point is the
   `OPL_SIN` table of the optional stereo extension (`OPL_ENABLE_STEREOEXT`, off by
@@ -668,13 +712,13 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
   `RSM_FRAC` 10). The chip state is one `opl3_chip` (18 channels, 36 slots, a 1 024-entry
   write buffer), a few tens of KiB; the tables 16 KiB.
 - **Rust ports** (crates.io, checked 2026-10-28; none of their code was built or run):
-  - `nuked-opl3` 0.1.0 [M4] (LGPL-2.1-or-later): a pure-Rust port of Nuked-OPL3 with the
+  - `nuked-opl3` 0.1.0 [NUKED-OPL3-CRATE] (LGPL-2.1-or-later): a pure-Rust port of Nuked-OPL3 with the
     fast fork's optimisations, "bit-identical output to the C reference". The chip core
     (`src/core.rs`) is integer (its one `f64` is the stereo-extension sine); the crate
     uses `std` paths (`std::mem`, `std::marker`) and its `Opl3Device` wrapper keeps
     timers in `f64`, so a `no_std` use needs the core with `std::` changed to `core::`
     (a small patch or a vendored copy) and without the wrapper.
-  - `oplon` 1.0.0 [M5] (MIT): "no_std, integer-only" clean-room OPL2/OPL3 core, no heap,
+  - `oplon` 1.0.0 [OPLON-CRATE] (MIT): "no_std, integer-only" clean-room OPL2/OPL3 core, no heap,
     `forbid(unsafe_code)`, ROM tables generated at compile time, 4-point cubic
     resampling to the output rate. Not bit-exact: its author reports a median spectral
     cosine of about 0.99 against Nuked-OPL3 and DBOPL driven with Doom VGM register
@@ -686,14 +730,14 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
     of C, plus 838 in `midifile.c`, much of it reusable as a simple single-track SMF
     reader since `mus2midi` writes one track) is the part to port, into Room (GPL-2.0;
     the source is GPL-2.0-or-later).
-- **CPU (estimate).** The fast fork's README [M3] reports, on an unnamed x86-64 at
+- **CPU (estimate).** The fast fork's README [NUKED-OPL3-FAST] reports, on an unnamed x86-64 at
   GCC `-O2`, 2.7 s to render a dense 3.5-minute VGM (upstream 4.3 s): about 260 ns per
   native sample, 1.3 % of that core in real time. A Cortex-A53 (in-order, dual issue)
   at 1.2 GHz is assumed 5 to 10 times slower per sample on this branchy integer code
   than a current desktop core: about 6 % to 13 % of the core for an OPL3 at 49 716 Hz,
   twice that at 600 MHz. Doom's tracks are lighter than a dense VGM (at most 15 notes,
   9 voices in OPL2 mode) and the fork skips silent slots, so the real figure should sit
-  at the low end; it is the first thing A5 measures on the board. Resampling to
+  at the low end; it is the first thing P-AUDIO-9 measures on the board. Resampling to
   44 091.71 Hz adds one interpolation per frame. (A host benchmark of the vendored
   C was not run for this research.)
 - **Size.** `GENMIDI` is already in the IWAD (no new resource, no boot time); the code
@@ -707,7 +751,7 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
 ### Option 2: integer SoundFont wavetable synthesiser
 
 - **Existing crates.** No integer or `no_std` SoundFont synthesiser was found.
-  `rustysynth` 1.3.8 [M6] (MIT, the host's) is `f32` with `std` (`io::Read`, `Arc`)
+  `rustysynth` 1.3.8 [RUSTYSYNTH-CRATE] (MIT, the host's) is `f32` with `std` (`io::Read`, `Arc`)
   and has per-voice biquad filters, LFOs, modulation envelopes, chorus and reverb;
   `rustysynth-ext`, `magnetite_midi` (MIT, 503 `f32`/`f64` uses), `xsynth-core`
   (LGPL-3.0), `oxisynth` (FluidSynth port), `tsf` (TinySoundFont bindings, C, float),
@@ -719,12 +763,12 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
   cycles each 5 500 to 15 000 cycles per frame, 240 M to 650 M cycles per second at
   44 091.71 Hz: 20 % to over 50 % of the core at 1.2 GHz, and it still needs a `no_std`
   port. Not viable.
-- **An integer synthesiser written for Room** (`no_std`, beside the A4 mixer): per voice
+- **An integer synthesiser written for Room** (`no_std`, beside the P-AUDIO-4 mixer): per voice
   a 32.32 sample position and step (from key, root key, tuning and pitch bend through a
   cent-to-ratio table), linear interpolation of 16-bit samples with the SF2 loop
   points, the volume envelope (delay, attack, hold, decay, sustain, release) stepped in
   integer per block of frames, velocity and channel volume/expression as integer
-  attenuation (centibel table), panning with the A4 gain law; a General MIDI
+  attenuation (centibel table), panning with the P-AUDIO-4 gain law; a General MIDI
   sequencer for the SMF that `mus2midi` produces. Left out at first: the low-pass
   filter (or a cheap one-pole integer filter), modulation envelope, vibrato/tremolo
   LFOs, chorus and reverb. Estimated 25 to 40 cycles per voice per frame: at 24 voices
@@ -742,7 +786,7 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
     samples are Roland's ("use and redistribution ... may be subject to Roland's terms",
     `room/soundfonts/SC55Soundfont-1.2b/README.md`). Bundling it into a Vesper image that
     is published is a redistribution question for the maintainer.
-  - GeneralUser GS 2.0.3 [M7]: 32 319 396 bytes, licence allows bundling and
+  - GeneralUser GS 2.0.3 [GENERALUSER-GS]: 32 319 396 bytes, licence allows bundling and
     modification in software ("Please feel free to use it in your software projects, and
     to modify the SoundFont bank"); trimmed to Doom's programs it would be far smaller
     (not measured).
@@ -787,7 +831,7 @@ for completeness. The synthesiser stays integer-only.
   the same 512-frame buffer before the effect voices are added: no new component, one
   clock, one `audio_v1` client. (b) A separate `music` component: `audio_v1` takes one
   client (`busy`), so it would need either a mixing service or to hand rendered buffers
-  to Wood, adding a hop for no gain while Wood is the only player. (a) fits D5.
+  to Wood, adding a hop for no gain while Wood is the only player. (a) fits AUDIO-5.
 - **Hand-over from the engine.** As `SharedVoices` does for effects: `music_play` copies
   the MIDI bytes (largest shareware song: `D_E1M8`, 59 535 bytes of MUS) into a buffer
   of Wood's heap and publishes it with a sequence number; stop, pause, resume and volume
@@ -801,14 +845,15 @@ for completeness. The synthesiser stays integer-only.
   (or, cheaper, renders at the output rate directly with `oplon`, which resamples
   internally). Option 2 can render at the output rate or at half of it and interpolate.
 
-### The synthesiser as built (A5b)
+### The synthesiser as built
 
-Built 2026-10-28 after D9 (option 2; D9.4 b, D9.5 a, D9.6 a); host-tested only, not yet
-run on Vesper (that is A5c) or on the board (A5a, A5d).
+Built 2026-10-28 after AUDIO-9 (option 2; AUDIO-17, AUDIO-18, AUDIO-19) in
+P-AUDIO-5, host-tested; it runs on Vesper in the component below, and on the board
+in P-AUDIO-9 and P-AUDIO-10.
 
 - **Where.** `userspace/synth`, crate `vesper-synth` in the Vesper workspace
-  (`no_std` + `alloc`, no dependencies), for the music component (D9.1). Not in Room: the
-  host keeps `rustysynth` (D9.6). Room's `mus2midi` (now `pub`) stays the MIDI source.
+  (`no_std` + `alloc`, no dependencies), for the music component (AUDIO-16). Not in Room: the
+  host keeps `rustysynth` (AUDIO-19). Room's `mus2midi` (now `pub`) stays the MIDI source.
 - **Modules.** `sf2` reads the SoundFont in place (RIFF `sfbk`, `INFO`, `sdta/smpl`, the
   nine `pdta` arrays, index checks; records decoded on access, sample points read from
   the file's bytes, so on Vesper from the mapped resource). `bank` resolves presets and
@@ -821,7 +866,7 @@ run on Vesper (that is A5c) or on the board (A5a, A5d).
   (registered parameter 0 through CC 101/100/6/38), sustain (CC 64), reset all
   controllers (CC 121), all sound off (CC 120), all notes off (CC 123, and 124 to 127).
   `voice` plays one sample; `envelope` is the volume envelope; `synth` holds 16 channels
-  and the voices; `smf` and `sequencer` play a MIDI file; `trim` is D9.4's trimming.
+  and the voices; `smf` and `sequencer` play a MIDI file; `trim` is AUDIO-17's trimming.
 - **Fixed point.** Sample positions and steps are 32.32 (absolute sample-point indices),
   interpolation is linear with 15 bits of fraction. The output rate is an exact fraction
   `numerator / denominator` Hz (`Rate`, the one the client opens at: 100 000 000 / 2268 on
@@ -880,8 +925,8 @@ run on Vesper (that is A5c) or on the board (A5a, A5d).
   its object code references a soft-float routine (`__addsf3`, `__divdf3`, `__floatsisf`,
   comparisons and conversions), checking the pattern against the core library, which
   references 14 of them. The check is on the library's own code; the music component's
-  ELF (A5c) should be checked the same way.
-- **The trimmed bank** (D9.4): `just _wood-soundfont` runs the host tool
+  ELF (the component below) should be checked the same way.
+- **The trimmed bank** (AUDIO-17): `just _wood-soundfont` runs the host tool
   `userspace/wood/tools/sf2-trim` (`sf2-trim`): it reads the IWAD's 13 MUS lumps,
   converts them with `mus2midi`, collects the melodic programs and percussion notes the
   note-ons sound (37 programs and 23 drum notes, the lists of section "What there is to
@@ -897,16 +942,16 @@ run on Vesper (that is A5c) or on the board (A5a, A5d).
   of each 100 ms window in dB): correlation 0.94 (`D_E1M1`), 0.96 (`D_E1M2`), 0.88
   (`D_INTER`); overall level 1.4 to 2.5 dB below `rustysynth`. The first 10 s of
   `D_E1M1` peak at 7 600 (about -12.7 dBFS), so there is headroom for the effects on top.
-- **On the host, opt-in** (D9.6 clarification): Room's feature `vesper-synth`
+- **On the host, opt-in** (AUDIO-19's clarification): Room's feature `vesper-synth`
   (`cd userspace/wood/room && cargo run --release --features vesper-synth -- -iwad
   ../wad/doom1.wad`) renders the host's music with this synthesiser instead of
   `rustysynth`, from the same SoundFont the host loads, for listening checks; the
   default build is unchanged.
-- **Not measured yet:** the CPU cost on the Cortex-A53 (A5a).
+- **Not measured yet:** the CPU cost on the Cortex-A53 (P-AUDIO-9).
 
-### `midi_synth_v1` and the synthesiser component (A5c)
+### `midi_synth_v1` and the synthesiser component
 
-Built 2026-10-28 after D10; checked in QEMU, not on the board.
+Built 2026-10-28 after AUDIO-10, in P-AUDIO-5; checked in QEMU, not on the board.
 
 - **The component** `userspace/midi-synth` (binary `midi-synth`, instance
   `midi_synth` in wood-test): a program with no imports, a 4 MiB RAM Untyped (one 2 MiB
@@ -920,7 +965,7 @@ Built 2026-10-28 after D10; checked in QEMU, not on the board.
   audio output's exact rate (`busy` if another client holds it or the bank did not load,
   `unsupported_rate` outside 8 kHz to 192 kHz), `close`, `service`
   (handle every packet the caller put, in order; returns how many) and `playing`.
-- **Both directions on one io-channel** (D10's "bidirectional xbufs"). The client owns
+- **Both directions on one io-channel** (AUDIO-10's "bidirectional xbufs"). The client owns
   the buffers in its data pages and submits packets; every packet comes back on the
   completion FIFO. The packet's value word says what it is (its low byte the command):
   *song* packets carry MIDI bytes from the client (flags: first, last, looping; a song
@@ -945,7 +990,7 @@ Built 2026-10-28 after D10; checked in QEMU, not on the board.
   queued commands (song chunks with a `service` each), puts a render packet for 512
   frames, calls `service`, copies the rendered frames into the audio buffer and mixes
   the effect voices on top (`Mixer::mix_shared_onto`, one clip), then queues the buffer
-  on `audio_v1` as in A4. `music_is_playing` follows `playing`, asked every 32 periods.
+  on `audio_v1` as in P-AUDIO-4. `music_is_playing` follows `playing`, asked every 32 periods.
   Wood is still the one `audio_v1` client.
 - **Determinism.** The synthesiser's output depends only on the song, the commands and
   the frame they arrive at, not on how frames are split into calls (the block grid,
@@ -975,40 +1020,40 @@ Built 2026-10-28 after D10; checked in QEMU, not on the board.
 
 ### Music sources
 
-- **[M1]** Chocolate Doom, `src/i_oplmusic.c` and `src/midifile.c` (GPL-2.0-or-later),
+- **[CHOCOLATE-DOOM-OPLMUSIC]** Chocolate Doom, `src/i_oplmusic.c` and `src/midifile.c` (GPL-2.0-or-later),
   <https://github.com/chocolate-doom/chocolate-doom/blob/master/src/i_oplmusic.c>.
-- **[M2]** Chocolate Doom, `opl/opl3.c`, `opl/opl3.h`, `opl/opl_sdl.c`,
+- **[CHOCOLATE-DOOM-OPL3]** Chocolate Doom, `opl/opl3.c`, `opl/opl3.h`, `opl/opl_sdl.c`,
   `opl/Makefile.am` (Nuked-OPL3 1.8-fast.3, upstream commit `cfedb09`),
   <https://github.com/chocolate-doom/chocolate-doom/tree/master/opl>.
-- **[M3]** Nuked-OPL3-fast README (benchmarks against upstream),
+- **[NUKED-OPL3-FAST]** Nuked-OPL3-fast README (benchmarks against upstream),
   <https://github.com/tgies/Nuked-OPL3-fast>; upstream Nuked-OPL3,
   <https://github.com/nukeykt/Nuked-OPL3>.
-- **[M4]** `nuked-opl3` 0.1.0, <https://crates.io/crates/nuked-opl3>,
+- **[NUKED-OPL3-CRATE]** `nuked-opl3` 0.1.0, <https://crates.io/crates/nuked-opl3>,
   <https://github.com/tgies/nuked-opl3-rs>.
-- **[M5]** `oplon` 1.0.0, <https://crates.io/crates/oplon>,
+- **[OPLON-CRATE]** `oplon` 1.0.0, <https://crates.io/crates/oplon>,
   <https://codeberg.org/sbechet/oplon>.
-- **[M6]** `rustysynth` 1.3.8, <https://crates.io/crates/rustysynth>; other crates
+- **[RUSTYSYNTH-CRATE]** `rustysynth` 1.3.8, <https://crates.io/crates/rustysynth>; other crates
   checked: `opl-emu` (<https://github.com/Ragnaroek/opl-emu>), `opl-audio`, `opl3-rs`,
   `xsynth-core`, `magnetite_midi`, `soundfont`, `tsf`, `fluidlite` (crates.io search,
   2026-10-28).
-- **[M7]** GeneralUser GS 2.0.3, <https://github.com/mrbumpy409/GeneralUser-GS>
+- **[GENERALUSER-GS]** GeneralUser GS 2.0.3, <https://github.com/mrbumpy409/GeneralUser-GS>
   (`documentation/LICENSE.txt`).
-- **[M8]** SC-55 SoundFont v1.2b, <https://github.com/GuihongWang/SC55Soundfont>, and
+- **[SC55-SOUNDFONT]** SC-55 SoundFont v1.2b, <https://github.com/GuihongWang/SC55Soundfont>, and
   `userspace/wood/room/soundfonts/SC55Soundfont-1.2b/README.md`.
-- **[M9]** The SoundFont 2.04 specification (sections 7 and 8: `pdta` records,
+- **[SF2-SPEC]** The SoundFont 2.04 specification (sections 7 and 8: `pdta` records,
   generators, the volume envelope), E-mu Systems / Creative Technology, 1996.
-- **[M10]** The MUS format as `room/src/engine/sound/mus2midi.rs` reads it; the
+- **[MUS2MIDI]** The MUS format as `room/src/engine/sound/mus2midi.rs` reads it; the
   header's instrument list (melodic 0 to 127, percussion 135 to 181 for notes 35 to 81)
   is what the program and drum counts above were taken from.
-- **[M11]** Raspberry Pi documentation, `config.txt`, overclocking options (defaults
+- **[RPI-CONFIG-TXT]** Raspberry Pi documentation, `config.txt`, overclocking options (defaults
   table: Pi 3 `arm_freq` 1 200, `arm_freq_min` 600),
   <https://www.raspberrypi.com/documentation/computers/config_txt.html>.
-- **[M12]** Measurements on files in the repository (2026-10-28): `doom1.wad` lumps and
+- **[REPO-MEASUREMENTS]** Measurements on files in the repository (2026-10-28): `doom1.wad` lumps and
   song lengths, SC-55 sample use per program, Wood's segments (about 765 KiB loaded).
 
 ## What QEMU can and cannot test
 
-Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]):
+Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([QEMU-BCM2835]):
 
 - **PWM: not emulated.** Nothing is mapped at `0x3F20_C000`, not even an unimplemented
   stub (`bcm2835_peripherals.c` has nine `create_unimp` stubs, none for PWM). An access
@@ -1026,14 +1071,14 @@ Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]
   `NEXTCONBK`, does 2D mode, sets `INT` and raises the channel interrupt when `INTEN` is
   set, and keeps `INT_STATUS` and `ENABLE`. Consequences: a **circular chain never ends
   and hangs the emulator**, so QEMU tests use finite chains; and a write to the PWM FIFO
-  address goes nowhere. Seen while writing A2: QEMU stores a `DEBUG` write as it is
+  address goes nowhere. Seen while writing P-AUDIO-2: QEMU stores a `DEBUG` write as it is
   (the hardware clears the error flags written with 1), so the `dma` driver writes back
   only the flags it read as set; and `DEBUG.LITE` reads 0 there, so every channel looks
   like a full one. One interrupt covers a whole chain, which the driver's counting from
   `CONBLK_AD` turns into one EventCount advance per block.
 - So in QEMU: memory-to-memory DMA tests (chains, interrupts, `INT_STATUS`, `CS.END`,
   error bits), clock register tests, all of the interface and io-channel path, and the
-  mixer. As written in A3, the `audio` driver under `qemu` replaces the ring by a
+  mixer. As written in P-AUDIO-3, the `audio` driver under `qemu` replaces the ring by a
   capture: each period is played by a one-block `dma_v1.copy` from its ring slot into
   the same slot of a 4-page capture buffer, started at the period's nominal time (11.6 ms
   apart, so the stream runs at about the real pace), and the copy's completion is the
@@ -1042,7 +1087,7 @@ Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]
   with what the period was filled with: the ramps, and for stream periods the capture
   test's pattern (`stream::test_pattern`, which the test client sends) converted, from the
   stream position the period started at, then silence. The pattern check is the
-  client's to ask for (A4): a stream whose first period starts with 16 frames of the
+  client's to ask for (P-AUDIO-4): a stream whose first period starts with 16 frames of the
   pattern (`stream::starts_with_test_pattern`) is checked against it; any other stream,
   such as Wood's mixed effects, is checked against the ring slot each period was copied
   from, then silence, and its periods that are not silent are counted and traced at
@@ -1055,7 +1100,7 @@ Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]
 
 The board is a Pi 3 B (memory: chainboot on hardware). The device tree on hardware is
 the firmware's, edited by `config.txt`, and chainboot passes it on to the kernel
-unchanged; the PWM node is `status = "disabled"` by default and is enabled (D3) with
+unchanged; the PWM node is `status = "disabled"` by default and is enabled (AUDIO-3) with
 
 ```
 dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
@@ -1065,8 +1110,8 @@ in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on f
 (ALT0) and a 100 MHz assigned clock rate. QEMU tests use the same change made by
 `targets/overlays/audio-test-pwm.dts` (`just _test-audio`). Order of tests:
 
-1. `just _boot-audio-test` (since A3; the polled tone of A1 and the driver's own ring
-   tone of A2 were replaced by it): the test client (`userspace/tests/audio/tone`)
+1. `just _boot-audio-test` (since P-AUDIO-3; the polled tone of P-AUDIO-1 and the driver's own ring
+   tone of P-AUDIO-2 were replaced by it): the test client (`userspace/tests/audio/tone`)
    streams a 440 Hz sine at a quarter of full scale through `audio_v1`: 3 s on the left
    only, 3 s on the right only, 3 s on both, then 60 s on both, each its own
    `open`/`close`, 0.7 s apart. Confirms pins, clock, range and the swap (by ear: the
@@ -1075,7 +1120,7 @@ in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on f
    from 44 091.710 Hz in ppm ("within 0.1 %"), the underruns and late periods, the `STA`
    flags (`WERR1`, `RERR1`, `GAPO1`, `GAPO2`, `BERR`) and `dma_v1.errors`.
 2. Underrun behaviour: stop feeding and listen for clicks; check the ramps.
-3. Wood effects (since A4): `just boot-wood-test` with the same overlay line in
+3. Wood effects (since P-AUDIO-4): `just boot-wood-test` with the same overlay line in
    `config.txt` and headphones in the jack. The demos fire weapons and open doors:
    each effect should be heard, panned with its source (a sound on the player's left
    in the left ear), without clicks at starts and ends. Without the overlay the image boots and Wood runs
@@ -1084,18 +1129,18 @@ in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on f
 
 ## Risks
 
-- **Interrupts of the DMA node** (resolved in A2). It lists 16 interrupts with line 27
-  four times ([P3]). Kickstart used to issue one `IRQHandler` per listed interrupt; the
+- **Interrupts of the DMA node** (resolved in P-AUDIO-2). It lists 16 interrupts with line 27
+  four times ([RPI3-DEVICE-TREE]). Kickstart used to issue one `IRQHandler` per listed interrupt; the
   second issue of a line failed with `IrqLineActive` and was skipped with a misleading
   "taken" message. It now issues each line once, at its first position
   (`libdevicetree::interrupts::distinct_interrupts`), and the `dma` driver maps channels
   to interrupts by that order.
 - **Kickstart loads only enabled nodes.** The PWM node is disabled in both the repo's
   tree and the firmware's default. QEMU tests that load the driver need a tree with the
-  node enabled (and must not touch the registers), D3.
+  node enabled (and must not touch the registers), AUDIO-3.
 - **The firmware's clock id for PWM** might also be changed by the firmware itself if
   its own audio service ran; Vesper never starts VCHIQ, so it should not.
-- **PLLD frequency** is from secondary sources; measured in stage A2.
+- **PLLD frequency** is from secondary sources; measured in P-AUDIO-2 (on the board, P-AUDIO-8).
 - **Bandwidth and arbitration.** The PANIC threshold raises the DMA's AXI priority when
   the FIFO runs low (§4.1); with the framebuffer and USB DMA active, gaps (`GAPO`) are
   possible. Checked on hardware.
@@ -1108,4 +1153,4 @@ in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on f
   (`rustysynth`) runs on soft-float at an estimated 20 % to over 50 % of the core and is
   ruled out; the integer options are estimated at 2 % to 4 % (wavetable) and 6 % to 13 %
   (OPL3 emulation) of the core at 1.2 GHz, twice that at 600 MHz (section Music). The
-  ARM clock under Vesper is unmeasured; both are measured on the board in A5.
+  ARM clock under Vesper is unmeasured; both are measured on the board in P-AUDIO-9.

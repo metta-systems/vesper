@@ -1,4 +1,4 @@
-//! Trim a SoundFont to what a set of songs plays (audio decision D9.4).
+//! Trim a SoundFont to what a set of songs plays (AUDIO-17).
 //!
 //! Reads Standard MIDI Files, collects the melodic programs and percussion
 //! notes they sound, and writes a SoundFont with only the presets,

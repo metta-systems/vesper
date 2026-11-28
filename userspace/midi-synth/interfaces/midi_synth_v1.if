@@ -3,7 +3,7 @@
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 ## A General MIDI synthesiser: Standard MIDI Files in, rendered sound out
-## (`doc/agentic/audio-design.md`, decisions D9 and D10). The synthesiser plays
+## (`doc/agentic/audio-design.md`, AUDIO-9 and AUDIO-10). The synthesiser plays
 ## a SoundFont bundled with it, at the rate its client opens it at (the audio
 ## output's, `audio_v1.rate`).
 ##

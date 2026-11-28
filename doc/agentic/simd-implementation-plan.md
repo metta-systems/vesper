@@ -19,7 +19,7 @@ its statistics have been measured on the board (SIMD-10).
 
 - [ ] Measure the eager baseline with the FP statistics on a representative FP
   workload, and record the numbers. The workload is `midi-synth-fp`,
-  the MIDI synthesiser with its f64 engine (audio decision D9.7): `_test-midi-fp` in QEMU,
+  the MIDI synthesiser with its f64 engine (AUDIO-20): `_test-midi-fp` in QEMU,
   midi-test with the `fp-mode` feature on the board. On its integer engine (the engine
   packet) the same component is an FP AddressSpace that does little or no FP, the case
   the decaying flag is for; how little depends on what the compiler vectorized in its

@@ -68,7 +68,7 @@ program = true
 memory = 4194304
 resources = ["soundfont"]
 
-# GeneralUser GS trimmed to the test song (audio decision D9.4), committed
+# GeneralUser GS trimmed to the test song (AUDIO-17), committed
 # with it (userspace/midi-synth/fixtures/README.md).
 [[resource]]
 name = "soundfont"

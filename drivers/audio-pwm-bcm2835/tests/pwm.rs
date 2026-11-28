@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn control_values_match_the_datasheet() {
-        // PWEN1 0, USEF1 5, PWEN2 8, USEF2 13; MSEN1 7 and MSEN2 15 clear (D4).
+        // PWEN1 0, USEF1 5, PWEN2 8, USEF2 13; MSEN1 7 and MSEN2 15 clear (AUDIO-4).
         assert_eq!(fifo_stereo().raw_value(), 0x2121);
         // CLRF1 is bit 6.
         assert_eq!(clearing().raw_value(), 0x40);
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!((PWM_DREQ, PWM1_DREQ), (5, 1));
     }
 
-    /// The Raspberry Pi 3's D4 timing first; the Raspberry Pi 4's 54 MHz
+    /// The Raspberry Pi 3's AUDIO-4 timing first; the Raspberry Pi 4's 54 MHz
     /// oscillator divided by 2, over 612, next. Clients render at the exact
     /// rate `audio_v1.rate` reports, so each needs only to be near 44.1 kHz.
     #[test]

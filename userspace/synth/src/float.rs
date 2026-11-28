@@ -1,4 +1,4 @@
-//! The f64 engine (`fp-mode`, audio decision D9.7): a voice in double
+//! The f64 engine (`fp-mode`, AUDIO-20): a voice in double
 //! precision, the representative FP/SIMD workload of the FP/SIMD plan's
 //! P-SIMD-5.
 //!

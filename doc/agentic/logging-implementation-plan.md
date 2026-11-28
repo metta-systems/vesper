@@ -27,7 +27,7 @@ The rest of P-LOGGING-1.
   compositor's, Wood's, the synthesiser's and the audio driver's lines with the
   timestamp prefix. What to read for the music:
   - `wood: music: ARM clock N MHz, core clock N MHz`: the clocks the render runs at
-    (the A5a measurement this gives directly);
+    (the P-AUDIO-9 measurement this gives directly);
   - `wood: music: summary of 256 periods: service min/avg/max …`: the synthesiser's
     render time per period against the 11 612 µs period; an average above a few
     thousand µs, or maxima near the period, explain bad music;

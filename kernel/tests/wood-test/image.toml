@@ -96,8 +96,8 @@ program = true
 memory = 4194304
 resources = ["soundfont"]
 
-# The SC-55 SoundFont trimmed to the shareware IWAD's music (audio decision
-# D9.4): a build artifact, written by `just _wood-soundfont` before the image.
+# The SC-55 SoundFont trimmed to the shareware IWAD's music (AUDIO-17): a
+# build artifact, written by `just _wood-soundfont` before the image.
 [[resource]]
 name = "soundfont"
 file = "../../../target/wood/sc55-doom1.sf2"

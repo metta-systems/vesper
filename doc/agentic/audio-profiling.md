@@ -360,7 +360,7 @@ Ranked mitigations for the startup underrun:
      - (c) a favoured slot or a priority flag in the root dispatcher.
    - All of these live in userspace (the root dispatcher), so no new kernel
      API is needed.
-   - Needs: a decision. D8 said "no special scheduling first"; the data now
+   - Needs: a decision. AUDIO-8 said "no special scheduling first"; the data now
      shows 2–3-slice stalls.
 4. **Delaying the music until the engine has started.**
    - This only takes the song upload out of the startup window. The silent
@@ -374,7 +374,7 @@ hashes, `midi_test_hash`, `wood_music_hashes`).
 
 | # | proposal | expected gain | effort | risk | hash | decision |
 |---|---|---|---|---|---|---|
-| 1 | **Scheduling: don't send a preempted Thread to the back of the round** (dispatcher `next` handling), and/or a **shorter slice** (10 → 2–4 ms), and/or **playback priority** in the root dispatcher | Removes the 20–31 ms stalls, the only real underrun risk. Stall bound becomes about one slice of the woken peer, or about 0 with priority | small (a constant, or about 20 lines in `userspace/dispatcher`) | medium: dispatch overhead grows about 10/slice ×; fairness changes | no | yes: revisits D8 |
+| 1 | **Scheduling: don't send a preempted Thread to the back of the round** (dispatcher `next` handling), and/or a **shorter slice** (10 → 2–4 ms), and/or **playback priority** in the root dispatcher | Removes the 20–31 ms stalls, the only real underrun risk. Stall bound becomes about one slice of the woken peer, or about 0 with priority | small (a constant, or about 20 lines in `userspace/dispatcher`) | medium: dispatch overhead grows about 10/slice ×; fairness changes | no | yes: revisits AUDIO-8 |
 | 2 | **Wood: pre-fill before `open`**, then `answer` | Removes the startup underrun window | small | low | no | no |
 | 3 | **Deeper Wood queue**, `QUEUED_BUFFERS` 4 → 6 or 8 | Slack 46 → 70 or 93 ms | trivial (8 fits today's pages; beyond that, `channel N;` in `audio_v1.if`) | low; +23/+46 ms effect latency | no | yes: the latency |
 | 4 | **Done 2026-10-29** (55.7 → 21.6 per voice-frame, hashes unchanged; see below). **Voice loop rewrite, same arithmetic.** (a) A `render` per loop state: match `mode` and `released` once per call, not 3 × per frame. (b) Read the bank's samples as an aligned `&[i16]`, checked once at `SoundFont::parse`, through a safe `as_chunks`/`align_to` check, or one `unsafe` cast with the alignment check as its proof. (c) Split each call into runs that cannot reach `end`, `loop_end` or the wrap, check the indices once per run, and drop the per-frame bounds and wrap checks. (d) Keep `position` in a local | Inner loop 57 → about 25–30 instructions per voice-frame: about 2 × on the synthesiser, so 32 voices ≈ 0.8 ms at 600 MHz | medium | low–medium: the loop-wrap edge cases are covered by the `synth` host tests and the render-split test | **no**, if bit-exact; the golden hashes prove it | no |
@@ -385,7 +385,7 @@ hashes, `midi_test_hash`, `wood_music_hashes`).
 | 9 | **Fold the master volume into the voice gains, or clip faster** | 10 instructions per sample, so about 10 k per period (≈ 1 voice's worth) | small | low | yes: the rounding changes | no, but it costs a hash update |
 | 10 | **Coarser envelope blocks** (64 → 128 frames) | About 2 instructions per voice-frame (3 %) | trivial | slightly coarser ramps | yes | yes |
 | 11 | **Polyphony 32 → 24** | Caps the worst period at about 1.2 ms at 600 MHz | trivial | voices stolen sooner in dense passages | only when more than 24 voices sound | yes |
-| 12 | **Half-rate render with an upsampler** | About 2 × on the voice loop, minus the upsampler (about 10 instructions per frame) | medium | quality; aliasing | yes | **yes: reverses D9.5** |
+| 12 | **Half-rate render with an upsampler** | About 2 × on the voice loop, minus the upsampler (about 10 instructions per frame) | medium | quality; aliasing | yes | **yes: reverses AUDIO-18** |
 
 Evaluated and **not** recommended:
 
@@ -490,7 +490,7 @@ Not done: the `memcpy` (the component's data page and voice copies) is in
 
 ## Scheduling, start-up and mixer: done
 
-Done 2026-10-29, after the maintainer's answers (recorded with D8 in
+Done 2026-10-29, after the maintainer's answers (recorded as AUDIO-11 to AUDIO-15 in
 [audio-design.md](audio-design.md)):
 
 - **Proposal 1, as playback priority.** "declare priority with the thread, two

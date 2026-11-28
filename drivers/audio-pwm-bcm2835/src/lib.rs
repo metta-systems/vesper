@@ -21,11 +21,11 @@ pub mod stream;
 use {bitbybit::bitfield, derive_mmio::Mmio, libmmio::assert_register_offsets};
 
 /// The PWM clock the driver asks the clock manager for: 100 MHz, the
-/// datasheet's nominal PWM clock (§9.1), PLLD per / 5 (decision D4).
+/// datasheet's nominal PWM clock (§9.1), PLLD per / 5 (AUDIO-4).
 pub const PWM_CLOCK_HZ: u32 = 100_000_000;
 
 /// Clock cycles of one sample on both channels (`RNG1` = `RNG2`): 100 MHz /
-/// 2268 is 44 092 Hz, about 11 bits per sample (decision D4).
+/// 2268 is 44 092 Hz, about 11 bits per sample (AUDIO-4).
 pub const RANGE: u32 = 2268;
 
 /// A PWM clock and the range that gives the stream's sample rate from it.
@@ -46,7 +46,7 @@ impl Timing {
 /// The timings the driver asks the clock manager for, in order; it keeps the
 /// first whose clock rate the manager can set:
 ///
-/// - the Raspberry Pi 3's: [`PWM_CLOCK_HZ`] and [`RANGE`] (decision D4);
+/// - the Raspberry Pi 3's: [`PWM_CLOCK_HZ`] and [`RANGE`] (AUDIO-4);
 /// - the Raspberry Pi 4's: its 54 MHz oscillator, the BCM2711's only clock
 ///   source of documented rate (audio decision, 2026-11-21), divided by 2,
 ///   over 612: 44 117.6 Hz, about 9.3 bits per sample. Undivided, the
@@ -186,8 +186,8 @@ assert_register_offsets!(RegisterBlock, 0x28, {
     data2: 0x24,
 });
 
-/// Both channels in PWM mode with the spreading algorithm (`MSEN` 0, decision
-/// D4), fed from the FIFO, not repeating the last word: an empty FIFO shows as
+/// Both channels in PWM mode with the spreading algorithm (`MSEN` 0,
+/// AUDIO-4), fed from the FIFO, not repeating the last word: an empty FIFO shows as
 /// a gap flag instead of being hidden.
 #[must_use]
 pub const fn fifo_stereo() -> Control {

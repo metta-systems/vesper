@@ -4,7 +4,7 @@
 #
 ## The DMA controller of the BCM2835 (`brcm,bcm2835-dma`), served by the dma
 ## component, the one holder of its register page and channel interrupts
-## (decision D1 of `doc/agentic/audio-design.md`). A client claims a DMA
+## (AUDIO-1 of `doc/agentic/audio-design.md`). A client claims a DMA
 ## channel, runs chains of control blocks on it and learns of their progress
 ## through its io-channel's `EventCount`. Memory is named by its bus address,
 ## the address the DMA controller reaches it at (`DriverInit::memory_bus` plus

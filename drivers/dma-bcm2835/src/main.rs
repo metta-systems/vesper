@@ -4,7 +4,7 @@
 #![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! The dma component: the one owner of the BCM2835 DMA controller, behind
-//! `dma_v1` (see `interfaces/dma_v1.if`; decision D1 of
+//! `dma_v1` (see `interfaces/dma_v1.if`; AUDIO-1 of
 //! `doc/agentic/audio-design.md`).
 //!
 //! Kickstart loads it for the `brcm,bcm2835-dma` node. All fifteen channels

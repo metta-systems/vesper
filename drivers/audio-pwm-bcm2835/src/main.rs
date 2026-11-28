@@ -7,11 +7,11 @@
 //! `doc/agentic/audio-design.md`).
 //!
 //! Kickstart loads it for the `brcm,bcm2835-pwm` node, which is enabled by the
-//! `pwm-2chan` overlay on the board and by the test tree under QEMU (decision
-//! D3), and wires its imports (see `interfaces/imports.if`): `clock_v1` through
+//! `pwm-2chan` overlay on the board and by the test tree under QEMU
+//! (AUDIO-3), and wires its imports (see `interfaces/imports.if`): `clock_v1` through
 //! the node's `clocks` link to the clock manager, `gpio_v1`, through which it
 //! routes the pins of its node's pin group, and `dma_v1` of the DMA controller
-//! component (decision D1), which runs the ring of control blocks that feeds
+//! component (AUDIO-1), which runs the ring of control blocks that feeds
 //! the FIFO from the driver's own memory, named by bus address.
 //!
 //! At start it routes the pins, has the PWM clock set to 100 MHz and reads

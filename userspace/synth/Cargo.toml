@@ -20,7 +20,7 @@ default = []
 # Opt in to the host integration tests. The tests on Doom's music (the IWAD
 # and the SC-55 bank) are in vesper-doom's Room: `just test-music` there.
 host-tests = []
-# The f64 engine beside the integer one (audio decision D9.7), chosen at run
+# The f64 engine beside the integer one (AUDIO-20), chosen at run
 # time with `Synth::set_engine`. Without it the crate holds no floating point.
 fp-mode = ["dep:libm"]
 

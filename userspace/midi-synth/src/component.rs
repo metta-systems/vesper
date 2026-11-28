@@ -116,7 +116,7 @@ fn start(init: &DriverInit, slot: u32) -> Result<Session<'static>, &'static str>
         bank.font().instrument_count(),
         bank.font().sample_count()
     ));
-    // The fp-mode component (audio decision D9.7) starts on the f64 engine;
+    // The fp-mode component (AUDIO-20) starts on the f64 engine;
     // a client can switch with an engine packet.
     #[cfg(feature = "fp-mode")]
     {

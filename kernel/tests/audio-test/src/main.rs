@@ -5,7 +5,7 @@
 
 //! audio-test: the clock manager component, the DMA controller component, the
 //! PWM audio driver and a client of its `audio_v1`, loaded by Kickstart
-//! (stages A1 to A3 of `doc/agentic/audio-implementation-plan.md`).
+//! (P-AUDIO-1 to P-AUDIO-3 of `doc/agentic/audio-completed.md`).
 //!
 //! The image bundles `cprman-bcm2835`, which serves `clock_v1` for the
 //! `brcm,bcm2835-cprman` node, `dma-bcm2835`, which serves `dma_v1` for the

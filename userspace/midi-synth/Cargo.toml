@@ -21,7 +21,7 @@ default = []
 host-tests = []
 # The component's lines on the semihosting console under QEMU.
 qemu = ["libserial-trace/qemu", "libuser/qemu"]
-# The f64 engine beside the integer one (audio decision D9.7): the component
+# The f64 engine beside the integer one (AUDIO-20): the component
 # starts on it and switches on an engine packet. Built for the hard-float
 # target as `midi-synth-fp`, an FP component (the Justfile's fp_binaries).
 fp-mode = ["vesper-synth/fp-mode"]

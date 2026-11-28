@@ -59,6 +59,7 @@ Every numbered section and item in an area's documents carries an ID made of the
 - A heading starts with its ID, then a colon and the title: `## AUDIO-5: PWM clock source`. A link to a section also names its ID in the text, so the reference survives a reworded title (whose anchor changes).
 - Code comments cite IDs in the same full form. Commit messages are the maintainer's to write; whether they cite IDs (in the body, for a change touching several items) is the maintainer's choice.
 - IDs are internal: user-facing documentation (`doc/object_types/`) carries none.
+- **Sources a document cites** (datasheets, other systems' code, specifications) take a descriptive key in capitals with hyphens that names the source, such as `[BCM2835-PERIPHERALS]` or `[LINUX-CLK-BCM2835]`, defined once in the document's Sources list and cited with a section where useful (`[BCM2835-PERIPHERALS] §6.3`). Never letter-and-number keys such as `[P1]` or `[S2]`.
 
 ### Document index
 

@@ -1,4 +1,4 @@
-//! Wood's music synthesiser for Vesper (audio decision D9): an integer
+//! Wood's music synthesiser for Vesper (AUDIO-9): an integer
 //! SoundFont 2 wavetable synthesiser and a Standard MIDI File sequencer.
 //!
 //! `no_std` with `alloc`. Without the `fp-mode` feature there is no floating
@@ -9,7 +9,7 @@
 //! without `fp-mode`) and the `no_float` host test keep it that way; `just
 //! _synth-no-float` checks the target build for soft-float calls.
 //!
-//! With `fp-mode` (audio decision D9.7) the crate also holds the f64 engine
+//! With `fp-mode` (AUDIO-20) the crate also holds the f64 engine
 //! ([`float`]), for a hard-float FP component; [`Synth::set_engine`] picks
 //! the engine new notes start on.
 //!
@@ -24,7 +24,7 @@
 //!   modes, the volume envelope ([`envelope`]), attenuation and pan.
 //! - [`smf`] and [`sequencer`]: the MIDI file and its playback clocked by the
 //!   frames rendered, with looping.
-//! - [`trim`]: a SoundFont cut down to what a set of songs plays (D9.4).
+//! - [`trim`]: a SoundFont cut down to what a set of songs plays (AUDIO-17).
 //!
 //! Left out, for now: the low-pass filter (`initialFilterFc`/`Q` are
 //! ignored), the modulation envelope, the vibrato and modulation LFOs, the

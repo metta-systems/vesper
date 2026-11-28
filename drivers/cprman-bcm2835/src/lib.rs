@@ -14,7 +14,7 @@
 //! (`doc/agentic/audio-design.md`, section The PWM clock).
 //!
 //! Only integer division (`MASH` 0) is programmed: it has no jitter, and the
-//! audio rate (D4) needs none.
+//! audio rate (AUDIO-4) needs none.
 //!
 //! The BCM2711's clock manager (`brcm,bcm2711-cprman`, BCM2711 ARM
 //! Peripherals, section 5.4) has the same generator registers and sources
@@ -73,7 +73,7 @@ impl Chip {
 
     /// PLLD's peripheral output as the firmware sets it up, where known. The
     /// datasheets give no PLL rates: the Raspberry Pi 3's 500 MHz is from the
-    /// Linux and NetBSD clock drivers and Circle, and stage A2 measures it; the
+    /// Linux and NetBSD clock drivers and Circle, and P-AUDIO-8 measures it on the board; the
     /// BCM2711's is not used (audio decision, 2026-11-21: the Raspberry Pi 4's
     /// PWM clock runs from the oscillator).
     #[must_use]

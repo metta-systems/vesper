@@ -54,7 +54,7 @@ user_components := 'audio-pwm-bcm2835 audio-test-client cprman-bcm2835 dispatch-
 fp_components := 'compositor fp-worker fp-bench-worker'
 fp_target       := 'aarch64-metta-none-hardfloat'
 # Every FP component binary, the packages above and `midi-synth-fp` (the midi-synth package with
-# `fp-mode`, audio decision D9.7, built by `_build-midi-synth-fp`). image-build checks the list
+# `fp-mode`, AUDIO-20, built by `_build-midi-synth-fp`). image-build checks the list
 # (VESPER_FP_COMPONENTS): FP code in an unlisted component fails the build.
 fp_binaries := fp_components + ' midi-synth-fp'
 export VESPER_FP_COMPONENTS := fp_binaries
@@ -111,7 +111,7 @@ chainboot_elf      := hw_artifacts / image_profile / 'chainboot'
 # `target/<config>/<triple>`, where a configuration's ELFs live under `<profile>/`
 qemu_artifacts  := target_root / boards_qemu / target
 hw_artifacts    := target_root / boards_hw / target
-# The SC-55 bank trimmed to the shareware IWAD's music (`_wood-soundfont`, audio decision D9.4)
+# The SC-55 bank trimmed to the shareware IWAD's music (`_wood-soundfont`, AUDIO-17)
 wood_soundfont      := target_root / 'wood' / 'sc55-doom1.sf2'
 # `bytes:looping:hash` of the songs `_test-wood` hears first (the title's D_INTROA once, the
 # first demo's D_E1M5 looping, at volume 64): the hash of their first 64 rendered periods as
@@ -371,7 +371,7 @@ _build-midi-player board=boards features='qemu' image_features=features: (_cross
 # Build the midi-test e2e kernel: the MIDI synthesiser, a player program with the test song (Bach's Prelude in C, with the bank trimmed to it, both in userspace/midi-synth/fixtures), audio-test's drivers, the mailbox, the PL011 and the log server; no Wood, compositor or USB
 _build-midi-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-midi-player board 'qemu' test_kernel_features) (_build-test-kernel 'midi-test' board)
 
-# Build the MIDI synthesiser with the f64 engine, `midi-synth-fp` (audio decision D9.7): the
+# Build the MIDI synthesiser with the f64 engine, `midi-synth-fp` (AUDIO-20): the
 # midi-synth package with `fp-mode`, for the hard-float target, an FP component (`fp_binaries`).
 # The two synthesiser crates build at opt-level 3 (`synth_fp_opt`): the workspace's 's' keeps
 # rustc's vectorizers off, and fat LTO optimises at the linked crate's level, so midi-synth needs
@@ -1114,7 +1114,7 @@ _test-board board=boards features=test_kernel_features config=(board + '-' + rep
 # Boot midi-test on raspi3b with the audio test tree (targets/audio-test.dtb, the PWM node enabled): the player sends the test song (Bach's Prelude in C) to the MIDI synthesiser (looping, volume 64), pulls 512 periods with `service` and streams them through audio_v1, where the audio driver plays each into its capture buffer by DMA copies, checks it against the ring and counts the audible ones; then it closes and reports. The song must load and play, its first periods must hash as on the host (`midi_test_hash`), nearly every period must be audible, with 0 underruns, and the log server must write the player's summary to the UART. The semihosting console goes to target/midi-test.log, the UART to target/midi-test-serial.log
 _test-midi board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-test board) (_run-midi (images_dir / 'midi-test-' + config + '.bin') midi_test_hash 'midi-test')
 
-# _test-midi with the f64 engine: midi-test bundling `midi-synth-fp` (audio decision D9.7), an FP
+# _test-midi with the f64 engine: midi-test bundling `midi-synth-fp` (AUDIO-20), an FP
 # component that starts on the f64 engine; its first periods must hash as on the host
 # (`midi_test_fp_hash`)
 _test-midi-fp board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-fp-test board) (_run-midi (images_dir / 'midi-test-fp-mode-' + config + '.bin') midi_test_fp_hash 'midi-test-fp' 'fp')
@@ -1470,7 +1470,7 @@ _clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'midi-
       -- --deny warnings --allow deprecated
     RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim -p wad-music --all-targets -- --deny warnings --allow deprecated
 
-# Check that Wood's music synthesiser calls no soft-float routine in its target build (audio decision D9: integer only): the vesper-synth library, and the linked MIDI synthesiser component, which must hold none of them; the core library is checked too, to show the pattern finds them
+# Check that Wood's music synthesiser calls no soft-float routine in its target build (AUDIO-9: integer only): the vesper-synth library, and the linked MIDI synthesiser component, which must hold none of them; the core library is checked too, to show the pattern finds them
 _synth-no-float: (_cross-build 'midi-synth' boards user_link '')
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1495,8 +1495,8 @@ _synth-no-float: (_cross-build 'midi-synth' boards user_link '')
     if [ -n "$linked" ]; then echo "the midi-synth component links soft-float routines:"; echo "$linked"; exit 1; fi
     echo "midi-synth component: no soft-float routines linked"
 
-# Check that the f64 engine's mixing loop is vectorized in the linked midi-synth-fp (audio
-# decision D9.7): `vesper_synth::float::mix_run` must hold two-lane f64 multiplies and adds
+# Check that the f64 engine's mixing loop is vectorized in the linked midi-synth-fp
+# (AUDIO-20): `vesper_synth::float::mix_run` must hold two-lane f64 multiplies and adds
 # (`fmul`/`fadd` on `.2d`). Fails as well when the function is not found, so it cannot pass on
 # nothing
 _synth-fp-vectorized: (_build-midi-synth-fp boards 'qemu')
@@ -1511,7 +1511,7 @@ _synth-fp-vectorized: (_build-midi-synth-fp boards 'qemu')
     echo "mix_run: $total instructions, $multiplies fmul and $adds fadd on two f64 lanes"
     [ "$multiplies" -gt 0 ] && [ "$adds" -gt 0 ] || { echo "the f64 mixing loop is not vectorized"; exit 1; }
 
-# Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2: wad-music (in the userspace/wood submodule) exports the songs as MIDI, converted by Room's mus2midi as the game does, and sf2-trim keeps what they play
+# Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (AUDIO-17), into target/wood/sc55-doom1.sf2: wad-music (in the userspace/wood submodule) exports the songs as MIDI, converted by Room's mus2midi as the game does, and sf2-trim keeps what they play
 _wood-soundfont:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1521,7 +1521,7 @@ _wood-soundfont:
       --soundfont "userspace/wood/room/soundfonts/SC55Soundfont-1.2b/SC-55 SoundFont v1.2b.sf2" \
       --output "{{ wood_soundfont }}" "{{ wood_music }}"/*.mid
 
-# Trim GeneralUser GS to the programs and drum notes of the MIDI synthesiser's test song (audio decision D9.4), into the committed test bank (userspace/midi-synth/fixtures/wtk1-prelude1.sf2): run it after changing the song (a MIDI file given as `song` replaces it first, e.g. `just _midi-test-soundfont new.mid`). GeneralUser GS is downloaded once, from the pinned commit, and checked by SHA-256
+# Trim GeneralUser GS to the programs and drum notes of the MIDI synthesiser's test song (AUDIO-17), into the committed test bank (userspace/midi-synth/fixtures/wtk1-prelude1.sf2): run it after changing the song (a MIDI file given as `song` replaces it first, e.g. `just _midi-test-soundfont new.mid`). GeneralUser GS is downloaded once, from the pinned commit, and checked by SHA-256
 _midi-test-soundfont song=midi_test_song:
     #!/usr/bin/env bash
     set -euo pipefail

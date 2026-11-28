@@ -1,4 +1,4 @@
-//! Trimming a SoundFont to what a set of songs plays (audio decision D9.4).
+//! Trimming a SoundFont to what a set of songs plays (AUDIO-17).
 //!
 //! [`Usage`] collects, from songs, the melodic presets (bank and program) and
 //! the percussion notes (kit and key) their notes sound with. [`trim`] writes

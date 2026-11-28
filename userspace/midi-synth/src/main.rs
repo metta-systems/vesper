@@ -2,8 +2,8 @@
 // Vesper.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
 
-//! The MIDI synthesiser component: Wood's music on Vesper (decisions D9 and
-//! D10 of `doc/agentic/audio-design.md`). It exports `midi_synth_v1` (see
+//! The MIDI synthesiser component: Wood's music on Vesper (AUDIO-9 and
+//! AUDIO-10 of `doc/agentic/audio-design.md`). It exports `midi_synth_v1` (see
 //! `interfaces/midi_synth_v1.if`): a client sends Standard MIDI Files on the
 //! interface's io-channel and gets rendered frames back on it, which it mixes
 //! and plays itself.
