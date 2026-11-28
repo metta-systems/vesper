@@ -172,4 +172,4 @@ Ported from the kernel-era display code; a more flexible type may follow.
 
 #### COMPONENTS-35: write-combining mappings for device Frames
 
-Provided by the [Frame memory attributes](memory-design.md#frame-memory-attributes-maintainer-decision-2026-10-13): `fb` carves the framebuffer Frames with a `WriteCombining` ceiling.
+Provided by the [MEMORY-4](memory-design.md#memory-4-frame-memory-attributes): `fb` carves the framebuffer Frames with a `WriteCombining` ceiling.

@@ -4,7 +4,7 @@ Prior art behind the [memory design](memory-design.md); not a specification.
 
 ## Frame memory attributes and write-combining (seL4, Composite, Linux)
 
-Evidence behind the [Frame memory attributes](memory-design.md#frame-memory-attributes-maintainer-decision-2026-10-13) decision; the "Consequences" below were written before it and describe the MAIR as it was then. Sources read 2026-10-13: seL4 `master` (`src/arch/arm/64/kernel/vspace.c`, `src/arch/x86/kernel/vspace.c`), Composite `main` (`src/kernel/include/pgtbl.h`, `src/platform/{i386,armv7a}/chal_pgtbl.*`, `src/platform/i386/{vm,lapic}.c`), Linux `arch/arm64/include/asm/pgtable.h`.
+Evidence behind the [MEMORY-4](memory-design.md#memory-4-frame-memory-attributes) decision (Frame memory attributes); the "Consequences" below were written before it and describe the MAIR as it was then. Sources read 2026-10-13: seL4 `master` (`src/arch/arm/64/kernel/vspace.c`, `src/arch/x86/kernel/vspace.c`), Composite `main` (`src/kernel/include/pgtbl.h`, `src/platform/{i386,armv7a}/chal_pgtbl.*`, `src/platform/i386/{vm,lapic}.c`), Linux `arch/arm64/include/asm/pgtable.h`.
 
 ### seL4
 

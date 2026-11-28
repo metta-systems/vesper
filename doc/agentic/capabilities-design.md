@@ -56,7 +56,7 @@ Authorized resource-state changes are not automatically capability replacement. 
 
 **Selected exhaustion behavior (3B=A):** a slot unable to issue a fresh 32-bit incarnation is permanently unavailable for further installation within that table lifetime; existing-capability deletion remains possible and other slots remain usable. No silent wrap or whole-table retirement is implied. The approved key package starts unused counters at 0, issues 1 on first installation, advances only at successful installation, retains counters on deletion, and reports exhaustion with `KeySlotExhausted`. Replacing/rebinding the table must not reset stale-key protection.
 
-**INTERIM** ([memory design](memory-design.md#frame-copy-unmap-and-revoke)): Frame deprovisioning fully revokes the capability and does not reuse that slot for Frames.
+**INTERIM** ([memory design, MEMORY-6](memory-design.md#memory-6-frame-copy-unmap-and-revoke)): Frame deprovisioning fully revokes the capability and does not reuse that slot for Frames.
 
 Three distinct identity problems must be covered:
 
@@ -178,7 +178,7 @@ Granting direct management authority also entrusts the recipient with bookkeepin
 
 **`MappedSlice` ownership design:** create and own a private capability/mapping inside the guard, allow no further derivations or independently usable management aliases, and release the mapping on Drop.
 
-**CONFIRMED** ([memory design](memory-design.md#shared-mappings-fbufs)): Drop cleanup uses an incarnation-bearing key, so a stale key is rejected rather than unmapping a replacement.
+**CONFIRMED** ([memory design, MEMORY-11](memory-design.md#memory-11-shared-mappings-fbufs)): Drop cleanup uses an incarnation-bearing key, so a stale key is rejected rather than unmapping a replacement.
 
 There are two different exclusivity questions: ownership of the capability/mapping, and access to the physical bytes. No derivations from the guard-owned capability addresses the first. It does not prove that the physical frame has no aliases in other AddressSpaces, ancestor retirement authority, or device writers. D1 now prohibits multiple virtual aliases within one AddressSpace, but permits cross-AddressSpace writable sharing.
 
@@ -248,7 +248,7 @@ The shared-address-space protection decision matters here: capability checks on 
 
 ### CONFIRMED Frame mapping direction
 
-Recorded in [memory-design.md](memory-design.md#frame-copy-unmap-and-revoke): Copy is not Map, Unmap is mapping-local, origin Revoke withdraws descendants, remap is origin-authorized, and Frame slots are not reused after deprovisioning.
+Recorded in [memory-design.md, MEMORY-6](memory-design.md#memory-6-frame-copy-unmap-and-revoke): Copy is not Map, Unmap is mapping-local, origin Revoke withdraws descendants, remap is origin-authorized, and Frame slots are not reused after deprovisioning.
 
 Open work for this section is tracked in [Phase 5](capabilities-implementation-plan.md#phase-5--memory-and-safe-reclamation); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
