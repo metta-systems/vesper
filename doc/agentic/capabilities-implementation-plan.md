@@ -79,7 +79,7 @@ Reference: [type numbering](capabilities-contract.md#object-type-numbering), [wi
 
 ## Phase 3 — Repair the debug console path
 
-DebugConsole general-availability work is tracked in [`logging-implementation-plan.md`](logging-implementation-plan.md#debugconsole-general-availability).
+DebugConsole general-availability work is tracked in [`logging-implementation-plan.md`, P-LOGGING-10](logging-implementation-plan.md#p-logging-10-debugconsole-general-availability).
 
 ## Phase 4 — Capability storage and Thread lifetime
 

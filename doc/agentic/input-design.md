@@ -224,7 +224,7 @@ functions ([usb-design.md](usb-design.md)).
 Alt, escape sequences for cursor keys. It presents the byte channel the shell reads
 today, so the shell is unchanged. Keymaps are static tables, optionally generated at
 build time from xkb data, not parsed at runtime (INPUT-8). Serial input joins the same path: the log server owns
-the PL011 and puts received bytes into the input events (logging decision L11 in
+the PL011 and puts received bytes into the input events (LOGGING-11 in
 [logging-design.md](logging-design.md)), and the adapter turns them back into the
 shell's bytes.
 

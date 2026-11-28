@@ -1,17 +1,15 @@
 # Logging design (several components, one PL011)
 
-Status: decisions L1 to L10 answered on 2026-10-28 and L11 and L12 on 2026-10-29 (section
-Decisions). Stage L-A (the
-log server in wood-test with the compositor, Wood, the MIDI synthesiser and the audio
-driver as clients, and Wood's music summary) is built and checked in QEMU; the board
-check is pending. In L-B the three USB components became clients too (section USB log
-volume). Stage L-D, panic and fault reports, was taken up on 2026-10-29 ("keep 32k
-stacks, add panic reporting through the serial console too"); the `PANICKED:` and
-`FAULT:` lines are built and checked in QEMU (section Panics and faults). The one open
-logging question, the DebugConsole byte transport, is in
-[logging-decisions.md](logging-decisions.md); the answered ones are listed in
-[logging-completed.md](logging-completed.md). Stages are in [logging-implementation-plan.md](logging-implementation-plan.md).
-`log_v1` is a prototype interface and is edited in place.
+The numbered sections are the maintainer's decisions (LOGGING-1 to LOGGING-14);
+the sections after them describe the log server as built. The log server in
+wood-test, with the compositor, Wood, the MIDI synthesiser, the audio driver and
+the three USB components as clients, and Wood's music summary, is built and
+checked in QEMU, as are the `PANICKED:` and `FAULT:` reports; the board checks
+are pending. The one open logging question, the DebugConsole byte transport, is
+in [logging-decisions.md](logging-decisions.md); open tasks are in
+[logging-implementation-plan.md](logging-implementation-plan.md), finished ones
+in [logging-completed.md](logging-completed.md). `log_v1` is a prototype
+interface and is edited in place.
 
 The first use is diagnosing Wood's music on the board: the sound effects play, the
 music (the `midi_synth` component, rendering inside Wood's playback Thread's `service`
@@ -30,15 +28,19 @@ the guidance said otherwise; the alternatives that were weighed follow each one,
 review. Items marked **needs review** were settled during implementation without a
 question to the maintainer.
 
-- **L1. Transport: one `log_v1` io-channel per client.** Each client owns its
+### LOGGING-1: one `log_v1` io-channel per client
+
+2026-10-28. Each client owns its
   channel's data pages as 32 buffers of 256 bytes; a line is one packet of one record.
   Not chosen: a PPC `write(octet& text)` per line, copied by the export into a ring of
   the server's (a system call per line, and the copy runs on the client's Thread
   inside the server); one multi-producer ring all clients map (cheapest, but a client
   can overwrite another's lines, against the confinement the capability design keeps).
-- **L2. Wake-up: the client calls `flush()` after putting a line; `flush` advances the
+### LOGGING-2: wake-up through `flush`
+
+2026-10-28. The client calls `flush()` after putting a line; `flush` advances the
   server's own `EventCount` (`DriverInit::event_count`) on the client's Thread and
-  returns.** The server's Thread sleeps on that count with a 20 ms timeout, so a line
+  returns. The server's Thread sleeps on that count with a 20 ms timeout, so a line
   is written even when `flush` fails (for example `NoFreeStack`). This is the
   maintainer's "client notifies logserver of new entries through eventcount" with no
   Kickstart change: the `channel N;` wiring only gives the exporter a `SEND` key and the
@@ -47,7 +49,9 @@ question to the maintainer.
   the server a WaitSet over it and the serial completion (immediate, no PPC, up to 64
   clients, but a Kickstart and Meddle extension); a client-advanced `EventCount` per
   channel with a WaitSet (8 members per set); polling only.
-- **L3. Overflow: the client drops, never waits.** A line that finds no free buffer, or
+### LOGGING-3: on overflow the client drops, never waits
+
+2026-10-28. A line that finds no free buffer, or
   another Thread of the same component in the middle of sending (a try-lock), is
   dropped. Per the guidance the drop is silent for the client. The client counts the
   drops and the count rides in the next line's header; the server then prefixes that
@@ -58,7 +62,9 @@ question to the maintainer.
   playback Thread, and `midi_synth` running on it during `service`) log through the same
   path. Not chosen: blocking for a buffer as an opt-in for non-real-time Threads;
   always blocking; dropping the oldest line.
-- **L4. How clients get the channel: an explicit import** in the component's
+### LOGGING-4: clients get the channel through an explicit import
+
+2026-10-28. An explicit import in the component's
   `imports.if`: `uses log_v1 via component log_server { flush }`. An image without the
   log server leaves the import unlinked and the component falls back as before
   (semihosting, the serial channel or the backlog). **Needs review (image-build
@@ -69,48 +75,60 @@ question to the maintainer.
   compositor-test, window-events-test and audio-test. Not chosen: a Kickstart default
   log channel for every component; a manifest flag (`log = true`) replacing
   `serial = true`.
-- **L5. Client identification: the client's own prefix in the text,** as every line
+### LOGGING-5: clients identify themselves by a prefix in the text
+
+2026-10-28. The client's own prefix in the text, as every line
   already had (`wood: …`, `midi-synth: …`, `compositor: …`, `audio: …`); the server adds
   no name. `liblog-client`'s `Logger` adds the component name it is built with. Not
   chosen: a trusted label Kickstart records per pair, as Genode's parent-set session
   label (needs the exporter to learn its clients' names, a Kickstart change); a name
   the client declares once in an `open(name)` call (spoofable, no gain over the text).
-- **L6. Record format: a header in the packet's value word, formatted by the server.**
-  Level (the `log` crate's numbering, 0 for none), a cut flag, a last-line flag (the
+### LOGGING-6: a header in the packet's value word, formatted by the server
+
+2026-10-28. Level (the `log` crate's numbering, 0 for none), a cut flag, a last-line flag (the
   Thread stops after it and waits for the line to leave), the client's drop count
   (16 bits, saturating) and the client's clock in microseconds (40 bits). The server
   writes `[     12.345678] I wood: text\r\n` (`-` for no level, `…` after a cut line)
   and replaces control bytes with `?`, so a client cannot move the terminal's cursor or
   fake a line start. Not chosen: the client formats the whole line (no common
   timestamp or level format); no header (no drop count, no level).
-- **L7. Serial input: the log server attaches only the transmit side;** received bytes
+### LOGGING-7: serial input, first: transmit only
+
+2026-10-28. The log server attaches only the transmit side; received bytes
   are dropped and counted by the PL011 driver, as in every image where nobody reads
   RX. Images whose shell reads keys (the production image) keep the shell as the
   serial holder and have no log server yet; once the production image gets one,
-  received bytes go into the input events (L11). Not chosen for now: the log
+  received bytes go into the input events (LOGGING-11). Not chosen for now: the log
   server forwarding RX to one client named in its manifest; the shell as a raw,
   unprefixed passthrough client.
-- **L8. Early output and panics:** Kickstart wires every channel before any Thread
+### LOGGING-8: early output and panics
+
+2026-10-28. Kickstart wires every channel before any Thread
   starts, so a client's first lines wait in its channel until the server runs (up to
   32 lines). A component's panic and its Threads' faults go through its own log channel,
-  best effort, besides the semihosting console: stage L-D, in scope since the
+  best effort, besides the semihosting console: P-LOGGING-4, in scope since the
   maintainer's 2026-10-29 request ("add panic reporting through the serial console
   too"; section Panics and faults). The nucleus and Kickstart stay semihosting-only.
   Not chosen: a polled direct-UART fallback in components (breaks the one-owner rule);
   a kernel log object such as Fuchsia's debuglog (minimal kernel API).
-- **L9. QEMU: both semihosting and serial.** `liblog-client`'s `Logger` and
+### LOGGING-9: QEMU prints on both semihosting and serial
+
+2026-10-28. `liblog-client`'s `Logger` and
   `libserial-trace` keep printing on the semihosting console under `qemu`, so every
   recipe's checks hold; `just _test-wood` sends the UART to its own file
   (`target/wood-test-serial.log`, `-serial file:`) so serial lines are never split by
   semihosting output, and checks the server's lines there. Not chosen: serial only
   under QEMU (rewrites every recipe's checks); semihosting only (the log server is not
   exercised).
-- **L10. Naming:** component `log_server` (crate and binary `log-server`), interface
+### LOGGING-10: naming
+
+2026-10-28. Component `log_server` (crate and binary `log-server`), interface
   `log_v1`, generated crates `log-interface` and `log-interface-client`, client library
   `vesper-log-client` (`liblog_client`; `liblog` is taken by `vesper-log`). Not chosen:
   `console`/`console_v1` (the input side is not part of it yet), `syslog`.
-- **L11. Console input: a, the log server forwards RX, into the input events.**
-  Answered 2026-10-29: "L11 - a, it should go to the input-event". The log server
+### LOGGING-11: console input goes into the input events
+
+2026-10-29: "it should go to the input-event". The log server forwards RX: it
   owns both directions of the PL011; received bytes are not dropped but enter the
   input event path ([input-design.md](input-design.md)), so serial typing reaches the
   focused consumer the way USB keyboard input does. How the bytes become events (the
@@ -119,8 +137,10 @@ question to the maintainer.
   serial-compatible byte channel, [input-design.md](input-design.md)) turns the events back into the shell's
   bytes. Not chosen: two UARTs
   (b); an output-only serial port (c).
-- **L12. Serial console at boot: c, negotiate the rate at boot as chainboot does;
-  Kickstart prints its early lines on the UART.** Answered 2026-10-29. Goal: an image
+### LOGGING-12: the serial console negotiates its rate at boot
+
+2026-10-29. Negotiate the rate at boot as chainboot does; Kickstart prints its
+  early lines on the UART. Goal: an image
   booted from the SD card (no chainboot) still has a working serial console.
   Kickstart sets the PL011 up itself first thing at EL2 (MMU off): GPIO 14/15 to ALT0
   (the maintainer's `config.txt` has `dtoverlay=disable-bt`, Kickstart routes the pins
@@ -134,7 +154,7 @@ question to the maintainer.
   semihosting (`kernel/kickstart/src/early_console.rs`), until just before the MMU
   goes on and Kickstart drops to EL1, where the UART is not mapped: the
   `uart-pl011` driver is the one owner from its start and keeps the divisors, so the
-  negotiated rate carries to the log server. This narrows L8's "Kickstart stays
+  negotiated rate carries to the log server. This narrows LOGGING-8's "Kickstart stays
   semihosting-only" to Kickstart's EL1 part.
   - **Chainboot detection: a handoff.** Chainboot jumps to the kernel with
     `x1 = BAUDKEEP` (ASCII, little-endian) and `x2` = the rate; `libboot` keeps both
@@ -151,11 +171,15 @@ question to the maintainer.
     fixed rate chosen at build time (the host must match it by hand, and a rate the
     line cannot carry loses the console with no way back).
 
-### DebugConsole debug-only exception
+### LOGGING-13: DebugConsole is a debug-only exception
 
 DebugConsole is **not a generally available capability**. Its handler, bootstrap grant, and boot demonstration require the opt-in Cargo feature `debug_kernel`, disabled by default. The userspace wrapper (`DebugConsoleKey`) is always built, so components need no feature of their own; without a `debug_kernel` kernel no component holds a console key. This feature identifies a debug kernel independently of Cargo's optimization profile: the embedded build recipes use `--release` even for debugging. Neither `qemu` nor `jtag` implicitly enables it. Build nucleus and kickstart together, for example with `just build rpi3 qemu,debug_kernel`; production kernels must omit `debug_kernel`.
 
-Keep the current pointer-based Write mechanism for trusted debugging only; do not add an inline-byte operation or change the wire schema in this slice. **Hardware debugging aid (maintainer decision, 2026-11-15):** until a kernel monitor component exists, a `debug_kernel` kernel gives every component Kickstart loads a `WRITE` copy of the console at `KeySlot::DEBUG_CONSOLE`, named in `DriverInit::debug_console`; the userspace runtime's panic handler prints on it outside QEMU, and the nucleus prints Write's bytes on the board's console UART outside QEMU (semihosting under QEMU). Write reads `x2` as a virtual address in the caller's active AddressSpace, after checking every page of the range with `AT S1E0R` (EL0 caller) or `AT S1E1R` (EL1 boot code), copies the bytes out, and prints at most `WRITE_LIMIT` (1024) of them. This is a temporary debugging aid: it does **not** settle the parked DebugConsole byte-transport decision ([L13](logging-decisions.md#l13-debugconsole-byte-transport)), which the maintainer will revisit once the aid has been used. The canonical type ID `127` and operation ID `0` remain reserved/defined regardless of feature availability. Without the kernel feature, no console capability is installed and DebugConsole dispatch is unsupported (an absent slot still returns the normal lookup error).
+Keep the current pointer-based Write mechanism for trusted debugging only; do not add an inline-byte operation or change the wire schema in this slice.
+
+### LOGGING-14: the hardware debugging aid
+
+2026-11-15. Until a kernel monitor component exists, a `debug_kernel` kernel gives every component Kickstart loads a `WRITE` copy of the console at `KeySlot::DEBUG_CONSOLE`, named in `DriverInit::debug_console`; the userspace runtime's panic handler prints on it outside QEMU, and the nucleus prints Write's bytes on the board's console UART outside QEMU (semihosting under QEMU). Write reads `x2` as a virtual address in the caller's active AddressSpace, after checking every page of the range with `AT S1E0R` (EL0 caller) or `AT S1E1R` (EL1 boot code), copies the bytes out, and prints at most `WRITE_LIMIT` (1024) of them. This is a temporary debugging aid: it does **not** settle the parked DebugConsole byte-transport decision ([Q-LOGGING-1](logging-decisions.md#q-logging-1-debugconsole-byte-transport)), which the maintainer will revisit once the aid has been used. The canonical type ID `127` and operation ID `0` remain reserved/defined regardless of feature availability. Without the kernel feature, no console capability is installed and DebugConsole dispatch is unsupported (an absent slot still returns the normal lookup error).
 
 Temporary debug-only leeway is not a safety or isolation guarantee. The existing EL1 bootstrap caller, the broad grant, the translation check standing in for copy-fault recovery, silent truncation, and missing rights enforcement remain migration gaps. Client errors now propagate through the shared decoder. The domain-zero fallback has been removed: the boot fixture explicitly selects its first domain after creation, while absent runtime caller identity fails lookup. The stateless console handler now validates the capability's type through a shared entry borrow without deriving an object reference from its payload; this removes the console-specific mutable casts, not the general storage/lifetime gaps. Deferred improvements and alternatives are recorded beside `kernel/nucleus/src/api/debug_console.rs::invoke`. General availability requires the normal supported-operation criteria, including explicit caller/rights, bounded caller-authorized memory access with fault recovery, defined byte/length/partial-output semantics, checked exception/argument decoding, and observable results. D1/D3/D4/D6/D9 remain open beyond this limited availability decision.
 
@@ -179,7 +203,7 @@ Temporary debug-only leeway is not a safety or isolation guarantee. The existing
   interrupt, at the baud rate chainboot left. Without a client the UART stays quiet.
 - **Holders:** the shell in the production image (the only component reading serial
   input), the compositor in compositor-test and window-events-test (and wood-test
-  before L-A), the audio driver in audio-test, `usb_core` in usb-core-test,
+  before the log server), the audio driver in audio-test, `usb_core` in usb-core-test,
   `input_trace` in usb-hid-test.
 - **Baud rate:** chainboot starts at 115 200 (`libs/chainboot-protocol`,
   `BOOT_BAUD_RATE`); chainofcommand can switch it for the load and the console stays at
@@ -230,7 +254,7 @@ No new kernel kind or operation is needed for any option here.
 11. An image whose shell reads the serial port keeps working.
 12. No new kernel kinds or operations.
 
-## Architecture (as built in L-A)
+## Architecture (as built in P-LOGGING-1)
 
 ```
  compositor   wood (game, playback)   midi_synth   audio driver     (clients)
@@ -301,7 +325,7 @@ The server's export `flush` only advances its `EventCount`.
   `log_v1`; its `note` lines (including those written during `service` on Wood's
   playback Thread) go to its own channel.
 - **Audio driver:** imports `log_v1` too; its `Trace` lines reach the UART.
-- **USB components (L-B):** `usb` (`drivers/usb-hcd-dwc2`), `usb_core` (`drivers/usb`)
+- **USB components (P-LOGGING-2):** `usb` (`drivers/usb-hcd-dwc2`), `usb_core` (`drivers/usb`)
   and `usb_hid` (`drivers/usb-hid`) import `log_v1`; their `note`/`Trace` lines reach
   the UART, and the controller's backlog relay through `usb_core` finds nothing left.
 
@@ -354,7 +378,7 @@ refill max 8881 µs of 11 612 µs: the averages fit, the maxima are QEMU's sched
 jitter. On the board the same line shows whether the synthesiser's render fits the
 period at the ARM clock it runs at.
 
-### Panics and faults (L-D)
+### Panics and faults (P-LOGGING-4)
 
 A component's last words go to the UART through its own `log_v1` channel. Seen on
 the board: wood-test lost its USB keyboard because `usb-core`'s Thread overflowed its
@@ -451,11 +475,11 @@ probe whose second Thread overflows its stack and whose first Thread panics).
   `libserial-trace` prints to semihosting, sends to the serial channel and keeps
   backlog lines in separate non-inlined functions, so a trace line's stack is the
   larger of those paths, not their sum. Tracing from deep call chains must still keep
-  frames small. On the board an overflow was silent until L-D: the fault report
+  frames small. On the board an overflow was silent until P-LOGGING-4: the fault report
   (section Panics and faults) now names it.
 - **libserial-trace relays.** The backlog and the `trace(octet&)` exports of `input_v1`,
   `usb_v1` and `usb_hcd_v1` exist because one component held the UART; they go once
-  every component has its own channel (L-B).
+  every component has its own channel (P-LOGGING-7).
 
 ### Test images
 
@@ -474,7 +498,7 @@ probe whose second Thread overflows its stack and whose first Thread panics).
 - **Kickstart/Meddle:** no client-to-exporter signal in `channel` wiring (worked
   around with `flush`); `MAX_AREAS` = 8; exporters do not learn clients' names;
   `serial = true` should be checked to name exactly one component.
-- **image-build:** the top-level `interfaces` key (L4) was added for unlinked imports.
+- **image-build:** the top-level `interfaces` key (LOGGING-4) was added for unlinked imports.
 - **Out of scope:** the nucleus and Kickstart print nothing on the board's UART; a
   kernel panic on the board is silent.
 
@@ -488,8 +512,8 @@ probe whose second Thread overflows its stack and whose first Thread panics).
   <https://github.com/genodelabs/genode/tree/master/repos/os/src/server/terminal_log>.
 - **seL4 sDDF / LionsOS.** Clients have shared-memory queues to transmit and receive
   virtualisers in front of one driver; the transmit side needs a policy when clients
-  exceed the device's capacity, and the receive side routes input to one client (L3,
-  L7, L11). <https://github.com/au-ts/sddf>, <https://arxiv.org/abs/2501.06234>. The
+  exceed the device's capacity, and the receive side routes input to one client
+  (LOGGING-3, LOGGING-7, LOGGING-11). <https://github.com/au-ts/sddf>, <https://arxiv.org/abs/2501.06234>. The
   older CAmkES `SerialServer` gives each client a buffer and colours its output:
   <https://github.com/seL4/global-components>.
 - **Fuchsia debuglog and syslog.** `zx_debuglog_write` is a kernel log every early

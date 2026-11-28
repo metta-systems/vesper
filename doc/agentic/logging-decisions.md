@@ -1,11 +1,11 @@
 # Logging open decisions
 
-Parking lot for unanswered logging decisions. Each entry stays open until the maintainer
-answers it explicitly. Answered decisions go into
-[logging-design.md](logging-design.md#decisions); their tasks into
+Unanswered logging questions only. Each entry stays open until the maintainer
+answers it explicitly. An answered question becomes a numbered section of
+[logging-design.md](logging-design.md#decisions) and leaves this file; its tasks go into
 [logging-implementation-plan.md](logging-implementation-plan.md).
 
-## L13. DebugConsole byte transport
+## Q-LOGGING-1: DebugConsole byte transport
 
 Parked. How does a generally available console receive its bytes?
 
@@ -16,6 +16,6 @@ Parked. How does a generally available console receive its bytes?
   client chunking, so the nucleus never reads user memory.
 
 Until this is decided the console stays a debug-only prototype. The hardware debugging
-aid's checked pointer reads ([DebugConsole debug-only
-exception](logging-design.md#debugconsole-debug-only-exception)) are temporary and do not
-answer this question. Capability decisions D1, D6 and D9 touch it.
+aid's checked pointer reads ([LOGGING-14](logging-design.md#logging-14-the-hardware-debugging-aid))
+are temporary and do not answer this question. Capability decisions D1, D6 and D9
+touch it.
