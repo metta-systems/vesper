@@ -8,4 +8,4 @@ recipes of the [capabilities plan](capabilities-implementation-plan.md) apply he
 Mark an item `- [x]` only after implementation and validation have passed. A finished item
 leaves a one-line marker in [irq-completed.md](irq-completed.md).
 
-- [ ] Hand the boot IRQControl to an EL0 `irq-manager` component for good.
+- [ ] Hand the boot IRQControl to an EL0 `irq-manager` component for good (IRQ-1).
