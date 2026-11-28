@@ -52,7 +52,7 @@
 //! (`InvalidOperation`) — the root is torn down first through the
 //! empty-table-gated `PageTable.Unmap` path. Full Thread Start/Suspend/Resume
 //! — initialized execution contexts, execution budget, legal state
-//! transitions, and EL0 entry — remains Phase 7 work (D8).
+//! transitions, and EL0 entry — remains scheduling work (P-CAPABILITIES-7).
 //! Implementation status: the bounded wait/resume fixture now switches
 //! contexts, but `Activate` remains own-AS-only, not public Thread control.
 //! It returns prepared metadata; entry installs after the kernel lock ends.
@@ -421,7 +421,7 @@ fn activate<A: ArchObjects>(
 ///
 /// Teardown scope: if an ASID is bound, execute the whole-ASID TLB
 /// invalidation, then release the ASID back to its originating pool (the
-/// boot pool is the only one today; multi-pool partitioning remains D6).
+/// boot pool is the only one today; multi-pool partitioning remains open, Q-CAPABILITIES-15).
 /// Clear the root/ASID fields and retire the carved `AddressSpace`, bumping
 /// its generation. Threads still referencing the retired `AddressSpace` fail
 /// generation validation on their next resolution (the stale-identity rule).
@@ -481,7 +481,7 @@ fn retire<A: ArchObjects>(
     // Withdraw every cached translation of the whole context, then release
     // the ASID back to its originating pool. The boot pool (index 0) is the
     // only pool today; recording the originating pool per binding is part of
-    // the open multi-pool partitioning (D6).
+    // the open multi-pool partitioning (Q-CAPABILITIES-15).
     if let Some(released_asid) = bound_asid {
         A::invalidate_tlb_asid(released_asid);
         if let Some(pool) = nucleus.pools.arch.asid_pools.get_live_mut(0) {

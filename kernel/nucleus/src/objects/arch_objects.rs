@@ -274,7 +274,7 @@ pub trait ArchObjects: Sized + 'static {
     /// `AddressSpace`; this is the hardware mechanism only, not an authority
     /// decision. Re-installing the same context is idempotent; switching
     /// between contexts that share an ASID requires invalidation by the
-    /// caller (ASID reuse safety remains open, D6).
+    /// caller (ASID reuse safety remains open, Q-CAPABILITIES-15).
     /// Implementation status: preparation is fallible and separate; syscall
     /// entry installs only after object guards and the kernel lock have ended,
     /// on the shared high kernel stack. Preparation is not a lifetime pin.

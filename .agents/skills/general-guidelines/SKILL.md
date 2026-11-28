@@ -39,7 +39,7 @@ Work that is not about capabilities themselves (SMP, FP/SIMD, USB, input, audio,
 
 ### Section and item IDs
 
-Every numbered section and item in an area's documents carries an ID made of the area's prefix in capitals (its row in the [document index](#document-index), with the same hyphens) and a number, with a kind letter in front for everything outside the design. This replaces every older scheme (bare letters such as `D3`, `M7`, `C5`, `S2b`, or area stages such as `USB4`, `SMP1`, `INPUT1`, `MEM2`); those are renamed when their documents are reindexed. The capabilities gates `D1`–`D9` become `CAPABILITIES-<N>` sections (their open parts `Q-CAPABILITIES-<N>` questions), and other labelled lists (such as invariants) are renamed too: once reindexing is done, no short label remains.
+Every numbered section and item in an area's documents carries an ID made of the area's prefix in capitals (its row in the [document index](#document-index), with the same hyphens) and a number, with a kind letter in front for everything outside the design. This replaces every older scheme (bare letters such as `D3`, `M7`, `C5`, `S2b`, or area stages such as `USB4`, `SMP1`, `INPUT1`, `MEM2`); those are renamed when their documents are reindexed. Other labelled lists (such as invariants) are renamed too: once reindexing is done, no short label remains.
 
 | ID | Where | Example |
 |---|---|---|
@@ -124,23 +124,23 @@ These apply to every slice and are never "done"; they are not plan checkboxes.
 
 ## Gate architectural decisions
 
-Check the documents' decision status and dependencies for the selected item:
+Check the documents' decision status and dependencies for the selected item. The capabilities gates are the sections of the contract's decision register; each names its contract sections and its open `Q-CAPABILITIES-<N>` questions:
 
-- **D1:** protection/threat model and shared-address-space semantics; backend, machine-local namespace-conflict, and fault-delivery details. Multi-node global address allocation is out of scope.
-- **D2:** management-authority/bookkeeping split; remaining revocation, completion, and reuse mechanisms.
-- **D3:** ownership and lifetime.
-- **D4:** authority, badges, and bootstrap.
-- **D5:** scheduler-shared records (rules in `scheduling-design.md`, open questions in `scheduling-decisions.md`).
-- **D6:** memory and ASID management (mapping, ASID and fbuf rules in `memory-design.md`, open questions in `memory-decisions.md`).
-- **D7:** IPC and blocking.
-- **D8:** time (rules in `scheduling-design.md`, open questions in `scheduling-decisions.md`).
-- **D9:** ABI evolution.
+- **CAPABILITIES-1:** protection/threat model and shared-address-space semantics; backend, machine-local namespace-conflict, and fault-delivery details. Multi-node global address allocation is out of scope.
+- **CAPABILITIES-2:** management-authority/bookkeeping split; remaining revocation, completion, and reuse mechanisms.
+- **CAPABILITIES-3:** ownership and lifetime.
+- **CAPABILITIES-4:** authority, badges, and bootstrap.
+- **CAPABILITIES-6:** memory and ASID management (mapping, ASID and fbuf rules in `memory-design.md`, open questions in `memory-decisions.md`).
+- **CAPABILITIES-7:** IPC and blocking.
+- **CAPABILITIES-9:** ABI evolution.
+
+The numbers 5 and 8 are retired: scheduler-shared records and Time are scheduling topics (rules in `scheduling-design.md`, open questions in `scheduling-decisions.md`).
 
 Resolve blocking decisions with the user before implementing dependent behavior. Present the concrete choice, consequences, and affected checklist item; never silently promote a proposal to an accepted contract. Present decision options as plain text in the conversation (markdown lists with lettered/named options), not via interactive input-request forms: the maintainer cannot read truncated option text in the selection UI and cannot make a choice there. Wait for the user's typed reply.
 
 **Never assume an answer the maintainer has not explicitly given.** Record a decision only for the questions the reply names or unambiguously answers. A reply to a related point, a follow-up question, an "ok" to something else, or silence is not an answer to a pending question: it does not select the recommended option or any other. When a reply covers only some of the open questions, record those, keep the rest open in the matching decisions file (`doc/agentic/capabilities-decisions.md` or the area's), and ask again for the unanswered ones. If it is unclear whether a reply answers a question, ask instead of recording it. Recording an assumed answer as a "maintainer decision" and later undoing it is costly; this has happened repeatedly.
 
-For lifecycle and authority changes, consult the **CONFIRMED**, **INTERIM**, and **OPEN / DECISION REQUIRED** notes in `doc/agentic/capabilities-design.md` and map them to D1–D9 above. Preserve the selected hostile-native-code confinement, capability-scoped trust, AddressSpace = protection boundary (the core Thread executes in an arch AddressSpace), shared numerical meaning/cheap fbufs with protected-context fallback, no-intra-AddressSpace-alias policy, incarnation, permission-based retirement, SPeCK-like KeyMaster, accepted-leak, Copy-not-Map, local-Unmap versus origin-cap-Revoke, and private mapping-guard directions. Revocation takes precedence over client borrows; unsafe mapped-memory caller obligations are the preferred direction, not a kernel safety exemption. Do not treat these as approval of remaining identity encodings, selective-revocation mechanisms, Frame Map/remap schemas, machine-local namespace conflicts, per-target enforcement, precise Rust/fbuf contracts, or completion ABIs. Use `doc/agentic/capabilities-research.md` as evidence, not as permission to substitute unrelated semantics. Record new approved choices in the document that owns the topic first (the capabilities contract for capability semantics, the area's design otherwise), then reconcile the analysis document and implementation plan.
+For lifecycle and authority changes, consult the **CONFIRMED**, **INTERIM**, and **OPEN / DECISION REQUIRED** notes in `doc/agentic/capabilities-design.md` and map them to the gates above. Preserve the selected hostile-native-code confinement, capability-scoped trust, AddressSpace = protection boundary (the core Thread executes in an arch AddressSpace), shared numerical meaning/cheap fbufs with protected-context fallback, no-intra-AddressSpace-alias policy, incarnation, permission-based retirement, SPeCK-like KeyMaster, accepted-leak, Copy-not-Map, local-Unmap versus origin-cap-Revoke, and private mapping-guard directions. Revocation takes precedence over client borrows; unsafe mapped-memory caller obligations are the preferred direction, not a kernel safety exemption. Do not treat these as approval of remaining identity encodings, selective-revocation mechanisms, Frame Map/remap schemas, machine-local namespace conflicts, per-target enforcement, precise Rust/fbuf contracts, or completion ABIs. Use `doc/agentic/capabilities-research.md` as evidence, not as permission to substitute unrelated semantics. Record new approved choices in the document that owns the topic first (the capabilities contract for capability semantics, the area's design otherwise), then reconcile the analysis document and implementation plan.
 
 Preserve the approved management authority split: KeyTable capabilities/rights authorize direct derivation, installation, and management; recipients also own the bookkeeping obligations and join the TCB of that libOS composition. Multiple managers or hierarchies are userspace policy. KeyMaster is a role, not a kernel-special singleton; do not add mandatory central post-hoc registration or reopen this settled choice. Remaining operation schemas, rights bits, and composition-specific synchronization/recovery are implementation work.
 
@@ -162,7 +162,7 @@ Respect the plan's ordering and explicit prerequisites:
 2. Shared ABI and host-testability.
 3. Active console/syscall boundary.
 4. Guarded capability storage and thread lifetime.
-5. Memory vertical slice (rules in `memory-design.md`, tasks split between Phase 5 and `memory-implementation-plan.md`).
+5. Memory vertical slice (rules in `memory-design.md`, tasks split between P-CAPABILITIES-10 and `memory-implementation-plan.md`).
 6. Deferred completion first, then notifications/event counts and PPC Invocation.
 7. Time and userspace scheduling (tracked in `doc/agentic/scheduling-implementation-plan.md`, rules in `scheduling-design.md`).
 8. Final integration and documentation audit.

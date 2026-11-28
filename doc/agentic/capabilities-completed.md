@@ -1,18 +1,18 @@
 # Capabilities completed
 
-Short markers of what is done, grouped by plan phase. Each line says what exists and where it is exercised. Rationale and details are in the [contract](capabilities-contract.md); the history of how each piece landed is in version control.
+Short markers of what is done, grouped by plan section. Each line says what exists and where it is exercised. Rationale and details are in the [contract](capabilities-contract.md); the history of how each piece landed is in version control.
 
 ## Object-types review
 
 - [x] `Domain` split into the arch `AddressSpace` (translation root, ASID, protection boundary) and the core `Thread` (execution, scheduling, pending state); catalogue renumbered, docs regenerated.
 - [x] Reserved `ASID` kind replaced by `ASIDControl` (arch index 4, `0x84`); ASIDs are values bound to an AddressSpace.
 
-## Phase 1 — Confirm contracts and support boundaries
+## P-CAPABILITIES-1: confirm contracts and support boundaries
 
 - [x] Status matrix confirmed against dispatch; it lives as the catalogue in `doc/object_types/README.md`.
 - [x] Ordinary-operation schema template (ID, widths, slot scope, authority, result, blocking, ownership, failure) recorded in the contract.
 
-## Phase 2 — One shared, testable ABI
+## P-CAPABILITIES-2: one shared, testable ABI
 
 - [x] Host ABI tests (`just _test-object-host`, `host-tests` feature) and host lint (`just _clippy-object-host`) wired into `just test`/`just clippy`; the ABI is tested natively on its own architecture.
 - [x] One canonical `CoreType`/`ArchType` catalogue (`0x80` arch bit, category-local indices distinct from wire IDs) with exhaustive literal tests over all 256 bytes.
@@ -23,7 +23,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] User-visible records (`PpcResult`, `ResultSpill`, `ExportRecord`) carry const layout assertions.
 - [x] Current-consumer compatibility policy: rebuild everything together; unsupported operations show up as errors.
 
-## Phase 3 — Repair the active syscall/console path
+## P-CAPABILITIES-3: repair the active syscall/console path
 
 - [x] Explicit caller context: an absent current Thread is rejected, never defaulted to Thread zero.
 - [x] Entry checks the exception class and origin; non-SVC EL0 exceptions go to fault delivery; the SVC immediate is ignored.
@@ -31,7 +31,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] Register preservation: an ordinary invocation writes only `x0..x2`; `x3..x30`, SP and NZCV survive success, rejection and blocking resume (`libkicktest::registers`, `capability-test`, `sync-test`).
 - [x] Every wrapper returns kernel results through `decode_syscall_result`; unimplemented operations fail with `InvalidOperation`.
 
-## Phase 4 — Capability storage and Thread lifetime
+## P-CAPABILITIES-4: capability storage and Thread lifetime
 
 - [x] Packed 64-bit keys (32-bit incarnation, 32-bit table-relative address); commit-only incarnation advance, retained counters, slot-local exhaustion (`KeySlotExhausted`); statuses 26–28 with reasons and operand index; actual-key bootstrap handoff.
 - [x] Guarded key space: variable-size KeyTables (`size_bits` 1–20), per-table guard in the KeyTable capability, `SELF_KEYTABLE` as the guard source, `GuardMismatch` rejection.
@@ -49,13 +49,13 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 
 - [x] KeyTable retirement identity: a KeyTable is a `Carved<KeyTable>` named by its `CarvedId` in `KeyTablePayload`, `KeyTableBinding` and `CallerTable` (`kernel/nucleus/src/objects/key_table.rs`); every table resolution validates the header (`Access::resolve_caller_table`, `TableCap::resolve`), and a retired bound table fails syscall entry with `InconsistentKey`/`ObjectRetired`. Exercised by `retired_table_rejects_capabilities_in_every_table` (`kernel/nucleus/tests/key_table.rs`) and `retired_bound_table_rejects_every_invocation_from_its_address_space` (`kernel/nucleus/tests/debug_console.rs`).
 
-## Phase 5 — Memory and safe reclamation
+## P-CAPABILITIES-5: memory and safe reclamation
 
 - [x] Transactional batch `Untyped.Retype` (validate → reserve → initialize → install → commit watermark): only the unused watermark range, absolute alignment, representable extents, device sources rejected except for Untyped splits (`test-untyped`).
 - [x] Retype creates KeyTables, Frames (12/21/30-bit), PageTables, Notifications, EventCounts and Untyped children; Frames and PageTables are zeroed before they become visible.
 - [x] Kernel object pools sized at creation from one watermark carve (`ObjectPool::carve`, `RegionPayload::reserve`).
 
-## Phase 6 — Deferred completion and IPC
+## P-CAPABILITIES-6: deferred completion and IPC
 
 - [x] Pending-invocation records with non-wrapping generations, a single terminal transition, bounded FIFO wait queues, and teardown cancellation.
 - [x] Blocking waits park a Thread-resident continuation; one kernel stack per core; resume rewrites the transient frame.
@@ -92,4 +92,4 @@ Time and scheduling work is in [`scheduling-completed.md`](scheduling-completed.
 - [x] `libs/driver` and the QEMU device-test console path in `libmachine` (`drivers::qemu_bring_up_console`) are gone with `libs/platform`.
 - [x] Chainboot runs on a Raspberry Pi 3B: the logger is set with `libconsole::init_logger_racy` (the atomic swap of `init_logger` never completes with the MMU off), the UART clock is started and read through the mailbox, bring-up reports on the LED (flash codes, then blinking), the banner names the model from the device tree, and waits on the UART are bounded. `bin/chainboot` has an opt-in `mmu` feature (`platform::mmu`, `just build-chainboot rpi3 mmu` makes `chainboot-rpi3-mmu.bin`): a flat identity map with RAM as Normal non-cacheable memory and peripherals as Device memory, on while chainboot runs and off before the kernel. Exercised by loading a kernel through each image under QEMU with `chainofcommand`, and by the maintainer's board for the default image.
 - [x] `just build-chainboot` ends with an audit (`_audit-chainboot-exclusives`) that fails when the chainboot ELF holds a load/store-exclusive or an LSE atomic: with the data cache off the Pi's cores never complete them, and QEMU does. Exercised by the four chainboot builds (rpi3, rpi3 `mmu`, rpi3 `qemu`, rpi4), which pass, and by `nucleus`, `usb-core` and a chainboot build with the old `init_logger()` call, which it rejects.
-- [x] Six-word `Thread.Return` (C1(b)): the payload `r0..r5` in `x2..x7` resumes in the caller's `x1..x6` (`PreparedReturn`, `kernel/nucleus/src/objects/invocation.rs`); `ppc_call`/`ppc_call_with_key` return six words, `ppc_return` and `return_from_invocation` take six, `PpcResult` is six words (`PpcResult::pair`) and `vesper_thread_return_fault` gets them by reference. Exercised by the `invocation_call` Return tests (`just _test-debug-console`), the ABI tests (`just _test-object-host`) and `ppc-test` (`just _test-ppc`: raw and library Returns, the clobber target's six words).
+- [x] Six-word `Thread.Return` (CAPABILITIES-26): the payload `r0..r5` in `x2..x7` resumes in the caller's `x1..x6` (`PreparedReturn`, `kernel/nucleus/src/objects/invocation.rs`); `ppc_call`/`ppc_call_with_key` return six words, `ppc_return` and `return_from_invocation` take six, `PpcResult` is six words (`PpcResult::pair`) and `vesper_thread_return_fault` gets them by reference. Exercised by the `invocation_call` Return tests (`just _test-debug-console`), the ABI tests (`just _test-object-host`) and `ppc-test` (`just _test-ppc`: raw and library Returns, the clobber target's six words).

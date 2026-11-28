@@ -4,7 +4,7 @@
 - [ ] pub asid: Option<u16>, should probably use Option<NonZero<u16>> in domain.rs
   - ASID 0 reserved for the kernel's own boot translation context
   - [ ] similarly for some other int-based optionals, where 0 is clearly an invalid value - find them
-- [ ] "a per-domain IPC buffer receives anything beyond register capacity. The buffer's registered location and lifetime are part of domain creation (D5/D6 follow-up)." - does a per-Endpoint IPC buffer make more sense? How it is implemented?
+- [ ] "a per-domain IPC buffer receives anything beyond register capacity. The buffer's registered location and lifetime are part of domain creation (scheduler-shared records and CAPABILITIES-6 follow-up)." - does a per-Endpoint IPC buffer make more sense? How it is implemented?
 - [ ] two mmio tests ignored -- running 2 tests
   test libs/mmio/src/lib.rs - MMIODerefWrapper<T> (line 42) ... ignored
   test libs/mmio/src/lib.rs - MMIODerefWrapper<T> (line 46) ... ignored
@@ -46,7 +46,7 @@ Each document follows the same structure: name/metadata table → purpose → us
 ## Most important discrepancies flagged for your review
 
 1. **KeyTable architecture** (`key_table.md`): vault describes a KeyNode directed graph with guarded page tables, radix/depth-limits, kernel CDT, and recursive revoke; current implementation is a flat 256-slot table, no CDT, Revoke rejected. Also 32-byte `KeyEntry` vs the vault's assumed 16 bytes/slot.
-2. **Single address space** (`domain.md`, `vspace.md`, `frame.md`): vault SAS vision vs. selected per-Domain translation contexts (D1).
+2. **Single address space** (`domain.md`, `vspace.md`, `frame.md`): vault SAS vision vs. selected per-Domain translation contexts (CAPABILITIES-1).
 3. **Untyped split + device retyping** (`untyped.md`): vault expects Untyped→Untyped splitting and device-Untyped→Frame retyping; both are rejected today.
 4. **ASID pools** (`asid_pool.md`): vault/seL4 imply Retype-creatable pools; current model is boot-provided-only.
 5. **IRQ delivery** (`irq_handler.md`, `irq_control.md`): the entire interrupt HAL is an unchecked vault todo; Notification is ready as the target but nothing delivers to it.
@@ -179,9 +179,9 @@ Most important: stale against the current contract
 
 Medium: dubious or contradictory comments
 
-- libs/object/src/key_table.rs:40: "Every thread has cap to own captbl here - or rather to KeyMaster". This is the old captbl naming plus an unresolved KeyMaster framing (D2/D4). Rewrite it to say what SELF_KEYTABLE is.
+- libs/object/src/key_table.rs:40: "Every thread has cap to own captbl here - or rather to KeyMaster". This is the old captbl naming plus an unresolved KeyMaster framing (CAPABILITIES-2, CAPABILITIES-4). Rewrite it to say what SELF_KEYTABLE is.
 - libs/object/src/key_table.rs:223: "the legacy _captbl argument is unused". The contract has no _captbl argument. Remove the argument-level note, or fix the signature, once you decide whether revoke keeps a table key. The kernel rejects the operation anyway.
-- libs/object/src/key_table.rs:139, 236 and libs/syscall/src/lib.rs:290: "provisional" rights and transport. These match the open D9 and D4 decisions, so they are correct as they stand.
+- libs/object/src/key_table.rs:139, 236 and libs/syscall/src/lib.rs:290: "provisional" rights and transport. These match the open CAPABILITIES-9 and CAPABILITIES-4 decisions (Q-CAPABILITIES-7, Q-CAPABILITIES-11), so they are correct as they stand.
 - doc/capabilities-contract.md (the Scheduling records paragraph, around line 446): "Scheduler capability derivation is supported for planned hierarchical schedulers" appears twice in a row. The second copy is a duplicate, and "supported" is ambiguous next to "planned".
 
 

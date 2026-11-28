@@ -27,7 +27,7 @@ The desired separation is:
 
 Phantom types improve ergonomics, not authority or lifetime enforcement. Copying a Rust handle is not kernel capability derivation.
 
-## 1. Stale handles and identity reuse
+## Stale handles and identity reuse
 
 ### Slot-only counterexample
 
@@ -66,9 +66,9 @@ Three distinct identity problems must be covered:
 
 Derived capabilities reference the same kernel object. An authoritative object-generation mismatch is sufficient to reject all old invocations of that retired object, without walking a capability ancestry chain. The branch distinction matters for selective revocation, not for detecting global object retirement. A generation is not a secret or a substitute for authorization, and object generation alone does not detect replacement of a slot with a different valid capability.
 
-Open work for this section is tracked in [Phase 4](capabilities-implementation-plan.md#phase-4--capability-storage-and-thread-lifetime); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+Open work for this section is tracked in [P-CAPABILITIES-9](capabilities-implementation-plan.md#p-capabilities-9-capability-storage-and-thread-lifetime-the-rest); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
-## 2. Delete, revoke, retire, and reclaim are different operations
+## Delete, revoke, retire, and reclaim are different operations
 
 The canonical contract already separates entry deletion from revocation and safe reuse. “Disposed” needs a more precise operation-specific meaning.
 
@@ -91,15 +91,15 @@ Userspace need not duplicate this state machine. The kernel and any trusted reso
 
 Recorded in the contract's [lifecycle and authority contract](capabilities-contract.md#lifecycle-and-authority-contract): Retype-origin capabilities carry delegable lifetime-control permission, the creator keeps control after donation, kernel retirement is separate from manager subtree cleanup, and abandoned allocations may leak without kernel recovery. Two consequences: capability reference counting alone would not account for pending invocations, mappings or internal relationships; and a pin that keeps storage safe is **not** permission to keep using revoked authority — physical lifetime and logical authorization stay separate.
 
-Open work for this section is tracked in [Phase 4](capabilities-implementation-plan.md#phase-4--capability-storage-and-thread-lifetime) and [Phase 5](capabilities-implementation-plan.md#phase-5--memory-and-safe-reclamation); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+Open work for this section is tracked in [P-CAPABILITIES-9](capabilities-implementation-plan.md#p-capabilities-9-capability-storage-and-thread-lifetime-the-rest) and [P-CAPABILITIES-10](capabilities-implementation-plan.md#p-capabilities-10-memory-and-safe-reclamation-the-rest); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
-## 3. Guarded kernel access and storage lifetime
+## Guarded kernel access and storage lifetime
 
 ### CONFIRMED: correctness before representation optimization
 
 Recorded in the contract's [key tenets](capabilities-contract.md#key-tenets) (correctness before representation optimization); the skill requires the matching layout audit with every representation change.
 
-Open work for this section is tracked in [Phase 4](capabilities-implementation-plan.md#phase-4--capability-storage-and-thread-lifetime); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+Open work for this section is tracked in [P-CAPABILITIES-9](capabilities-implementation-plan.md#p-capabilities-9-capability-storage-and-thread-lifetime-the-rest); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
 ### Selected guarded-access direction and remaining representation work
 
@@ -114,13 +114,13 @@ Typed pools remain a useful starting point, with representation free to change u
 5. Object references and incompatible guards end before scheduling or context switching.
 6. Pending operations retain checked identities and explicit reservations, not borrowed Rust references.
 
-**SELECTED — D3 concrete guarded access:** capabilities naming pooled objects store only a checked object identity (pool tag, pool index, allocation generation); entries hold no raw object pointer. Named Thread capabilities use `ThreadSelector::Named(ObjectId)`; the separate `ThreadSelector::CurrentReturnOnly` selector has no concrete Thread identity to resolve and `object_id` extraction returns `InvalidOperation`. It still requires ordinary checked caller-table/key lookup, not a fabricated zero identity or lookup bypass. The owning access context computes object addresses from pool bases after validating per-pool authoritative slot metadata (allocation state + generation + retirement), whose backing is stable and independent of object storage — validation always precedes dereference. The context is constructed once per invocation under the kernel lock, is `!Send`, and hands out guards that borrow it, so the borrow checker enforces guards ending before scheduling. Multi-operand operations use explicit pair-resolution forms that reject aliased mutable operands up front; a lock serializes executions but does not by itself prevent two operands within one execution from naming the same object. Mutable resolution exclusively borrows the pool for the invocation, so the borrow checker prevents holding two mutable guards into one pool; clients requiring two objects from the same pool must request them through the pair-resolution API (`resolve_pair_mut`) rather than sequential mutable resolution. One pool per type tag is the invariant making this sufficient; introducing multiple pools per type requires revisiting cross-pool alias enforcement (for example a runtime alias set). Single-core remains selected; SMP is not an open choice. **Remaining D3 work:** Untyped-backed pool ownership, kernel-private KeyTable backing, and safe pool-backing lifetime (Phase 5, with D1/D6 for protection bindings); thread lifecycle integration; per-kind access details. The boot Untyped allocation and the shared `RegionPayload::reserve` watermark-allocation primitive are established (Kickstart's `carve_region` and `ObjectPool::carve` carve the initial `Nucleus` and the ASID-pool pool from the boot Untyped's unused watermark range; runtime Retype reserves through the same primitive); syscall entry resolves the caller's table through the `Access` context. The boot table is carved kernel-privately by Kickstart, runtime `Untyped.Retype` creates further tables from an Untyped's unused watermark range, and carved-table resolution uses address-guarded `resolve_carved` forms with alias rejection. Retired objects are held until manager cleanup completes ([contract](capabilities-contract.md#lifecycle-and-authority-contract)); no retirable kind is pooled, and the cleanup handshake and reclamation remain.
+**SELECTED — CAPABILITIES-3 concrete guarded access:** capabilities naming pooled objects store only a checked object identity (pool tag, pool index, allocation generation); entries hold no raw object pointer. Named Thread capabilities use `ThreadSelector::Named(ObjectId)`; the separate `ThreadSelector::CurrentReturnOnly` selector has no concrete Thread identity to resolve and `object_id` extraction returns `InvalidOperation`. It still requires ordinary checked caller-table/key lookup, not a fabricated zero identity or lookup bypass. The owning access context computes object addresses from pool bases after validating per-pool authoritative slot metadata (allocation state + generation + retirement), whose backing is stable and independent of object storage — validation always precedes dereference. The context is constructed once per invocation under the kernel lock, is `!Send`, and hands out guards that borrow it, so the borrow checker enforces guards ending before scheduling. Multi-operand operations use explicit pair-resolution forms that reject aliased mutable operands up front; a lock serializes executions but does not by itself prevent two operands within one execution from naming the same object. Mutable resolution exclusively borrows the pool for the invocation, so the borrow checker prevents holding two mutable guards into one pool; clients requiring two objects from the same pool must request them through the pair-resolution API (`resolve_pair_mut`) rather than sequential mutable resolution. One pool per type tag is the invariant making this sufficient; introducing multiple pools per type requires revisiting cross-pool alias enforcement (for example a runtime alias set). Single-core remains selected; SMP is not an open choice. **Remaining CAPABILITIES-3 work:** Untyped-backed pool ownership, kernel-private KeyTable backing, and safe pool-backing lifetime (P-CAPABILITIES-5, with CAPABILITIES-1 and CAPABILITIES-6 for protection bindings); thread lifecycle integration; per-kind access details. The boot Untyped allocation and the shared `RegionPayload::reserve` watermark-allocation primitive are established (Kickstart's `carve_region` and `ObjectPool::carve` carve the initial `Nucleus` and the ASID-pool pool from the boot Untyped's unused watermark range; runtime Retype reserves through the same primitive); syscall entry resolves the caller's table through the `Access` context. The boot table is carved kernel-privately by Kickstart, runtime `Untyped.Retype` creates further tables from an Untyped's unused watermark range, and carved-table resolution uses address-guarded `resolve_carved` forms with alias rejection. Retired objects are held until manager cleanup completes ([contract](capabilities-contract.md#lifecycle-and-authority-contract)); no retirable kind is pooled, and the cleanup handshake and reclamation remain.
 
 **Capability construction implementation:** `KeyEntry::from_id` returns `Result<KeyEntry, CapError>` and accepts only known identity-backed kinds. NULL, UNTYPED, FRAME, KEY_TABLE and INVOCATION are rejected with `InvalidObjectType` before initializing a payload; dedicated constructors supply those kinds' payloads. Thread construction initializes `ThreadSelector::Named(id)`, while `new_thread_return` initializes `CurrentReturnOnly` with empty rights. `thread_selector` and `is_thread_return_key` inspect the form without object resolution, and `object_id` on the sentinel returns `InvalidOperation`. Thread.Retire rejects the sentinel before checking `RETIRE` rights or extracting identity. The selector is 24 bytes/alignment 8; `KeyEntry` is 64 bytes/alignment 32 with a 56-byte payload union. The dedicated 56 B/alignment-8 Invocation payload stores the target AddressSpace's carved identity, mandatory `NonZero<u64>` entry and immutable validated `InvocationStackExtent` (24 B/alignment 8). `KeyEntry::new_invocation` requires that validated extent; `invocation_stack_extent` exposes a kind-checked copy. The 32 B KeyTable header is unchanged; entries use a 64 B stride with separate 4 B counters. `KeyTable::carve_size(size_bits)` derives the full aligned carve from the actual types; 256 entries require 17,440 B. Runtime Retype, bootstrap, archive and fixture backing/counter offsets follow that calculation. These are code/layout facts, not new test-run results or PPC dispatch.
 
 **AddressSpace association implementation:** `KeyTableBinding` is an immutable typed handle issued only by `unsafe KeyTable::bind_address_space` from a fully initialized private carve. It carries the table's carved identity (address and generation), so dispatch validates the table's header before dereference and a retired table fails every invocation from the AddressSpace instead of being reached through a stale address. Its safety contract still retains the whole backing at the same address while any copy survives: a retired table's memory is held until cleanup, like every carved object. AddressSpace provisioning requires the binding, dispatch validates AS incarnation before dereference, and SELF identity/capacity is checked against binding/header while SELF supplies the guard. Threads share the AS table and creating a second Thread is table-neutral. QEMU dispatch, boot, backing-bounds, and full lint validation are recorded in the plan's AddressSpace-associated KeyTable prerequisite section. General hostile-EL0 backing enforcement and future table reclamation remain unchecked below.
 
-## 4. Authority, delegation, badges, and revocation scopes
+## Authority, delegation, badges, and revocation scopes
 
 ### Per-operation authorization
 
@@ -135,9 +135,9 @@ Typed pools remain a useful starting point, with representation free to change u
 | Retire a resource | Explicit resource-management authority, not mere use permission |
 | Revoke descendants | Management authority over that delegation scope |
 | Transfer through IPC | Transfer permission and an authorized receiver destination |
-| Activate an address space | Mapping-context authority (`MAP`), a bound root and ASID; the execution-budget requirement lands with Phase 7 Thread control |
+| Activate an address space | Mapping-context authority (`MAP`), a bound root and ASID; the execution-budget requirement lands with P-CAPABILITIES-7 Thread control |
 
-**Interim Activate selection:** the active `AddressSpace.Activate` is the translation-context installation step only — `MAP` on the invoked AddressSpace capability (mapping-context authority, consistent with root installation and ASID binding), a bound root and ASID, and the current caller's own AddressSpace only. The execution-budget requirement lands with full Thread Start/Suspend/Resume (Phase 7, D8).
+**Interim Activate selection:** the active `AddressSpace.Activate` is the translation-context installation step only — `MAP` on the invoked AddressSpace capability (mapping-context authority, consistent with root installation and ASID binding), a bound root and ASID, and the current caller's own AddressSpace only. The execution-budget requirement lands with full Thread Start/Suspend/Resume (P-CAPABILITIES-7, the Time rules of the scheduling design).
 
 **Recommendations:**
 
@@ -148,7 +148,7 @@ Typed pools remain a useful starting point, with representation free to change u
 
 **CONFIRMED** ([contract](capabilities-contract.md#authorization)): table management follows ordinary source/destination KeyTable permissions with no manager-identity exceptions; Kickstart establishes the first Untypeds and tables, then hands authority on.
 
-Open work for this section is tracked in [Phase 4](capabilities-implementation-plan.md#phase-4--capability-storage-and-thread-lifetime); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+Open work for this section is tracked in [P-CAPABILITIES-9](capabilities-implementation-plan.md#p-capabilities-9-capability-storage-and-thread-lifetime-the-rest); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
 ### Who tracks revocation?
 
@@ -168,11 +168,11 @@ The kernel supplies checked source/destination authorization, per-kind transitio
 
 An object-wide epoch does not provide selective branch-only invalidation while sibling caps to the same object remain valid. If that separate operation is required, KeyMaster must use an explicit invalidation protocol; the exact primitive/completion boundary remains open. Do not add kernel ancestry metadata as a presumed prerequisite for the already-selected object-retirement mechanism.
 
-Lazy object invalidation does not remove PTEs or cancel all retained work by itself. **The authorized library OS/resource manager owns unmap-before-invalidation orchestration.** Trust follows explicitly granted capabilities, not a blanket assumption that all Threads or libOS instances cooperate. It must not invalidate the only usable cleanup authority and then expect a malicious recipient to cooperate. Premature-reuse checks and the kernel/manager completion protocol remain D2/D6, but the D1 threat model requires confinement even when a recipient bypasses its libOS. Accepted allocation leaks must not become conflicting physical reuse.
+Lazy object invalidation does not remove PTEs or cancel all retained work by itself. **The authorized library OS/resource manager owns unmap-before-invalidation orchestration.** Trust follows explicitly granted capabilities, not a blanket assumption that all Threads or libOS instances cooperate. It must not invalidate the only usable cleanup authority and then expect a malicious recipient to cooperate. Premature-reuse checks and the kernel/manager completion protocol remain CAPABILITIES-2 and CAPABILITIES-6, but the CAPABILITIES-1 threat model requires confinement even when a recipient bypasses its libOS. Accepted allocation leaks must not become conflicting physical reuse.
 
 Granting direct management authority also entrusts the recipient with bookkeeping. Multiple or hierarchical managers distribute this responsibility through composition policy. No universal central registration protocol or name-based manager privilege is implied. Exact manager-side synchronization, partial-failure handling, and coordination remain work for the chosen composition, not a new kernel policy mandate.
 
-## 5. Direct userspace memory access is not a fallible invocation
+## Direct userspace memory access is not a fallible invocation
 
 “Direct references” means `&[u8]`, `&mut [u8]`, or a reference into a shared record, produced by userspace wrappers after mapping—not raw pointers granting authority across the kernel boundary. The control interface remains capability-based; subsequent loads/stores are not capability invocations and cannot return the inconsistency status.
 
@@ -180,7 +180,7 @@ Granting direct management authority also entrusts the recipient with bookkeepin
 
 **CONFIRMED** ([memory design, MEMORY-11](memory-design.md#memory-11-shared-mappings-fbufs)): Drop cleanup uses an incarnation-bearing key, so a stale key is rejected rather than unmapping a replacement.
 
-There are two different exclusivity questions: ownership of the capability/mapping, and access to the physical bytes. No derivations from the guard-owned capability addresses the first. It does not prove that the physical frame has no aliases in other AddressSpaces, ancestor retirement authority, or device writers. D1 now prohibits multiple virtual aliases within one AddressSpace, but permits cross-AddressSpace writable sharing.
+There are two different exclusivity questions: ownership of the capability/mapping, and access to the physical bytes. No derivations from the guard-owned capability addresses the first. It does not prove that the physical frame has no aliases in other AddressSpaces, ancestor retirement authority, or device writers. CAPABILITIES-1 now prohibits multiple virtual aliases within one AddressSpace, but permits cross-AddressSpace writable sharing.
 
 **CONFIRMED** ([contract](capabilities-contract.md#protection-requirements-and-boundaries)): authorized revocation is not vetoed by a client's Rust borrow; access after withdrawal to a still-unmapped address faults.
 
@@ -220,17 +220,17 @@ Synchronization must cover every participant allowed to access the bytes. A user
 | Copied, fallible observations | Avoid exposed persistent references; may require an agreed query operation and syscall cost |
 | Shared-memory-specific access protocols | Appropriate for atomics, producer/consumer data, DMA, or MMIO; not automatically ordinary Rust slices |
 
-**OPEN / DECISION REQUIRED — D1/D3/D5/D6/D7:** implement private guard-owned mappings and specify the preferred unsafe/fbuf protocols under authoritative revocation. All three sharing modes are required: exclusive ownership, immutable sharing, and synchronized mutable sharing. Scheduler-shared record pages and ordinary revocable buffers have different lifecycles; shared-page availability does not imply immutable contents.
+**OPEN / DECISION REQUIRED — CAPABILITIES-1, CAPABILITIES-3, CAPABILITIES-6, CAPABILITIES-7 and the scheduler-shared records:** implement private guard-owned mappings and specify the preferred unsafe/fbuf protocols under authoritative revocation. All three sharing modes are required: exclusive ownership, immutable sharing, and synchronized mutable sharing. Scheduler-shared record pages and ordinary revocable buffers have different lifecycles; shared-page availability does not imply immutable contents.
 
-Open work for this section is tracked in [Phase 5](capabilities-implementation-plan.md#phase-5--memory-and-safe-reclamation); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+Open work for this section is tracked in [P-CAPABILITIES-10](capabilities-implementation-plan.md#p-capabilities-10-memory-and-safe-reclamation-the-rest); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
-## 6. Thread identity and scheduler records
+## Thread identity and scheduler records
 
 The selected direction — scheduler-owned record pages shared through `Scheduler.ShareRegion`, the root scheduler established by Kickstart, root-only Thread creation and donation — is in [`scheduling-design.md`](scheduling-design.md#decisions). Composite's upcall-based scheduling and scheduler-owned thread structures (Parmer, TECS 2013) are design evidence, not a wire-contract source.
 
 Open work for this section is tracked in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md); open decisions are in [`scheduling-decisions.md`](scheduling-decisions.md).
 
-## 7. Pending operations, PPC Invocation, and Time
+## Pending operations, PPC Invocation, and Time
 
 For a blocked caller, “the next invocation fails” is inadequate: there may never be another invocation. Retirement must arrange an explicit continuation outcome. Revocation/timeout cannot undo already committed effects or imply that a delivered request was never processed.
 
@@ -238,9 +238,9 @@ For a blocked caller, “the next invocation fails” is inadequate: there may n
 
 Recorded in the contract's [aborted-work vocabulary](capabilities-contract.md#aborted-work-vocabulary): rejected before admission, cancelled before commit, completed, outcome unknown; the nucleus provides local mechanisms only.
 
-Open work for this section is tracked in [Phase 6](capabilities-implementation-plan.md#phase-6--deferred-completion-and-ipc) and [Phase 7](capabilities-implementation-plan.md#phase-7--time-and-userspace-scheduling); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+Open work for this section is tracked in [P-CAPABILITIES-11](capabilities-implementation-plan.md#p-capabilities-11-deferred-completion-and-ipc-the-rest) and [P-CAPABILITIES-7](capabilities-implementation-plan.md#p-capabilities-7-time-and-userspace-scheduling); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
-## 8. Memory reclamation and protection
+## Memory reclamation and protection
 
 **Recommendation:** durable mapping identity, transactional creation, and retained partial-teardown bookkeeping. Before reuse, complete required CPU TLB/device translation synchronization and sanitize fresh ordinary RAM crossing protection boundaries. Intentional content-preserving sharing and device memory require distinct treatment.
 
@@ -250,19 +250,19 @@ The shared-address-space protection decision matters here: capability checks on 
 
 Recorded in [memory-design.md, MEMORY-6](memory-design.md#memory-6-frame-copy-unmap-and-revoke): Copy is not Map, Unmap is mapping-local, origin Revoke withdraws descendants, remap is origin-authorized, and Frame slots are not reused after deprovisioning.
 
-Open work for this section is tracked in [Phase 5](capabilities-implementation-plan.md#phase-5--memory-and-safe-reclamation); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+Open work for this section is tracked in [P-CAPABILITIES-10](capabilities-implementation-plan.md#p-capabilities-10-memory-and-safe-reclamation-the-rest); open decisions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
-### D1: selected protection and sharing architecture
+### Selected protection and sharing architecture (CAPABILITIES-1)
 
 Recorded in the contract's [protection and system composition](capabilities-contract.md#protection-and-system-composition) and [decision register](capabilities-contract.md#decision-register).
 
 SPeCK-like userspace policy over kernel liveness/resource/quiescence mechanisms remains the selected architecture. Possession of a permission authorizes its specified operation; it does not imply that its arbitrary syscall inputs are safe, that it follows fbuf protocols, or that it may violate protection of unrelated objects. Applications can deliberately damage resources they are permitted to write/retire; such delegated power is not a confinement escape.
 
-### D1 clarifications and consistency checks
+### Protection clarifications and consistency checks (CAPABILITIES-1)
 
 **1. Read-only mapping versus immutable backing — technical correction.** The inability of A to store through its read-only PTE does not prevent B's writable PTE from changing the same frame. Scheduler-shared records under a read-only user mapping are also intentionally updated by the kernel. Consequently, immutable sharing requires more than read-only permissions at one observer. The record preserves the hardware write-protection requirement without adopting the incorrect inference of global immutability.
 
-**2. CONFIRMED** ([contract](capabilities-contract.md#d1-follow-up-decisions-and-remaining-questions)): fbuf setup agrees addresses for every participant before mapping and publishes pointers only afterwards.
+**2. CONFIRMED** ([contract](capabilities-contract.md#protection-follow-up-decisions-and-remaining-questions)): fbuf setup agrees addresses for every participant before mapping and publishes pointers only afterwards.
 
 **Scope decision:** multi-node global/distributed address allocation is out of scope. Do not import a classical SASOS assumption that one coordinated 64-bit namespace covers local RAM, neighboring nodes' RAM, and allocated disk space. The maintainer has raised concerns about global reservation; the exact machine-local reservation/allocation model remains open rather than being silently replaced by a specific scheme. The current concrete requirement is participant-compatible fbuf addresses established before mapping.
 

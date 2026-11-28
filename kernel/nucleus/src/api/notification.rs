@@ -19,7 +19,7 @@
 //! `Poll` require `RECV`. Signal bits come from the capability's badge when
 //! nonzero, else the caller-supplied argument.
 //! Retype installs badge zero, so the argument path is the one reached
-//! until badge derivation (D4) exists.
+//! until badge derivation (CAPABILITIES-4) exists.
 
 use {
     crate::{

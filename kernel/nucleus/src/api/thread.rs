@@ -24,7 +24,7 @@
 //! Its admission, fault classification and pop/migration commit are
 //! implemented by [`prepare_return`]/[`return_from_call`], which `core_invoke`
 //! dispatches for op 0. Its faults halt the kernel under the interim policy
-//! until fault delivery (D1/D7) is designed.
+//! until fault delivery (CAPABILITIES-1, CAPABILITIES-7) is designed.
 //! The current-relative form rejects management regardless of its rights.
 
 use {
@@ -147,7 +147,7 @@ fn resume<A: ArchObjects>(
 /// still naming it fails with `ObjectRetired` — the contract's
 /// teardown-before-reuse rule. Its memory stays with the Untyped it was
 /// carved from; the `AddressSpace` is untouched (its teardown is the separate
-/// `AddressSpace.Retire`); the DCB is untouched (D5).
+/// `AddressSpace.Retire`); the DCB is untouched (scheduler-shared records).
 /// Implementation status: the keytable backing belongs to the retained
 /// `AddressSpace` association. No per-Thread kernel stack exists; retirement
 /// drops its private saved context after cancelling its pending records.
@@ -214,7 +214,7 @@ fn retire<A: ArchObjects>(
 /// so the `CurrentReturnOnly` selector itself is the authority.
 ///
 /// Fault delivery for the classified underflow and retired-source faults is
-/// the open D1/D7 decision; dispatch currently halts on them (interim policy).
+/// the open Q-CAPABILITIES-5 decision; dispatch currently halts on them (interim policy).
 pub fn prepare_return<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,

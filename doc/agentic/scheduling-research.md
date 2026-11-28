@@ -1348,7 +1348,7 @@ These illustrate three distinct interpretations of CPU time: **an opportunity to
 
 Evidence behind the [Time rules](scheduling-design.md#decisions); not a specification. The comparison below describes Composite's priority-carrying budgets; Vesper's Time carries no priority (the maintainer decision in the scheduling design removes it), so the priority and per-dispatch-versus-per-thread discussion is background only.
 
-Composite's tcaps are closer to vesper's Time than I expected. The main differences are what a budget is attached to, and that Composite puts priority inside the budget. Sources: vesper's doc/object_types/core/time.md, doc/capabilities-contract.md ("Time and userspace scheduling"), D8 and the objects/time.rs sketch, compared with Composite main's kernel/tcap.c, include/tcap.h and the tcap operations in capinv.c.
+Composite's tcaps are closer to vesper's Time than I expected. The main differences are what a budget is attached to, and that Composite puts priority inside the budget. Sources: vesper's doc/object_types/core/time.md, doc/capabilities-contract.md ("Time and userspace scheduling"), the Time decisions (now SCHEDULING-21 to SCHEDULING-26) and the objects/time.rs sketch, compared with Composite main's kernel/tcap.c, include/tcap.h and the tcap operations in capinv.c.
 
 Where they agree
 
@@ -1388,7 +1388,7 @@ Where they differ
    - There is no parent link and no automatic return of unused budget. The only way back is an explicit Merge.
    - The "revoke by bumping an epoch" scheme described in the header comments is not implemented.
    - When a tcap is used up, it drops all but its current scheduler's priority from the chain (the code calls this "declassifying" the time).
-   - So for D8, Composite's answer is: transfer, not loan.
+   - So for Time, Composite's answer is: transfer, not loan.
    - Vesper's sketch has a parent field meant for returning time to the parent, which is the opposite choice.
 4. No deadline in the budget; timeouts are given per switch.
    - Vesper's Time sketch has a deadline.
@@ -1396,8 +1396,8 @@ Where they differ
    - There is no periodic tick, and the timer is turned off entirely when the budget is infinite and no timeout is set. Vesper today has a fixed 10 ms periodic tick.
 5. Budgets are per core.
    - Every tcap belongs to one core, and transfer, delegate and switch reject a tcap from another core.
-   - That is Composite's answer to D8's "multicore budget ownership" question.
-6. Units. Composite counts raw cycle-counter ticks (TSC). Vesper's sketch says microseconds and the contract suggests nanoseconds; D8 is still open.
+   - That is Composite's answer to the Time decision's "multicore budget ownership" question.
+6. Units. Composite counts raw cycle-counter ticks (TSC). Vesper's sketch says microseconds and the contract suggests nanoseconds; the Time decision was still open then.
 
 How far apart they are
 The accounting model (empty creation, transfer, merge, query, conservation, an infinite root budget) already matches vesper's contract. The real distance is in three design choices:
@@ -1405,7 +1405,7 @@ The accounting model (empty creation, transfer, merge, query, conservation, an i
 - Lifetime: whether time is lent (vesper's parent and return) or transferred (Composite).
 - Binding: whether a budget is tied to a Thread or picked per dispatch. Composite picks per dispatch and gives event-receiving threads their own budget.
 
-If you adopt the Composite answers, D8 is largely settled. The Brand question then goes away too: what a brand gave an event was its own budget and priority, and that becomes a Time bound to the Notification's receiver, which is the role seL4's MCS configuration gives a SchedContext bound to a Notification.
+If you adopt the Composite answers, the Time decision is largely settled. The Brand question then goes away too: what a brand gave an event was its own budget and priority, and that becomes a Time bound to the Notification's receiver, which is the role seL4's MCS configuration gives a SchedContext bound to a Notification.
 
 ## Per-dispatch vs per-thread time budget
 

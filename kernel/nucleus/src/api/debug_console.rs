@@ -39,8 +39,9 @@ use {
 // bootstrap buffers, or add a distinct register-inline byte operation (for example
 // up to 40 bytes/call with client chunking) to avoid user-copy dependencies. Do not
 // silently reinterpret Write=0. Generally available caller-virtual writes need
-// D1/D6 memory and lifetime guarantees; new schemas/rights/results need the
-// relevant D4/D9 decisions.
+// CAPABILITIES-1 and CAPABILITIES-6 memory and lifetime guarantees; new
+// schemas/rights/results need the relevant CAPABILITIES-4 and CAPABILITIES-9
+// decisions.
 #[inline]
 pub fn invoke(cap: &KeyEntry, op: u64, arg0: u64, arg1: u64, reader: Reader) -> SyscallResult {
     // The console has no per-object state. Validate the capability header without

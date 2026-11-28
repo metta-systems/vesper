@@ -242,7 +242,7 @@ impl AddressSpaceKey {
     /// (`InvalidOperation` otherwise). Authority: `MAP` on the `AddressSpace`
     /// capability. This is the translation-context installation step of
     /// activation only; full Thread Start/Suspend/Resume with execution
-    /// contexts and budget remains Phase 7 work.
+    /// contexts and budget remains P-CAPABILITIES-7 work.
     pub fn activate(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
         let response =

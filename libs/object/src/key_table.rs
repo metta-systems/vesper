@@ -111,7 +111,7 @@ impl TryFrom<u32> for KeyTableOp {
 // kernel only manages flat key tables.
 
 // Contract status: the KeyMaster/kernel derivation and revocation trust boundary
-// remains an open decision (D2).
+// remains an open decision (CAPABILITIES-2).
 // Contract status update: the management-authority/bookkeeping split is approved;
 // selective revocation mechanisms and the table-rights matrix remain unresolved.
 

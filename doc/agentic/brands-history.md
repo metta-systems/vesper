@@ -98,7 +98,7 @@ seL4's IRQHandler, plus its Notification-to-thread binding (TCB_BindNotification
 ## Recommendation
 
  - No Brand object, no BrandedThread. Every role of a brand already has an owner:
-   pending events → Notification; handler → waiting/bound Thread; sched identity → D5
+   pending events → Notification; handler → waiting/bound Thread; sched identity → scheduler-shared records
    Scheduler records (seL4 MCS SC-on-notification / Composite tcap analogue); IPI target →
    kernel IPI when a Notification's waiter is on another core (Composite asnd, seL4 SMP).
    BrandedThread would recreate Composite's 2007 design and duplicate Notification.
@@ -107,4 +107,4 @@ seL4's IRQHandler, plus its Notification-to-thread binding (TCB_BindNotification
  - Move IRQHandler/IRQControl to core (as seL4): semantics are generic; the IC-specific
    part is already behind the runtime IrqChipOps table, not compile-time arch code.
  - Optional later: Thread.BindNotification (seL4-style) if PPC servers need IRQ + call in
-   one wait; decide with the D5 Scheduler event summaries.
+   one wait; decide with the scheduler-shared records' Scheduler event summaries.

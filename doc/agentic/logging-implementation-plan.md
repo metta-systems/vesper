@@ -90,7 +90,7 @@ The rest of P-LOGGING-5 (LOGGING-12).
 
 ## P-LOGGING-10: DebugConsole general availability
 
-**Parked** (maintainer decision): DebugConsole stays a debug-only prototype ([LOGGING-13](logging-design.md#logging-13-debugconsole-is-a-debug-only-exception)). Every item below is console general-availability work. It waits on the byte-transport question [Q-LOGGING-1](logging-decisions.md#q-logging-1-debugconsole-byte-transport) and the console authority decision under capability D4, and does not block other work.
+**Parked** (maintainer decision): DebugConsole stays a debug-only prototype ([LOGGING-13](logging-design.md#logging-13-debugconsole-is-a-debug-only-exception)). Every item below is console general-availability work. It waits on the byte-transport question [Q-LOGGING-1](logging-decisions.md#q-logging-1-debugconsole-byte-transport) and the console authority decision under CAPABILITIES-4, and does not block other work.
 
 - [ ] Route user-copy fault recovery through the correct exception path, without recursive capability dispatch. Lands with the console's checked user-memory access below.
 - [ ] Define the console operation's authority, byte/string/NUL behavior, maximum length or chunking policy, and pointer semantics.

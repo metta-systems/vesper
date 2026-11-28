@@ -3,8 +3,8 @@
 The checklist for memory types, cache maintenance, ASIDs and shared mappings (fbufs). The
 rules are in [memory-design.md](memory-design.md#decisions), open questions only in
 [memory-decisions.md](memory-decisions.md). Frame capability work (revocation, remapping,
-reclamation) stays in Phase 5 of the
-[capabilities plan](capabilities-implementation-plan.md); its working rules, validation
+reclamation) stays in [P-CAPABILITIES-10](capabilities-implementation-plan.md#p-capabilities-10-memory-and-safe-reclamation-the-rest)
+of the capabilities plan; its working rules, validation
 commands and `just` recipes apply here unchanged.
 
 Mark an item `- [x]` only after implementation and validation have passed. A finished

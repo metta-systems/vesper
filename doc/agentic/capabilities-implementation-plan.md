@@ -7,7 +7,7 @@ This is a TODO list, not a claim of implementation. This file holds only open wo
 ## Working rules
 
 - Select a small, explicitly scoped item or coherent group of items; do not execute the entire backlog merely because this file exists.
-- Read the reference and relevant decision-register entries first. Resolve prerequisite decisions with the maintainer; do not silently promote a recommendation to a contract.
+- Read the reference and the relevant gates of the decision register (CAPABILITIES-1 to CAPABILITIES-9) first. Resolve prerequisite decisions with the maintainer; do not silently promote a recommendation to a contract.
 - Inspect module declarations, feature/target gates, call sites, and current local edits. Distinguish excluded sketches from reachable behavior.
 - Change a contract here and in the reference before intentionally implementing a different ABI or semantic model.
 - Complete the affected shared definitions, client encoding/decoding, kernel authorization, state transitions, and tests together. Unsupported operations must remain explicit errors.
@@ -65,25 +65,21 @@ Relative engineering estimates including focused tests; not schedule commitments
 | General selective revoke plus memory reclamation | Very large | Descendants, mappings, hardware, bounded completion |
 | Safe revocable mapping abstractions / multicore Time | Very large | Protection and concurrency contracts |
 
-## Phase 1 — Confirm contracts and support boundaries
+Done: P-CAPABILITIES-1 to P-CAPABILITIES-6 (P-CAPABILITIES-1, 4, 5 and 6 with an open rest below); see [`capabilities-completed.md`](capabilities-completed.md).
 
-Reference: [status](capabilities-contract.md#status-and-authority), [responsibilities](capabilities-contract.md#target-responsibilities), [decision register](capabilities-contract.md#decision-register). Open D1–D9 questions are in [`capabilities-decisions.md`](capabilities-decisions.md).
+## P-CAPABILITIES-8: confirm contracts and support boundaries, the rest
+
+The rest of P-CAPABILITIES-1. Reference: [status](capabilities-contract.md#status-and-authority), [responsibilities](capabilities-contract.md#target-responsibilities), [decision register](capabilities-contract.md#decision-register). Open questions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
 - [ ] Define adversarial agent/test work against confinement: libOS bypass, malicious syscall inputs, alias-rule bypass, DMA programming bypass, and revocation/reuse races. Side-channel resistance stays deferred.
 
-## Phase 2 — One shared, testable ABI
+## The debug console
 
-Reference: [type numbering](capabilities-contract.md#object-type-numbering), [wire contracts](capabilities-contract.md#invocation-and-wire-contracts). Prerequisite: Phase 1 scope; D9 where schemas change.
+P-CAPABILITIES-2 (one shared, testable ABI) and P-CAPABILITIES-3 (the debug console path) are complete; version and support discovery for separately built components is Q-CAPABILITIES-13. DebugConsole general-availability work is tracked in [`logging-implementation-plan.md`, P-LOGGING-10](logging-implementation-plan.md#p-logging-10-debugconsole-general-availability).
 
-**Phase complete:** every item has moved to [`capabilities-completed.md`](capabilities-completed.md#phase-2--one-shared-testable-abi). Version/support discovery for separately built components is parked in [`capabilities-decisions.md`](capabilities-decisions.md) under D9.
+## P-CAPABILITIES-9: capability storage and Thread lifetime, the rest
 
-## Phase 3 — Repair the debug console path
-
-DebugConsole general-availability work is tracked in [`logging-implementation-plan.md`, P-LOGGING-10](logging-implementation-plan.md#p-logging-10-debugconsole-general-availability).
-
-## Phase 4 — Capability storage and Thread lifetime
-
-Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-identity), [authority, slots, and capability lifecycle](capabilities-contract.md#authority-slots-and-capability-lifecycle), [allocation and representation](capabilities-contract.md#allocation-and-representation), [Thread and AddressSpace contracts](capabilities-contract.md#thread-and-addressspace-contracts). Prerequisites: D2–D5 as applicable.
+The rest of P-CAPABILITIES-4. Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-identity), [authority, slots, and capability lifecycle](capabilities-contract.md#authority-slots-and-capability-lifecycle), [allocation and representation](capabilities-contract.md#allocation-and-representation), [Thread and AddressSpace contracts](capabilities-contract.md#thread-and-addressspace-contracts). Prerequisites: CAPABILITIES-2 to CAPABILITIES-4 and the scheduler-shared records (SCHEDULING-37 to SCHEDULING-45) as applicable.
 
 ### Keys, identity and retirement
 
@@ -92,9 +88,9 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Settle pool retirement, reuse validation and the zero-sized-type policy for `ObjectPool`; create pools at runtime, not only at bootstrap.
 - [ ] After implementation experience, review the guarded key-space configuration (per-table guards, bare destination slots, guard-in-capability storage sourced from `SELF_KEYTABLE`) and confirm or revise it.
 
-## Phase 5 — Memory and safe reclamation
+## P-CAPABILITIES-10: memory and safe reclamation, the rest
 
-Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
+The rest of P-CAPABILITIES-5. Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: CAPABILITIES-1, CAPABILITIES-2, CAPABILITIES-4 and CAPABILITIES-6.
 
 - [ ] Separate backing size/alignment from descriptor storage and slot quotas, with provenance, for kinds outside the kernel object pools. Give Frames their retirement identity in that descriptor, so retiring a Frame rejects its capabilities in every table without an ancestry walk ([contract](capabilities-contract.md#lifecycle-and-authority-contract)).
 - [ ] Define the sanitization duties beyond Retype-carved Frames and PageTables, distinguishing intentional content-preserving sharing.
@@ -103,14 +99,14 @@ Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memo
 - [ ] Implement the revocation/reclamation completion protocol: teardown bookkeeping retained across partial map/unmap failures, Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
 - [ ] Test rights denial for `Frame.Map`, `PageTable.Map` and `ASIDPool.Assign`; inject failures before and after Retype reservation and check ownership and accounting; test partial mapping failures, revocation races, cross-AddressSpace reuse without stale-data disclosure, and run target integration for retype → map → access → unmap/revoke → safe reuse, including failure paths.
 
-## Phase 6 — Deferred completion and IPC
+## P-CAPABILITIES-11: deferred completion and IPC, the rest
 
-Reference: [communication](capabilities-contract.md#communication-and-deferred-completion). Prerequisites: D4/D7/D9.
+The rest of P-CAPABILITIES-6. Reference: [communication](capabilities-contract.md#communication-and-deferred-completion). Prerequisites: CAPABILITIES-4, CAPABILITIES-7 and CAPABILITIES-9.
 
 - [ ] Apply the aborted-work vocabulary (rejected before admission / cancelled before commit / completed / outcome unknown) to each operation's commit point, and define its wire representation.
 - [ ] Define stable user-record decoding and buffer/mapping lifetime across blocking; test adversarial mutation and unmap during pending operations.
 - [ ] Test Notification/EventCount signal/wait races, multiple waiters, cancellation, reader lag and payload publication/reuse ordering with multi-Thread fixtures.
-- [ ] Give exporters the means to mint badges: the source of `BADGE` authority on an Invocation (D4 in [`capabilities-decisions.md`](capabilities-decisions.md)), then the USB host controller issues badged pipe keys through `CallWithKey` lending (the Meddle shape of a key obtained from another function is also open there).
+- [ ] Give exporters the means to mint badges: the source of `BADGE` authority on an Invocation (Q-CAPABILITIES-11), then the USB host controller issues badged pipe keys through `CallWithKey` lending (the Meddle shape of a key obtained from another function is also open there).
 - [ ] Specify nested/concurrent-call rules beyond the fixed depth, shared-memory rules, call cancellation/teardown (including target AddressSpace retirement during a call), and any partial-completion states after visible effects.
 - [ ] Complete architectural-state isolation beyond the selected TLS, timer/counter, PMU, debug-channel and FP/SIMD controls before protected EL0 claims.
 
@@ -122,9 +118,9 @@ Interrupt delivery and driver-loading work is tracked in [`irq-implementation-pl
 
 Component, Meddle and driver work is tracked in [`components-implementation-plan.md`](components-implementation-plan.md).
 
-## Phase 7 — Time and userspace scheduling
+## P-CAPABILITIES-7: Time and userspace scheduling
 
-All Time and userspace-scheduling work, including the scheduler-shared records (D5), is tracked in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md).
+All Time and userspace-scheduling work, including the scheduler-shared records, is tracked in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md).
 
 ## FP/SIMD per AddressSpace
 
@@ -142,7 +138,7 @@ Secondary-core bring-up, the kernel lock, IPIs and Threads on several cores are 
 
 Display outputs, the compositor's multi-output work and Raspberry Pi 5 HDMI are tracked in [`multi-display-implementation-plan.md`](multi-display-implementation-plan.md).
 
-## Final integration
+## P-CAPABILITIES-12: final integration
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`) and enable the protections the running core supports.

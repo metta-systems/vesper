@@ -66,7 +66,7 @@ mod tests {
         assert_eq!(guarded.lock.holder(), None);
     }
 
-    /// The capabilities contract's payload rule (D7) on several cores: a producer
+    /// The capabilities contract's payload rule (CAPABILITIES-7) on several cores: a producer
     /// writes its payload, then advances a counter under the lock (its `Advance`); a
     /// consumer that reads the advanced counter under the lock (its `Read`) then sees
     /// the payload after releasing it. The payload is written before the producer

@@ -17,5 +17,5 @@ Parked. How does a generally available console receive its bytes?
 
 Until this is decided the console stays a debug-only prototype. The hardware debugging
 aid's checked pointer reads ([LOGGING-14](logging-design.md#logging-14-the-hardware-debugging-aid))
-are temporary and do not answer this question. Capability decisions D1, D6 and D9
+are temporary and do not answer this question. Capability decisions CAPABILITIES-1, CAPABILITIES-6 and CAPABILITIES-9
 touch it.

@@ -76,7 +76,8 @@ impl TryFrom<u32> for UntypedOp {
 // Notification/EventCount allowlist, plus the Untyped split:
 // the child region is `2^size_bits` bytes at minimum the watermark encoding
 // granularity, and a device Untyped may be split with the flag propagating).
-// Revoke remains unsupported pending its scope/completion contract (D2).
+// Revoke remains unsupported pending its scope/completion contract
+// (Q-CAPABILITIES-9, Q-CAPABILITIES-10).
 // Delete/Move of the Untyped entry apply through the KeyTable management
 // operations like any other entry. Copy/Mint of an Untyped stay
 // rejected: one region must not gain independent allocation watermarks.
@@ -117,7 +118,7 @@ impl UntypedKey {
     /// lifetime, recorded in the capability) and must be zero for every other
     /// kind. Device Untypeds cannot be retyped into any of these except
     /// `Untyped` — the split touches no bytes and propagates the device
-    /// flag — until per-kind device policy is approved (D6).
+    /// flag — until per-kind device policy is approved (Q-CAPABILITIES-15).
     #[allow(clippy::too_many_arguments)]
     pub fn retype(
         &self,

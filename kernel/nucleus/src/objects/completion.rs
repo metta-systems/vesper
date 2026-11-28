@@ -8,7 +8,7 @@
 //!
 //! The record is the identity for a pending blocking operation, never a bare
 //! slot number or Thread index. Record identities reuse the checked `ObjectId` shape (pool tag +
-//! slot + non-wrapping generation, the D3 kernel-allocation-identity
+//! slot + non-wrapping generation, the CAPABILITIES-3 kernel-allocation-identity
 //! pattern), so stale identities cannot resolve after release and reuse.
 //!
 //! Completion, timeout, cancellation, and teardown compete for exactly one

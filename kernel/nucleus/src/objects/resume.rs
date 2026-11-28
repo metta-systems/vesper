@@ -386,7 +386,7 @@ impl<A: ArchObjects> Nucleus<A> {
                         result0,
                         result1,
                     } => (status, result0, result1),
-                    // Cancellation outcomes still need their D9 encoding.
+                    // Cancellation outcomes still need their encoding (Q-CAPABILITIES-16).
                     // Thread teardown releases records without resuming the
                     // torn-down waiter; object teardown has no resume caller.
                     PendingState::Cancelled | PendingState::Waiting => {

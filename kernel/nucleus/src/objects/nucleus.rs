@@ -1636,7 +1636,7 @@ impl<A: ArchObjects> Nucleus<A> {
             .count()
     }
 
-    /// Thread-teardown-driven cancellation (the D7 cancellation
+    /// Thread-teardown-driven cancellation (the Q-CAPABILITIES-5 cancellation
     /// trigger: cancel every pending-invocation record naming
     /// `thread` as its waiter and purge every queued wakeup for it.
     ///
@@ -1658,10 +1658,10 @@ impl<A: ArchObjects> Nucleus<A> {
     ///    switch.
     ///
     /// No cancellation status crosses the wire: the torn-down waiter is
-    /// gone, so its outcome is never delivered (the D9 cancellation
+    /// gone, so its outcome is never delivered (the Q-CAPABILITIES-16 cancellation
     /// encodings stay open for the timeout and object-teardown paths, whose
     /// waiters do resume). Thread-slot deallocation is the teardown path's
-    /// separate step (Phase 7 Thread control).
+    /// separate step (P-CAPABILITIES-7 Thread control).
     pub fn cancel_thread_pending(&mut self, thread: ThreadId) -> Result<(), CapError> {
         // Teardown cancels pending records while the Thread slot is live; a
         // stale identity means the caller tore the Thread down out of order.

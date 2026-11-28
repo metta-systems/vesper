@@ -890,7 +890,7 @@ const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 /// one (which completes waiters with the shared `CounterOverflow` error).
 /// After three rounds it parks forever on N2 — nothing ever
 /// signals it again, so the scheduler resumes the boot Thread.
-/// Bootstrap-era fixture mechanism, not the Phase 7 Activate contract: no
+/// Bootstrap-era fixture mechanism, not the P-CAPABILITIES-7 Activate contract: no
 /// budget, no EL0 entry, no legal-transition enforcement beyond what this
 /// path exercises.
 /// Implementation status: Bounce's Thread now names its own `AddressSpace` and

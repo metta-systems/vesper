@@ -60,8 +60,8 @@ pub fn invoke(
         KeyTableOp::CopyDerive => copy_derive(access, caller, table_key, args),
         KeyTableOp::Move => move_key(access, caller, table_key, args),
         KeyTableOp::Delete => delete(access, caller, table_key, args),
-        // Revoke's scope/completion contract is unresolved (D2); reject it
-        // rather than fake a subtree operation.
+        // Revoke's scope/completion contract is unresolved (Q-CAPABILITIES-9,
+        // Q-CAPABILITIES-10); reject it rather than fake a subtree operation.
         KeyTableOp::Revoke => Err(CapError::InvalidOperation),
     }
 }

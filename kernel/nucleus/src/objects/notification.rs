@@ -7,7 +7,7 @@
 //! completion layer's pending-invocation records. The sketch's handler-side intent
 //! (SEND/RECV rights and badge-or-argument signal bits) stays recorded in
 //! the excluded `api/notification.rs` until the Signal authority decision
-//! (D4) is settled; this object is the state core only.
+//! (CAPABILITIES-4) is settled; this object is the state core only.
 //!
 //! Contract (see `doc/capabilities-contract.md`): `Signal` ORs authorized
 //! bits and wakes at most one waiter, which consumes the delivered bitmap

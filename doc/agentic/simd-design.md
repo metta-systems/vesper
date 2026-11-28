@@ -650,6 +650,6 @@ wire rules stay in `capabilities-contract.md`:
 - **The Call register table:** the FP rows, and the call-record size.
 - **"Fault delivery":** the fault frame.
 - **The scheduler-record layouts:** the FP counters.
-- **The decision register:** D7.
+- **The decision register:** [CAPABILITIES-7](capabilities-contract.md#capabilities-7-communication-and-ppc).
 
 `audio-design.md` option 4 points here. The synthesiser stays integer-only.
