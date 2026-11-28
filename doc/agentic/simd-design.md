@@ -111,7 +111,7 @@ trap arrives with it. FP statistics are counted per Thread from the start.
 2026-11-19. The nucleus counts FP transitions per Thread and publishes them in
 the Thread's scheduler record, with totals in the root Scheduler's record (see
 the record layouts in
-[`scheduling-design.md`](scheduling-design.md#scheduler-shared-records-maintainer-decision-2026-10-17)).
+[`scheduling-design.md`](scheduling-design.md#scheduler-shared-records)).
 They are scheduling information, which the root scheduler can read and act on,
 so the FP policy can become adaptive later.
 

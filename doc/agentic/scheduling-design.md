@@ -1,6 +1,8 @@
 # Scheduling design
 
-The rules for Time and userspace scheduling. Open questions are in
+The rules for Time and userspace scheduling. The numbered sections under Decisions are
+the rules, grouped by topic; a dated one is a maintainer decision of that date, and an
+undated one takes its group's date. Open questions are in
 [scheduling-decisions.md](scheduling-decisions.md), open work in
 [scheduling-implementation-plan.md](scheduling-implementation-plan.md), finished work in
 [scheduling-completed.md](scheduling-completed.md). Background, not specification: the
@@ -19,84 +21,176 @@ Time is a first-class capability to a bounded CPU budget, not just a timer objec
 
 The nucleus owns the tick: the EL1 non-secure physical timer (`CNTP`), whose interrupt it takes through the privileged interrupt-controller component (see [`irq-research.md`](irq-research.md) and [IRQ delivery](irq-design.md#irq-delivery)). Implementation status: the nucleus charges the running Thread's bound Time in exact counter ticks, stops a Thread whose Time is exhausted and announces it to its dispatcher when budget arrives, counts interrupt time per line without charging it to the interrupted Thread, and programs the one-shot physical timer for the earliest of the dispatch limit, budget exhaustion and the next deadline; the nucleus has no run queue, only dispatchers run Threads. `replace` waits for multicore.
 
-### Selected model (maintainer decision, 2026-10-17)
+### Selected model
 
-Time is a transferable, accounted CPU budget; scheduling policy lives in userspace schedulers; the nucleus keeps no queue of runnable Threads.
+2026-10-17. Time is a transferable, accounted CPU budget; scheduling policy lives in userspace schedulers; the nucleus keeps no queue of runnable Threads.
 
-- **Budget only.** A Time holds a remaining budget. It carries no priority, chain, period or deadline.
-- **Transfer only.** Moving budget into another Time is permanent. There is no loan, no parent link and no automatic return: unused budget goes back only by an explicit Transfer or Merge.
-- **Replenishment is userspace policy.** The nucleus never renews a Time. A scheduler renews budget by Transferring it in, so round-robin quanta, sporadic servers, EDF reservations and fair shares are all scheduler code.
-- **Dispatch and replace.** `Scheduler.dispatch(thread, time, limit)` runs a Thread on a Time for at most `limit`. `Scheduler.replace(cpu, thread, time, limit)` atomically stops the Thread running on the CPU, records its remaining allowance and runs another, rejecting the request with the current state when the expected generation no longer matches (stale decisions). The nucleus checks that the caller has scheduling authority over the Thread, that the Time is spendable and allows the limit, that the Thread is runnable and not executing elsewhere, and that the CPU is authorized. A protected procedure call keeps the current Time, so the client pays for the server's work. The execution interval ends on budget exhaustion, reaching the limit, blocking, yielding, a scheduler-requested replacement or Thread retirement.
-- **Tickless enforcement.** The nucleus charges the elapsed time to the running Time and programs a one-shot timer for the earlier of budget exhaustion and the limit.
-- **Exhaustion.** A Thread whose Time is exhausted is ineligible to run until more budget is Transferred into the Time. This is not a Thread state: the nucleus simply does not run it. Whether to fund it again is the scheduler's decision. A Transfer or Merge that refills an ineligible Thread's Time announces the Thread to its dispatcher. A Thread with no bound Time (the boot Thread) is never exhausted.
-- **Accounting (maintainer decision, 2026-10-17).** Elapsed counter ticks are attributed to the running Time without rounding each charge: the Time keeps the exact tick count. The accumulated charge is converted to nanoseconds, rounded up, only when it is compared with a limit or reported, so a Thread never runs past its budget and Query reports the remaining budget rounded down. Kernel time spent on the running Thread's behalf, such as system calls, is charged to the running Time. Time spent handling interrupts is not charged to it; the nucleus records it per interrupt line (a count and the nanoseconds spent) in the line table, which `IRQHandler.Query` reports, and in total in the Scheduler record (`interrupt_ns`) (maintainer decision, 2026-10-18). The line it keeps for its own timer and lines with no handler are recorded the same way, and the receiver Thread's own work is charged to its own Time. Every Thread's run time is metered kernel-privately, and the time the nucleus spends idle (nothing runnable, waiting for an interrupt, not counting the interrupts handled meanwhile) is metered exactly like Time charging and published in the Scheduler record (`idle_ns`), so idle time measures load.
-- **Receiver Threads.** A Thread woken by the kernel (Notification or IRQ delivery) owns a Time by construction: binding a Notification to a line or a receiver role requires the receiver's Time, so there is no fallback to the interrupted Thread's budget. The nucleus does not decide whether a wakeup preempts the running Thread: it reports the wakeup as a scheduling event to the responsible scheduler, which decides.
-- **State, notification and activation (maintainer decision, 2026-10-17).** Three mechanisms are kept apart, and the nucleus guarantees only that a scheduler can regain control; it does not switch to the scheduler on every event.
+#### SCHEDULING-1: budget only
+
+A Time holds a remaining budget. It carries no priority, chain, period or deadline.
+#### SCHEDULING-2: transfer only
+
+Moving budget into another Time is permanent. There is no loan, no parent link and no automatic return: unused budget goes back only by an explicit Transfer or Merge.
+#### SCHEDULING-3: replenishment is userspace policy
+
+The nucleus never renews a Time. A scheduler renews budget by Transferring it in, so round-robin quanta, sporadic servers, EDF reservations and fair shares are all scheduler code.
+#### SCHEDULING-4: dispatch and replace
+
+`Scheduler.dispatch(thread, time, limit)` runs a Thread on a Time for at most `limit`. `Scheduler.replace(cpu, thread, time, limit)` atomically stops the Thread running on the CPU, records its remaining allowance and runs another, rejecting the request with the current state when the expected generation no longer matches (stale decisions). The nucleus checks that the caller has scheduling authority over the Thread, that the Time is spendable and allows the limit, that the Thread is runnable and not executing elsewhere, and that the CPU is authorized. A protected procedure call keeps the current Time, so the client pays for the server's work. The execution interval ends on budget exhaustion, reaching the limit, blocking, yielding, a scheduler-requested replacement or Thread retirement.
+#### SCHEDULING-5: tickless enforcement
+
+The nucleus charges the elapsed time to the running Time and programs a one-shot timer for the earlier of budget exhaustion and the limit.
+#### SCHEDULING-6: exhaustion
+
+A Thread whose Time is exhausted is ineligible to run until more budget is Transferred into the Time. This is not a Thread state: the nucleus simply does not run it. Whether to fund it again is the scheduler's decision. A Transfer or Merge that refills an ineligible Thread's Time announces the Thread to its dispatcher. A Thread with no bound Time (the boot Thread) is never exhausted.
+#### SCHEDULING-7: accounting
+
+2026-10-17. Elapsed counter ticks are attributed to the running Time without rounding each charge: the Time keeps the exact tick count. The accumulated charge is converted to nanoseconds, rounded up, only when it is compared with a limit or reported, so a Thread never runs past its budget and Query reports the remaining budget rounded down. Kernel time spent on the running Thread's behalf, such as system calls, is charged to the running Time. Time spent handling interrupts is not charged to it; the nucleus records it per interrupt line (a count and the nanoseconds spent) in the line table, which `IRQHandler.Query` reports, and in total in the Scheduler record (`interrupt_ns`) (maintainer decision, 2026-10-18). The line it keeps for its own timer and lines with no handler are recorded the same way, and the receiver Thread's own work is charged to its own Time. Every Thread's run time is metered kernel-privately, and the time the nucleus spends idle (nothing runnable, waiting for an interrupt, not counting the interrupts handled meanwhile) is metered exactly like Time charging and published in the Scheduler record (`idle_ns`), so idle time measures load.
+#### SCHEDULING-8: receiver Threads
+
+A Thread woken by the kernel (Notification or IRQ delivery) owns a Time by construction: binding a Notification to a line or a receiver role requires the receiver's Time, so there is no fallback to the interrupted Thread's budget. The nucleus does not decide whether a wakeup preempts the running Thread: it reports the wakeup as a scheduling event to the responsible scheduler, which decides.
+#### SCHEDULING-9: state, notification and activation
+
+2026-10-17. Three mechanisms are kept apart, and the nucleus guarantees only that a scheduler can regain control; it does not switch to the scheduler on every event.
   - *State.* The authoritative per-Thread and per-Time state (run state, consumed and remaining budget, a generation) lives in the scheduler-shared records, which the nucleus publishes with sequence numbers so a scheduler can detect a stale observation. Every transition updates the records whether or not it notifies or activates. A multi-field record needs an explicit publication protocol (sequence-lock style); a sequence counter alone is not an atomic snapshot.
   - *Notification.* A Scheduler is bound to an EventCount (`Scheduler.BindEventCount`). For a scheduling-relevant transition the nucleus first publishes the records, then advances the EventCount with release ordering. The dispatcher reads the counter before it reads the records, processes them, then calls `EventCount.Await(observed + 1)`; an event that arrived in between has already advanced the counter, so no wakeup is lost. Only scheduling-relevant transitions advance the counter, not every accounting update. State-change notifications may coalesce. Events whose information cannot be rebuilt from current state, such as a timer expiry or why an execution stopped, need records of their own. The scheduler's dispatcher is the only waiter on its EventCount. Advancing the EventCount is an ordinary waiter wakeup and carries no scheduling privilege.
   - *Activation.* Activation is a property of the Scheduler domain, not an ordinary wakeup of its dispatcher Thread. A running Thread that blocks, exhausts its Time, yields or terminates always requests activation of its responsible scheduler when a new dispatch decision is needed. A scheduler-level activation mask (`Scheduler.ConfigureActivation`) selects which other events request activation: `THREAD_RUNNABLE` (a Thread became runnable) and `TIME_AVAILABLE` (a Time went from exhausted to spendable). An empty mask means notify only, so a scheduler that wants no wakeup preemption bounds its wake latency by the `limit` it dispatches with. `Scheduler.ArmTimer` takes an absolute monotonic deadline and is an explicit request to activate the scheduler then (see below); the `TIMER` reason is mandatory, whatever the mask. An activation is a request, not a mandatory context switch: requests coalesce to at most one outstanding per dispatcher (dispatcher states waiting, activation pending, running), and the scheduler then issues `dispatch` or `replace` as it chooses. A request asks for the earliest activation the scheduler's domain authority permits; urgency is not a right to CPU time.
-  - *Dispatcher (maintainer decision, 2026-10-17).* A Scheduler's dispatcher is the Thread that makes its scheduling decisions, and it is bound explicitly. `Scheduler.BindDispatcher` (`5`): `x2` Thread key (`WRITE`), `x3..x7` zero; `WRITE` on the Scheduler. The Thread must be configured by this Scheduler and not started; the bind is once-only, and the bind starts the dispatcher. Kickstart binds the root dispatcher during boot. A Scheduler with no dispatcher bound runs nothing: its Threads wait (maintainer decision, 2026-10-18; there is no kernel run queue). Kickstart registers the boot Thread with the root dispatcher, and the kernel test fixtures run on a dispatcher too (the production one, or a fixture dispatcher in `libkicktest`). The kernel keeps only the list of dispatchers an activation has made ready to run next. A dispatcher that dispatched nothing (`x2` 0) is activated by any event that makes a Thread runnable, whatever the mask, since the CPU would otherwise idle with work pending.
-  - *Dispatch.* `Scheduler.Dispatch` (`6`) is invoked by the dispatcher only, and it blocks: on one CPU the dispatcher cannot run while it dispatches. `x2` Thread key, or 0 to run nothing and just wait (the kernel idles meanwhile if nothing else runs); `x3` the Thread's own bound Time key, or 0 for the same; `x4` the limit in nanoseconds; `x5` the expected generation from the Thread's record; `x6` the Scheduler's core, which the dispatcher must be running on (a Scheduler takes its core at creation for the root, from its parent at `Adopt` otherwise: [SMP-8](smp-design.md#smp-8-a-schedulers-core)); `x7` zero; `WRITE` on the Scheduler and the Thread. The Thread runs on its bound Time for at most the limit. The call returns when the nucleus activates the dispatcher, or at once if an activation is already pending: `x1` holds the activation reason bits (event pending, limit reached, budget exhausted, blocked, yielded, faulted, exited, timer, domain failed) and `x2` the scheduler's event count. A Thread whose generation differs from `x5` is not run and the call fails with `STALE_GENERATION` (status 42), `x1` the Thread's current generation. `Scheduler.replace` waits for multicore, where a dispatcher can replace a Thread running on another CPU. Dispatching a Time other than the Thread's bound one is later work.
-  - *ConfigureActivation.* `Scheduler.ConfigureActivation` (`7`): `x2` the mask (bit 0 `THREAD_RUNNABLE`, bit 1 `TIME_AVAILABLE`), `x3..x7` zero; `WRITE` on the Scheduler.
-  - *ArmTimer (maintainer decision, 2026-10-17).* `Scheduler.ArmTimer` (`8`) is invoked by the bound dispatcher only: `x2` the deadline in nanoseconds on the monotonic clock below (0 disarms), `x3..x7` zero; `WRITE` on the Scheduler. A dispatcher has one timer: arming replaces the previous deadline. It returns `x1` the current time in nanoseconds and `x2` the previous deadline (0 if none). When the clock reaches the deadline the timer disarms itself and requests activation with the `TIMER` reason (`1 << 7`), which the mask cannot turn off; a deadline already in the past fires at the next kernel exit. The timer belongs to the dispatcher and ends with it. Activation timers only: a notify-only timer is added if a real use needs it. Timer deadlines and wait timeouts are the kernel's deadlines; each counts on the core of its Scheduler, whose one-shot hardware timer is programmed to the earliest of that core's ([SMP design, timers](smp-design.md#timers)).
-  - *Clock (maintainer decision, 2026-10-17).* The monotonic clock is the physical counter in nanoseconds since the counter started; the kernel converts with 128-bit arithmetic and rounds a deadline up. EL0 reads the same clock without a system call: `CNTVCT_EL0` (virtual offset 0, so equal to the physical counter) and `CNTFRQ_EL0`; the nucleus leaves `CNTKCTL_EL1.EL0VCTEN` set and never changes the virtual offset.
-  - *Return is not special.* A protected call keeps the Thread's Time, so the client's Time already pays for the server's work; `Thread.Return` is one more point at which a Thread may be preempted, with no charge of its own.
-  - *Root scheduler.* Its dispatcher runs under privileged scheduling authority, needs no Time and is not subject to budget exhaustion; its execution is accounted separately. The nucleus has no fallback scheduler. A bounded activation quantum is an optional diagnostic and fault-containment measure, not part of scheduling semantics.
-  - *Root dispatcher policy: Thread priority (maintainer decisions, 2026-10-29).* The maintainer's words: "declare priority with the thread, two levels should be enough for now, keep room for extending in the future, no starvation guard for this round"; and, after the board showed sluggish and lost keys with audio playing: "the usb is probably in need of priority between the main app and the audio?"; and, after a raised USB Thread that spun froze the board (2026-10-29), reversing the first decision's last clause: "delay_ms(1) should just park the thread until 1ms passes, not busy wait / add starvation guard too". This is userspace and Kickstart policy only; the nucleus stays priority-free (no kind, op or record field is added). A Thread's priority is declared where the Thread is declared (`libdevice_driver::Priority`, a one-byte level: 0 normal, 1 input, 2 high, the other values free for more levels): a further Thread's in `driver_threads!`, carried in the 16-byte entries of the `.driver_threads` section, and a component's first Thread's in `entry_priority!`, carried in the one-byte `.entry_priority` section (normal without it). Kickstart hands each managed Thread's level to the root dispatcher in `DispatchInit::priorities`, indexed by record slot. The root dispatcher always dispatches a runnable Thread of the highest level and round-robins within a level, each level keeping its own turn. High is for Threads with a deadline (Wood's audio playback Thread); input is for the cheap Threads on a key's path from the USB controller to the focused window (the DWC2 component's interrupt and poller Threads, the HID component's Thread, the compositor's input Thread), so audio stays ahead of input and input ahead of the CPU-bound programs. Starvation guard: a Thread above normal that has executed for a whole slice (10 ms) since it last blocked is dispatched as a normal Thread, round-robin with the normal ones, until it blocks again. Execution adds up across preemptions and yields; only a stop by blocking, exiting or faulting starts the count over. The dispatcher keeps this account from existing information only: after each `Dispatch` it reads the Thread's record, `run_time_ns` (the increase since the last read is the run) and `last_stop` (`Blocked`, `Exited` or `Faulted` reset the count). A raised Thread that blocks before it has used a slice keeps its level, so a woken high Thread still runs at once. The guard is a safety net, not a licence: every Thread above normal must still block most of the time and do little work each time it wakes, and a driver pauses by parking (a timed wait) rather than spinning.
-  - *Child schedulers (maintainer decisions, 2026-10-18).* The parent's dispatcher dispatches a child's dispatcher with a limit, which is the child's execution grant; the child's own `Dispatch` limits are clamped to the grant that is left, and the nucleus stops the running Thread and activates the parent when the grant ends or the child yields or is exhausted. `Adopt` (on the parent, `WRITE`) sets a Scheduler's parent once and only for a fresh Scheduler: no parent, not the root, no children, Threads or dispatcher. A child dispatcher's exhaustion is ordinary exhaustion, with a `DISPATCHER` flag in the Thread record. When a child's dispatcher faults or is retired the nucleus suspends the child's Threads and activates the parent with `SCHED_DOMAIN_FAILED` (`1 << 8`). A child's activation with a live grant (its dispatcher is the Thread the parent dispatched) completes the dispatcher's parked `Dispatch` and runs it at once; without one it makes the child dispatcher an ordinary runnable Thread of the parent, activating the parent only as the parent's mask allows. A Thread moves between a Scheduler and its direct child with `MoveThread` (the old record slot reads `Donated`); the tree is at most 4 levels deep; every Scheduler operation works on a non-root Scheduler for a holder with `WRITE`. The details are in the [scheduling plan](scheduling-implementation-plan.md), Phase 9. A child's dispatcher is an ordinary Thread running on an ordinary Time that its parent Transferred in; the nucleus never replenishes it. When it is exhausted the dispatcher is ineligible and the parent receives an event, distinct from an ordinary Thread's exhaustion, and may Transfer more, leave the child suspended, replace the dispatcher or revoke the child. An already issued execution grant is unaffected; when a new decision is needed and the dispatcher cannot run, control returns to the nearest eligible ancestor. Funding the dispatcher and the workload from separate Times is a userspace convention, not a kernel distinction. A domain's consumption is bounded because a child holds only budget its parent Transferred, which it can subdivide further.
-- **Per core.** A Time belongs to one core; Transfer, Merge and dispatch reject a Time of another core than the calling core's.
-- **No minting.** Retype creates an empty Time. Positive budget comes only from Transfer out of a Time that holds it; the root budget is the boot Time described below.
+#### SCHEDULING-10: the dispatcher
+
+2026-10-17. A Scheduler's dispatcher is the Thread that makes its scheduling decisions, and it is bound explicitly. `Scheduler.BindDispatcher` (`5`): `x2` Thread key (`WRITE`), `x3..x7` zero; `WRITE` on the Scheduler. The Thread must be configured by this Scheduler and not started; the bind is once-only, and the bind starts the dispatcher. Kickstart binds the root dispatcher during boot. A Scheduler with no dispatcher bound runs nothing: its Threads wait (maintainer decision, 2026-10-18; there is no kernel run queue). Kickstart registers the boot Thread with the root dispatcher, and the kernel test fixtures run on a dispatcher too (the production one, or a fixture dispatcher in `libkicktest`). The kernel keeps only the list of dispatchers an activation has made ready to run next. A dispatcher that dispatched nothing (`x2` 0) is activated by any event that makes a Thread runnable, whatever the mask, since the CPU would otherwise idle with work pending.
+#### SCHEDULING-11: Dispatch
+
+`Scheduler.Dispatch` (`6`) is invoked by the dispatcher only, and it blocks: on one CPU the dispatcher cannot run while it dispatches. `x2` Thread key, or 0 to run nothing and just wait (the kernel idles meanwhile if nothing else runs); `x3` the Thread's own bound Time key, or 0 for the same; `x4` the limit in nanoseconds; `x5` the expected generation from the Thread's record; `x6` the Scheduler's core, which the dispatcher must be running on (a Scheduler takes its core at creation for the root, from its parent at `Adopt` otherwise: [SMP-8](smp-design.md#smp-8-a-schedulers-core)); `x7` zero; `WRITE` on the Scheduler and the Thread. The Thread runs on its bound Time for at most the limit. The call returns when the nucleus activates the dispatcher, or at once if an activation is already pending: `x1` holds the activation reason bits (event pending, limit reached, budget exhausted, blocked, yielded, faulted, exited, timer, domain failed) and `x2` the scheduler's event count. A Thread whose generation differs from `x5` is not run and the call fails with `STALE_GENERATION` (status 42), `x1` the Thread's current generation. `Scheduler.replace` waits for multicore, where a dispatcher can replace a Thread running on another CPU. Dispatching a Time other than the Thread's bound one is later work.
+#### SCHEDULING-12: ConfigureActivation
+
+`Scheduler.ConfigureActivation` (`7`): `x2` the mask (bit 0 `THREAD_RUNNABLE`, bit 1 `TIME_AVAILABLE`), `x3..x7` zero; `WRITE` on the Scheduler.
+#### SCHEDULING-13: ArmTimer
+
+2026-10-17. `Scheduler.ArmTimer` (`8`) is invoked by the bound dispatcher only: `x2` the deadline in nanoseconds on the monotonic clock below (0 disarms), `x3..x7` zero; `WRITE` on the Scheduler. A dispatcher has one timer: arming replaces the previous deadline. It returns `x1` the current time in nanoseconds and `x2` the previous deadline (0 if none). When the clock reaches the deadline the timer disarms itself and requests activation with the `TIMER` reason (`1 << 7`), which the mask cannot turn off; a deadline already in the past fires at the next kernel exit. The timer belongs to the dispatcher and ends with it. Activation timers only: a notify-only timer is added if a real use needs it. Timer deadlines and wait timeouts are the kernel's deadlines; each counts on the core of its Scheduler, whose one-shot hardware timer is programmed to the earliest of that core's ([SMP design, timers](smp-design.md#timers)).
+#### SCHEDULING-14: the clock
+
+2026-10-17. The monotonic clock is the physical counter in nanoseconds since the counter started; the kernel converts with 128-bit arithmetic and rounds a deadline up. EL0 reads the same clock without a system call: `CNTVCT_EL0` (virtual offset 0, so equal to the physical counter) and `CNTFRQ_EL0`; the nucleus leaves `CNTKCTL_EL1.EL0VCTEN` set and never changes the virtual offset.
+#### SCHEDULING-15: Return is not special
+
+A protected call keeps the Thread's Time, so the client's Time already pays for the server's work; `Thread.Return` is one more point at which a Thread may be preempted, with no charge of its own.
+#### SCHEDULING-16: the root scheduler
+
+Its dispatcher runs under privileged scheduling authority, needs no Time and is not subject to budget exhaustion; its execution is accounted separately. The nucleus has no fallback scheduler. A bounded activation quantum is an optional diagnostic and fault-containment measure, not part of scheduling semantics.
+#### SCHEDULING-17: root dispatcher policy, Thread priority
+
+2026-10-29. The maintainer's words: "declare priority with the thread, two levels should be enough for now, keep room for extending in the future, no starvation guard for this round"; and, after the board showed sluggish and lost keys with audio playing: "the usb is probably in need of priority between the main app and the audio?"; and, after a raised USB Thread that spun froze the board (2026-10-29), reversing the first decision's last clause: "delay_ms(1) should just park the thread until 1ms passes, not busy wait / add starvation guard too". This is userspace and Kickstart policy only; the nucleus stays priority-free (no kind, op or record field is added). A Thread's priority is declared where the Thread is declared (`libdevice_driver::Priority`, a one-byte level: 0 normal, 1 input, 2 high, the other values free for more levels): a further Thread's in `driver_threads!`, carried in the 16-byte entries of the `.driver_threads` section, and a component's first Thread's in `entry_priority!`, carried in the one-byte `.entry_priority` section (normal without it). Kickstart hands each managed Thread's level to the root dispatcher in `DispatchInit::priorities`, indexed by record slot. The root dispatcher always dispatches a runnable Thread of the highest level and round-robins within a level, each level keeping its own turn. High is for Threads with a deadline (Wood's audio playback Thread); input is for the cheap Threads on a key's path from the USB controller to the focused window (the DWC2 component's interrupt and poller Threads, the HID component's Thread, the compositor's input Thread), so audio stays ahead of input and input ahead of the CPU-bound programs. Starvation guard: a Thread above normal that has executed for a whole slice (10 ms) since it last blocked is dispatched as a normal Thread, round-robin with the normal ones, until it blocks again. Execution adds up across preemptions and yields; only a stop by blocking, exiting or faulting starts the count over. The dispatcher keeps this account from existing information only: after each `Dispatch` it reads the Thread's record, `run_time_ns` (the increase since the last read is the run) and `last_stop` (`Blocked`, `Exited` or `Faulted` reset the count). A raised Thread that blocks before it has used a slice keeps its level, so a woken high Thread still runs at once. The guard is a safety net, not a licence: every Thread above normal must still block most of the time and do little work each time it wakes, and a driver pauses by parking (a timed wait) rather than spinning.
+#### SCHEDULING-18: child schedulers
+
+2026-10-18. The parent's dispatcher dispatches a child's dispatcher with a limit, which is the child's execution grant; the child's own `Dispatch` limits are clamped to the grant that is left, and the nucleus stops the running Thread and activates the parent when the grant ends or the child yields or is exhausted. `Adopt` (on the parent, `WRITE`) sets a Scheduler's parent once and only for a fresh Scheduler: no parent, not the root, no children, Threads or dispatcher. A child dispatcher's exhaustion is ordinary exhaustion, with a `DISPATCHER` flag in the Thread record. When a child's dispatcher faults or is retired the nucleus suspends the child's Threads and activates the parent with `SCHED_DOMAIN_FAILED` (`1 << 8`). A child's activation with a live grant (its dispatcher is the Thread the parent dispatched) completes the dispatcher's parked `Dispatch` and runs it at once; without one it makes the child dispatcher an ordinary runnable Thread of the parent, activating the parent only as the parent's mask allows. A Thread moves between a Scheduler and its direct child with `MoveThread` (the old record slot reads `Donated`); the tree is at most 4 levels deep; every Scheduler operation works on a non-root Scheduler for a holder with `WRITE`. The details are in P-SCHEDULING-9 ([scheduling-completed.md](scheduling-completed.md)). A child's dispatcher is an ordinary Thread running on an ordinary Time that its parent Transferred in; the nucleus never replenishes it. When it is exhausted the dispatcher is ineligible and the parent receives an event, distinct from an ordinary Thread's exhaustion, and may Transfer more, leave the child suspended, replace the dispatcher or revoke the child. An already issued execution grant is unaffected; when a new decision is needed and the dispatcher cannot run, control returns to the nearest eligible ancestor. Funding the dispatcher and the workload from separate Times is a userspace convention, not a kernel distinction. A domain's consumption is bounded because a child holds only budget its parent Transferred, which it can subdivide further.
+#### SCHEDULING-19: a Time belongs to one core
+
+A Time belongs to one core; Transfer, Merge and dispatch reject a Time of another core than the calling core's.
+#### SCHEDULING-20: no minting
+
+Retype creates an empty Time. Positive budget comes only from Transfer out of a Time that holds it; the root budget is the boot Time described below.
 
 Operation vocabulary: **Transfer** moves an amount of budget into a destination Time; **Merge** moves all remaining budget out of a source Time and leaves it empty; **Query** returns the remaining budget. A child budget is an empty Time plus a Transfer. The `replace` register schema, rights and generation encoding are open ([scheduling-decisions.md](scheduling-decisions.md)).
 
-### Time representation and schemas (maintainer decision, 2026-10-17)
+### Time representation and schemas
 
-- **Units.** Budgets are `u64` nanoseconds on the wire and inside the nucleus; `u64::MAX` is an infinite budget, which never decreases.
-- **Creation.** `Untyped.Retype` creates a Time with `size_bits` reserved zero, carved from the invoking Untyped like every Retype-created object (see [allocation](capabilities-contract.md#allocation-and-representation)). A new Time belongs to the creating core and is empty.
-- **Root budget (maintainer decision, 2026-10-17).** Kickstart carves one Time on core 0 from the boot Untyped and installs it at `KeySlot::BOOT_TIME` (17). Its budget is infinite, so the root scheduler has an unlimited allowance to give out. There is no finite boot-budget build.
-- **Transfer `0`.** Invoked on the source Time: `x2` destination Time key, `x3` amount, `x4..x7` zero. Both capabilities need `WRITE`. A finite source loses the amount; an infinite source stays infinite. An amount of `u64::MAX` makes the destination infinite and is only allowed from an infinite source. An infinite destination stays infinite. Errors: `InvalidOperation` for a zero amount, a nonzero reserved word, the same Time as both operands, Times of different cores, or a finite destination sum reaching `u64::MAX`; `INSUFFICIENT_BUDGET` (with the source's remaining budget) when a finite source holds less than the amount. Every failure leaves both Times unchanged. Success returns zeros.
-- **Merge `1`.** Invoked on the destination Time: `x2` source Time key, `x3..x7` zero. Both capabilities need `WRITE`. Moves the source's whole budget into the destination (an infinite source makes the destination infinite) and leaves the source empty. Deleting the source is a separate KeyTable Delete. Errors as for Transfer, except that no amount is checked. Success returns zeros.
-- **Query `2`.** No arguments; `READ`. Returns `x1` the remaining budget and `x2` zero.
+2026-10-17.
+
+#### SCHEDULING-21: units
+
+Budgets are `u64` nanoseconds on the wire and inside the nucleus; `u64::MAX` is an infinite budget, which never decreases.
+#### SCHEDULING-22: creation of a Time
+
+`Untyped.Retype` creates a Time with `size_bits` reserved zero, carved from the invoking Untyped like every Retype-created object (see [allocation](capabilities-contract.md#allocation-and-representation)). A new Time belongs to the creating core and is empty.
+#### SCHEDULING-23: the root budget
+
+Kickstart carves one Time on core 0 from the boot Untyped and installs it at `KeySlot::BOOT_TIME` (17). Its budget is infinite, so the root scheduler has an unlimited allowance to give out. There is no finite boot-budget build.
+#### SCHEDULING-24: Transfer
+
+Op `0`. Invoked on the source Time: `x2` destination Time key, `x3` amount, `x4..x7` zero. Both capabilities need `WRITE`. A finite source loses the amount; an infinite source stays infinite. An amount of `u64::MAX` makes the destination infinite and is only allowed from an infinite source. An infinite destination stays infinite. Errors: `InvalidOperation` for a zero amount, a nonzero reserved word, the same Time as both operands, Times of different cores, or a finite destination sum reaching `u64::MAX`; `INSUFFICIENT_BUDGET` (with the source's remaining budget) when a finite source holds less than the amount. Every failure leaves both Times unchanged. Success returns zeros.
+#### SCHEDULING-25: Merge
+
+Op `1`. Invoked on the destination Time: `x2` source Time key, `x3..x7` zero. Both capabilities need `WRITE`. Moves the source's whole budget into the destination (an infinite source makes the destination infinite) and leaves the source empty. Deleting the source is a separate KeyTable Delete. Errors as for Transfer, except that no amount is checked. Success returns zeros.
+#### SCHEDULING-26: Query
+
+Op `2`. No arguments; `READ`. Returns `x1` the remaining budget and `x2` zero.
 
 Implementation status: Time objects, the operations and the boot Time follow this schema.
 
-### Threads and the root Scheduler (maintainer decisions, 2026-10-11)
+### Threads and the root Scheduler
 
-A Scheduler capability authorizes scheduling. Only the root scheduler configures and starts Threads; it may then move them to child Schedulers.
+2026-10-11. A Scheduler capability authorizes scheduling. Only the root scheduler configures and starts Threads; it may then move them to child Schedulers.
 
-- **Thread creation.** As in seL4, `Untyped.Retype` creates a Thread from memory alone (see [allocation](capabilities-contract.md#allocation-and-representation)), and it is inert: no AddressSpace, no execution state, never runnable. Only the root scheduler makes it a Thread that can run, by configuring and starting it, which binds it to the root scheduler; Composite's root-only thread creation is this activation step.
-- **Schedulers.** Kickstart creates the root Scheduler and installs it at `KeySlot::ROOT_SCHEDULER` (18). Further Schedulers come from `Untyped.Retype`, inert (no parent, Threads or dispatcher), and join the tree through `Adopt`.
-- **ConfigureThread.** `Scheduler.ConfigureThread` (`1`), invoked on the root Scheduler with `WRITE`: `x2` Thread key (`WRITE`), `x3` AddressSpace key (`MAP`), `x4` entry PC, `x5` stack SP, `x6` the Thread's own Time key (`WRITE`), `x7` the argument delivered in `x0`. The Thread must be inert (a configured Thread cannot be configured again); the AddressSpace needs a translation root (`NOT_MAPPED`) and an ASID (`NO_ASID_ASSIGNED`); PC and SP must lie in the user range, PC 4-byte and SP 16-byte aligned; the Time must be of the Scheduler's core (the calling core's for a Scheduler with no core yet), which the Thread runs on; other violations fail with `INVALID_OPERATION`. The Thread will start at EL0, bound to the root scheduler.
-- **Time binding.** The Thread records its Time's carved identity as kernel bookkeeping, as seL4's TCB records its SchedContext; the binding is not a key, because a Thread migrates between AddressSpaces and owns no KeyTable. The Time key is the authority to make the binding, and the caller keeps it; a retired Time fails the identity check and leaves the Thread unbound.
-- **Bound Times are the Thread's own.** ConfigureThread refuses a Time already bound to a live Thread, and while its Thread is live no Transfer or Merge takes budget out of a bound Time (budget can still be transferred or merged into it); both refusals are `INVALID_OPERATION`. Once the Thread is retired the binding no longer validates and the Time can be drained or bound again. A scheduler therefore gives budget from Times that are not bound to a Thread.
-- **StartThread.** `Scheduler.StartThread` (`2`): `x2` Thread key; `WRITE` on the Scheduler and the Thread; the Thread must be configured and not yet started, and then becomes runnable. During boot, scheduling begins only after Kickstart establishes the root scheduler; there is no pre-scheduler kernel fallback.
+#### SCHEDULING-27: Thread creation
+
+As in seL4, `Untyped.Retype` creates a Thread from memory alone (see [allocation](capabilities-contract.md#allocation-and-representation)), and it is inert: no AddressSpace, no execution state, never runnable. Only the root scheduler makes it a Thread that can run, by configuring and starting it, which binds it to the root scheduler; Composite's root-only thread creation is this activation step.
+#### SCHEDULING-28: Schedulers
+
+Kickstart creates the root Scheduler and installs it at `KeySlot::ROOT_SCHEDULER` (18). Further Schedulers come from `Untyped.Retype`, inert (no parent, Threads or dispatcher), and join the tree through `Adopt`.
+#### SCHEDULING-29: ConfigureThread
+
+`Scheduler.ConfigureThread` (`1`), invoked on the root Scheduler with `WRITE`: `x2` Thread key (`WRITE`), `x3` AddressSpace key (`MAP`), `x4` entry PC, `x5` stack SP, `x6` the Thread's own Time key (`WRITE`), `x7` the argument delivered in `x0`. The Thread must be inert (a configured Thread cannot be configured again); the AddressSpace needs a translation root (`NOT_MAPPED`) and an ASID (`NO_ASID_ASSIGNED`); PC and SP must lie in the user range, PC 4-byte and SP 16-byte aligned; the Time must be of the Scheduler's core (the calling core's for a Scheduler with no core yet), which the Thread runs on; other violations fail with `INVALID_OPERATION`. The Thread will start at EL0, bound to the root scheduler.
+#### SCHEDULING-30: Time binding
+
+The Thread records its Time's carved identity as kernel bookkeeping, as seL4's TCB records its SchedContext; the binding is not a key, because a Thread migrates between AddressSpaces and owns no KeyTable. The Time key is the authority to make the binding, and the caller keeps it; a retired Time fails the identity check and leaves the Thread unbound.
+#### SCHEDULING-31: bound Times are the Thread's own
+
+ConfigureThread refuses a Time already bound to a live Thread, and while its Thread is live no Transfer or Merge takes budget out of a bound Time (budget can still be transferred or merged into it); both refusals are `INVALID_OPERATION`. Once the Thread is retired the binding no longer validates and the Time can be drained or bound again. A scheduler therefore gives budget from Times that are not bound to a Thread.
+#### SCHEDULING-32: StartThread
+
+`Scheduler.StartThread` (`2`): `x2` Thread key; `WRITE` on the Scheduler and the Thread; the Thread must be configured and not yet started, and then becomes runnable. During boot, scheduling begins only after Kickstart establishes the root scheduler; there is no pre-scheduler kernel fallback.
 
 ### Per-Thread architectural state
 
-- **`TPIDR_EL0`:** saved per Thread; zero at target entry, restored on Return, zero for a never-run Thread.
-- **`TPIDRRO_EL0`:** zero; nothing writes it.
-- **Timer and counter (`CNTKCTL_EL1`):** EL0 may read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) only; physical counter and all timers are kernel-owned. `CNTVOFF_EL2 = 0`, so virtual equals physical.
-- **Interrupts (`SPSR_EL1.I`):** EL0 Threads run with IRQs unmasked, so the nucleus can preempt them; D, A and F stay masked. The nucleus itself and trusted `EL1t` Threads run masked, except Threads created interruptible, and except the kernel's own idle wait.
+#### SCHEDULING-33: `TPIDR_EL0`
+
+Saved per Thread; zero at target entry, restored on Return, zero for a never-run Thread.
+#### SCHEDULING-34: `TPIDRRO_EL0`
+
+Zero; nothing writes it.
+#### SCHEDULING-35: timer and counter (`CNTKCTL_EL1`)
+
+EL0 may read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) only; physical counter and all timers are kernel-owned. `CNTVOFF_EL2 = 0`, so virtual equals physical.
+#### SCHEDULING-36: interrupt masking (`SPSR_EL1.I`)
+
+EL0 Threads run with IRQs unmasked, so the nucleus can preempt them; D, A and F stay masked. The nucleus itself and trusted `EL1t` Threads run masked, except Threads created interruptible, and except the kernel's own idle wait.
 
 FP/SIMD state is in the [FP/SIMD design, SIMD-18](simd-design.md#simd-18-fpsimd-per-addressspace); EL0 access to the PMU and debug registers is in the [capabilities contract](capabilities-contract.md#protection-requirements-and-boundaries).
 
-### Scheduler-shared records (maintainer decision, 2026-10-17)
+### Scheduler-shared records
 
-Scheduling records live in pages owned by a user-space scheduler and explicitly shared with the kernel through `Scheduler.ShareRegion`. The scheduler must map the Frame into its own AddressSpace before sharing it; the kernel accesses the shared backing through its kernel mapping. Visibility is limited to schedulers that receive the shared pages; there is no global view or export of the records.
+2026-10-17. Scheduling records live in pages owned by a user-space scheduler and explicitly shared with the kernel through `Scheduler.ShareRegion`. The scheduler must map the Frame into its own AddressSpace before sharing it; the kernel accesses the shared backing through its kernel mapping. Visibility is limited to schedulers that receive the shared pages; there is no global view or export of the records.
 
 The scheduler may write any bytes in pages it maps, including all scheduling-record fields. Kernel-only TCB/execution state is not in those pages and remains inaccessible to the scheduler. A record's lifetime does not outlive the Thread incarnation it identifies.
 
 Items marked *trial* are numbers and shapes chosen to try, to be revisited after use.
 
-- **Publication only.** Records are the nucleus's publication channel to the scheduler. The nucleus never reads a record back; the authoritative state stays in the kernel-private Thread and Time objects, so a scheduler that corrupts its records only misleads itself. Reconciling scheduler writes with kernel state is not done.
-- **Table.** A Scheduler's table is a set of regions; each `ShareRegion` call (`0`) adds one Frame. `x2` Frame key (`READ|WRITE`), `x3` the first slot number the Frame covers, `x4` the stride in bytes, `x5..x7` zero; `WRITE` on the Scheduler. The Frame must be RAM and mapped (`NOT_MAPPED` otherwise). The first call fixes the *record AddressSpace*, the AddressSpace the Frame is mapped in, and the stride; later Frames must be mapped in the same AddressSpace and use the same stride. The stride is a multiple of 64, at least 128 and at most the Frame size. The Frame covers `frame_bytes / stride` slots from `x3`; the first region starts at slot 0, and ranges never overlap. A violation, or sharing a Frame again, fails with `INVALID_OPERATION` and changes nothing. The nucleus initializes slot 0 when the first region is shared and each Thread slot when `AssignRecord` links a Thread to it; the rest of a slot is the scheduler's. *Trial:* at most 8 regions, held in the carved Scheduler object, so the nucleus allocates nothing.
-- **Records.** Slot 0 is the Scheduler record and every other slot a Thread record. Each is 128 bytes, 64-byte aligned and written by the nucleus only; fixed-width little-endian fields, with size and offset assertions in the shared ABI. Scheduler record: `sequence` u64 at 0, `layout` u32 (1) and `record_size` u32 at 8, `events` u64 at 16 (events published, equal to the bound EventCount's value), `timer_expirations` u64 at 24, `dispatcher_state` u32 and `flags` u32 at 32, `interrupt_ns` u64 at 40 (the total time the nucleus has spent handling interrupts, rounded up; refreshed with every publication and at each interrupt entry, and not an event), `grant_end_ns` u64 at 48 and `idle_ns` u64 at 56 (the total time the nucleus had nothing to run and waited for an interrupt, rounded up, not counting the interrupts handled meanwhile; published when the wait ends, and not an event), the rest zero. Thread record: `sequence` u64 at 0, `generation` u64 at 8 (the Thread's state-change count), `incarnation` u32 and `state` u32 at 16 (`ThreadState`), `flags` u32 and `block_reason` u32 at 24, `last_stop` u32 and `cpu` u32 at 32, `run_time_ns` u64 at 40 (rounded up), `last_run_ns` u64 at 48, `budget_remaining_ns` u64 at 56 (rounded down), the rest zero. Flag bit 0 is `AWAITING_BUDGET` (runnable, but its Time is exhausted) and bit 1 `HAS_TIME`; without a bound Time `budget_remaining_ns` is `u64::MAX`. The nucleus refreshes the counters only when it publishes a state change; `Time.Query` gives the exact budget.
-- **FP/SIMD counters (SIMD-11).** The Thread record's words from 64 carry the Thread's FP statistics, as wrapping u64 counters: `fp_entries` at 64 (entries into an FP frame), `fp_saves` at 72 (full saves, to the Thread or into a fault frame), `fp_loads` at 80 (full loads), `fp_zeroes` at 88 (entries with the register file zeroed), `preserved_saves` at 96 (`q8..q15`, FPCR and FPSR saved to a call record), `first_use_traps` at 104, `decays` at 112 and `owner_hits` at 120 (the last three zero until the less eager variant exists). The root Scheduler's record carries the nucleus-wide totals from 64 (per core once each core has its root Scheduler: [SMP-27](smp-design.md#smp-27-record-totals-per-core)): `thread_switches` at 64, `fp_thread_switches` at 72 (switches with an FP frame on either side) and `fp_entry_toggles` at 80 (with the entry guard), the rest zero; other Schedulers' records keep those words zero. The record size, stride and `layout` (1) stay as they are. The FP counters are published with the Thread's other counters when it is switched away from. They are scheduling information: the root scheduler, or any scheduler holding the record, may read them and decide on them, leaving room for an adaptive FP policy. Implementation status: implemented; `fp-test` and `fp-bench` read them.
-- **Publication.** The nucleus is the single writer, under the kernel lock. It stores `sequence + 1` (odd), writes the fields, then stores `sequence + 2` with release ordering. A reader loads `sequence` with acquire ordering, retries while it is odd, reads the fields and retries if `sequence` changed. `sequence` only detects torn reads; `generation` is the kernel-private state-change count that stale-decision checks use.
-- **Thread to slot.** `Scheduler.AssignRecord` (`3`): `x2` Thread key (`WRITE`), `x3` slot (at least 1, inside a shared region), `x4..x7` zero; `WRITE` on the Scheduler. The nucleus stores the scheduler and slot in the Thread and publishes its record at once. It does not enforce one Thread per slot: the page is the scheduler's own memory, and `incarnation` lets the scheduler notice reuse. *Trial.* A Thread with no assigned slot has no record; Kickstart starts boot-time Threads before the root dispatcher exists, and the dispatcher adopts them afterwards.
-- **Notification.** `Scheduler.BindEventCount` (`4`): `x2` EventCount key (`SEND`), `x3..x7` zero; `WRITE` on the Scheduler. Binding is once-only. After publishing a change to a Thread's state, flags, block reason or stop reason, the nucleus advances the EventCount by one with release ordering; a counter-only refresh does not advance it. A retired EventCount ends the binding.
-- **No event ring.** The first ABI has no queue of events. What cannot be rebuilt from the current state is carried by the Thread record's `last_stop` and `last_run_ns` and the Scheduler record's monotonic `events` and `timer_expirations`.
-- **Retirement and reuse.** Retiring a Thread publishes it as `Dying` with its incarnation, advances the EventCount, and drops its slot; the scheduler reuses the slot after it sees `Dying`. The nucleus validates a region's Frame identity before each write. Until Frames have a retirement identity, a shared Frame stays valid because the nucleus does not reclaim Frame memory.
+#### SCHEDULING-37: records are publication only
+
+Records are the nucleus's publication channel to the scheduler. The nucleus never reads a record back; the authoritative state stays in the kernel-private Thread and Time objects, so a scheduler that corrupts its records only misleads itself. Reconciling scheduler writes with kernel state is not done.
+#### SCHEDULING-38: the record table, ShareRegion
+
+A Scheduler's table is a set of regions; each `ShareRegion` call (`0`) adds one Frame. `x2` Frame key (`READ|WRITE`), `x3` the first slot number the Frame covers, `x4` the stride in bytes, `x5..x7` zero; `WRITE` on the Scheduler. The Frame must be RAM and mapped (`NOT_MAPPED` otherwise). The first call fixes the *record AddressSpace*, the AddressSpace the Frame is mapped in, and the stride; later Frames must be mapped in the same AddressSpace and use the same stride. The stride is a multiple of 64, at least 128 and at most the Frame size. The Frame covers `frame_bytes / stride` slots from `x3`; the first region starts at slot 0, and ranges never overlap. A violation, or sharing a Frame again, fails with `INVALID_OPERATION` and changes nothing. The nucleus initializes slot 0 when the first region is shared and each Thread slot when `AssignRecord` links a Thread to it; the rest of a slot is the scheduler's. *Trial:* at most 8 regions, held in the carved Scheduler object, so the nucleus allocates nothing.
+#### SCHEDULING-39: record layouts
+
+Slot 0 is the Scheduler record and every other slot a Thread record. Each is 128 bytes, 64-byte aligned and written by the nucleus only; fixed-width little-endian fields, with size and offset assertions in the shared ABI. Scheduler record: `sequence` u64 at 0, `layout` u32 (1) and `record_size` u32 at 8, `events` u64 at 16 (events published, equal to the bound EventCount's value), `timer_expirations` u64 at 24, `dispatcher_state` u32 and `flags` u32 at 32, `interrupt_ns` u64 at 40 (the total time the nucleus has spent handling interrupts, rounded up; refreshed with every publication and at each interrupt entry, and not an event), `grant_end_ns` u64 at 48 and `idle_ns` u64 at 56 (the total time the nucleus had nothing to run and waited for an interrupt, rounded up, not counting the interrupts handled meanwhile; published when the wait ends, and not an event), the rest zero. Thread record: `sequence` u64 at 0, `generation` u64 at 8 (the Thread's state-change count), `incarnation` u32 and `state` u32 at 16 (`ThreadState`), `flags` u32 and `block_reason` u32 at 24, `last_stop` u32 and `cpu` u32 at 32, `run_time_ns` u64 at 40 (rounded up), `last_run_ns` u64 at 48, `budget_remaining_ns` u64 at 56 (rounded down), the rest zero. Flag bit 0 is `AWAITING_BUDGET` (runnable, but its Time is exhausted) and bit 1 `HAS_TIME`; without a bound Time `budget_remaining_ns` is `u64::MAX`. The nucleus refreshes the counters only when it publishes a state change; `Time.Query` gives the exact budget.
+#### SCHEDULING-40: FP/SIMD counters in the records
+
+SIMD-11. The Thread record's words from 64 carry the Thread's FP statistics, as wrapping u64 counters: `fp_entries` at 64 (entries into an FP frame), `fp_saves` at 72 (full saves, to the Thread or into a fault frame), `fp_loads` at 80 (full loads), `fp_zeroes` at 88 (entries with the register file zeroed), `preserved_saves` at 96 (`q8..q15`, FPCR and FPSR saved to a call record), `first_use_traps` at 104, `decays` at 112 and `owner_hits` at 120 (the last three zero until the less eager variant exists). The root Scheduler's record carries the nucleus-wide totals from 64 (per core once each core has its root Scheduler: [SMP-27](smp-design.md#smp-27-record-totals-per-core)): `thread_switches` at 64, `fp_thread_switches` at 72 (switches with an FP frame on either side) and `fp_entry_toggles` at 80 (with the entry guard), the rest zero; other Schedulers' records keep those words zero. The record size, stride and `layout` (1) stay as they are. The FP counters are published with the Thread's other counters when it is switched away from. They are scheduling information: the root scheduler, or any scheduler holding the record, may read them and decide on them, leaving room for an adaptive FP policy. Implementation status: implemented; `fp-test` and `fp-bench` read them.
+#### SCHEDULING-41: the publication protocol
+
+The nucleus is the single writer, under the kernel lock. It stores `sequence + 1` (odd), writes the fields, then stores `sequence + 2` with release ordering. A reader loads `sequence` with acquire ordering, retries while it is odd, reads the fields and retries if `sequence` changed. `sequence` only detects torn reads; `generation` is the kernel-private state-change count that stale-decision checks use.
+#### SCHEDULING-42: Thread to slot, AssignRecord
+
+`Scheduler.AssignRecord` (`3`): `x2` Thread key (`WRITE`), `x3` slot (at least 1, inside a shared region), `x4..x7` zero; `WRITE` on the Scheduler. The nucleus stores the scheduler and slot in the Thread and publishes its record at once. It does not enforce one Thread per slot: the page is the scheduler's own memory, and `incarnation` lets the scheduler notice reuse. *Trial.* A Thread with no assigned slot has no record; Kickstart starts boot-time Threads before the root dispatcher exists, and the dispatcher adopts them afterwards.
+#### SCHEDULING-43: notification, BindEventCount
+
+`Scheduler.BindEventCount` (`4`): `x2` EventCount key (`SEND`), `x3..x7` zero; `WRITE` on the Scheduler. Binding is once-only. After publishing a change to a Thread's state, flags, block reason or stop reason, the nucleus advances the EventCount by one with release ordering; a counter-only refresh does not advance it. A retired EventCount ends the binding.
+#### SCHEDULING-44: no event ring
+
+The first ABI has no queue of events. What cannot be rebuilt from the current state is carried by the Thread record's `last_stop` and `last_run_ns` and the Scheduler record's monotonic `events` and `timer_expirations`.
+#### SCHEDULING-45: retirement and reuse of records
+
+Retiring a Thread publishes it as `Dying` with its incarnation, advances the EventCount, and drops its slot; the scheduler reuses the slot after it sees `Dying`. The nucleus validates a region's Frame identity before each write. Until Frames have a retirement identity, a shared Frame stays valid because the nucleus does not reclaim Frame memory.
 
 Rules for the record ABI:
 
@@ -145,7 +239,7 @@ Let's build the design from first principles.
 
 ---
 
-# Discussion: 1. What should the kernel actually guarantee?
+# Discussion: What should the kernel actually guarantee?
 
 I'd start with a fairly strict list of kernel responsibilities.
 
@@ -197,7 +291,7 @@ These should ideally look identical to the kernel.
 
 ---
 
-# Discussion: 2. The three main objects
+# Discussion: The three main objects
 
 Here's the object model I'd explore.
 
@@ -241,7 +335,7 @@ And a scheduler doesn't necessarily own the CPU time that it schedules.
 
 That last distinction is especially important for hierarchical scheduling.
 
-## 2.1 `Thread`: execution state
+## `Thread`: execution state
 
 A thread contains only the state needed to execute it.
 
@@ -288,7 +382,7 @@ A runnable thread can simply lack permission to execute until its scheduler prov
 
 That distinction becomes useful for EDF, sporadic servers, and hierarchical scheduling.
 
-## 2.2 `Time`: execution authority
+## `Time`: execution authority
 
 I'd define `Time` as a resource representing an amount of CPU execution time that may be consumed.
 
@@ -311,7 +405,7 @@ Consequently, `Time` needs either an accounting hierarchy or a separate replenis
 
 We'll return to this shortly.
 
-## 2.3 `Scheduler`: scheduling authority
+## `Scheduler`: scheduling authority
 
 A `Scheduler` object establishes authority over a collection of threads.
 
@@ -349,7 +443,7 @@ The `Scheduler` kernel object should primarily provide authorization, state trac
 
 ---
 
-# Discussion: 3. The most important primitive: `dispatch`
+# Discussion: The most important primitive: `dispatch`
 
 > **Decided differently in part** ([Decisions](#decisions)): `Scheduler.Dispatch` (op `6`) is invoked by the dispatcher only, blocks it, and runs a Thread on the Thread's own bound Time; dispatching any other Time is later work.
 
@@ -510,9 +604,9 @@ That leads to the next important component.
 
 ---
 
-# Discussion: 4. Scheduler activations: how userspace regains control
+# Discussion: Scheduler activations: how userspace regains control
 
-> **Decided** ([Decisions](#decisions), "State, notification and activation"): state, notification and activation are separate mechanisms; `replace` is parked until multicore ([open questions](scheduling-decisions.md#d5-scheduler-hierarchy-and-multicore)).
+> **Decided** (SCHEDULING-9): state, notification and activation are separate mechanisms; `replace` is parked ([Q-SCHEDULING-4](scheduling-decisions.md#q-scheduling-4-replace-and-non-blocking-dispatch)).
 
 I think this is the most important part of the interface after `dispatch()`.
 
@@ -575,7 +669,7 @@ It only needs to notify the scheduler that a thread's state has changed.
 
 The scheduler decides whether preemption is necessary.
 
-## 4.1 The scheduler must be able to preempt immediately
+## The scheduler must be able to preempt immediately
 
 A naive implementation would only invoke the scheduler when the current thread's quantum expires.
 
@@ -624,7 +718,7 @@ An atomic replacement allows the kernel to validate the expected execution state
 
 This is closely related to the approach used by Google's **ghOSt**, which delegates scheduling policy to userspace and lets agents commit scheduling decisions through a transactional kernel interface. Its implementations demonstrate that userspace schedulers can support EDF, CFS-like scheduling, centralized FIFO, and other policies with a common mechanism. [Google Research](https://research.google/pubs/ghost-fast-and-flexible-user-space-delegation-of-linux-scheduling/?utm_source=chatgpt.com)
 
-## 4.2 Avoiding stale scheduling decisions
+## Avoiding stale scheduling decisions
 
 Consider:
 
@@ -668,9 +762,9 @@ This permits optimistic scheduling decisions without holding kernel locks while 
 
 ---
 
-# Discussion: 5. The difficult question: who can create or replenish `Time`?
+# Discussion: The difficult question: who can create or replenish `Time`?
 
-> **Decided** ([Decisions](#selected-model-maintainer-decision-2026-10-17)): a Time holds only a remaining budget; budget moves by permanent Transfer or Merge, with no loan, no parent link and no automatic return; Retype creates an empty Time; the root budget is the infinite boot Time; the nucleus never replenishes, so replenishment is scheduler code.
+> **Decided** ([Decisions](#selected-model)): a Time holds only a remaining budget; budget moves by permanent Transfer or Merge, with no loan, no parent link and no automatic return; Retype creates an empty Time; the root budget is the infinite boot Time; the nucleus never replenishes, so replenishment is scheduler code.
 
 This is where I'd consider two alternative architectures.
 
@@ -718,7 +812,7 @@ That might be fine for the root scheduler, but not for an untrusted child schedu
 
 The solution is hierarchical CPU-time authority.
 
-## 5.1 Hierarchical budget allocation
+## Hierarchical budget allocation
 
 Imagine:
 
@@ -804,9 +898,9 @@ That distinction matters for temporal isolation.
 
 ---
 
-# Discussion: 6. Design B: `Time` is an accounting object, while scheduling authority controls execution
+# Discussion: Design B: `Time` is an accounting object, while scheduling authority controls execution
 
-> **Not adopted** ([Decisions](#selected-model-maintainer-decision-2026-10-17)): a Time is a budget the nucleus enforces, not only an accounting context.
+> **Not adopted** ([Decisions](#selected-model)): a Time is a budget the nucleus enforces, not only an accounting context.
 
 This is a different approach, and I think it's worth considering seriously.
 
@@ -913,9 +1007,9 @@ This permits both client-funded RPC and hierarchical scheduling without making e
 
 ---
 
-# Discussion: 7. Scheduler hierarchies: the kernel should support them, but not prescribe them
+# Discussion: Scheduler hierarchies: the kernel should support them, but not prescribe them
 
-> **Decided** ([Decisions](#decisions), "Child schedulers"): a strict tree at most 4 levels deep, built with `Adopt`, with the parent's dispatch limit as the child's grant; the donation schema is open ([open questions](scheduling-decisions.md#d5-scheduler-hierarchy-and-multicore)).
+> **Decided** (SCHEDULING-18): a strict tree at most 4 levels deep, built with `Adopt`, with the parent's dispatch limit as the child's grant; the donation schema is open ([Q-SCHEDULING-1](scheduling-decisions.md#q-scheduling-1-the-scheduler-donation-schema)).
 
 I would make `Scheduler` objects nestable.
 
@@ -951,7 +1045,7 @@ For example, a filesystem server might receive a client's `Time` authority throu
 
 Similarly, a scheduler might be authorized to run a thread without being allowed to modify the thread's address space or registers.
 
-## 7.1 A scheduler needs explicit authority over CPUs
+## A scheduler needs explicit authority over CPUs
 
 A scheduler shouldn't automatically be permitted to execute threads on any CPU.
 
@@ -984,7 +1078,7 @@ This supports overlapping scheduling domains provided their execution grants are
 
 On a particular CPU, the kernel must still enforce exclusive ownership of the active dispatch slot.
 
-## 7.2 Don't require a context switch at every hierarchy level
+## Don't require a context switch at every hierarchy level
 
 Suppose:
 
@@ -1030,9 +1124,9 @@ This is where scheduling domains become more useful than simply having scheduler
 
 ---
 
-# Discussion: 8. A better `Time` object: separate accounting and allowance
+# Discussion: A better `Time` object: separate accounting and allowance
 
-> **Not adopted as written** ([Decisions](#selected-model-maintainer-decision-2026-10-17)): a Time holds only its remaining budget; consumption is published per Thread in the scheduler-shared records (`run_time_ns`), not kept in the Time.
+> **Not adopted as written** ([Decisions](#selected-model)): a Time holds only its remaining budget; consumption is published per Thread in the scheduler-shared records (`run_time_ns`), not kept in the Time.
 
 I'd consider structuring the `Time` object approximately like this:
 
@@ -1116,9 +1210,9 @@ This is another reason to keep `Thread`, `Time`, and `Scheduler` independent.
 
 ---
 
-# Discussion: 9. Budget donation: explicit versus implicit
+# Discussion: Budget donation: explicit versus implicit
 
-> **Partly decided** ([Decisions](#selected-model-maintainer-decision-2026-10-17)): a protected procedure call keeps the caller's Time, so the client pays for the server's work. Attribution across calls and the scheduler donation schema are open ([open questions](scheduling-decisions.md#d5-scheduler-hierarchy-and-multicore)).
+> **Partly decided** ([Decisions](#selected-model)): a protected procedure call keeps the caller's Time, so the client pays for the server's work. Attribution across calls and the scheduler donation schema are open ([Q-SCHEDULING-2](scheduling-decisions.md#q-scheduling-2-scheduling-attribution-across-protected-calls), [Q-SCHEDULING-1](scheduling-decisions.md#q-scheduling-1-the-scheduler-donation-schema)).
 
 There are at least three designs.
 
@@ -1233,7 +1327,7 @@ The important boundary is that the kernel implements **transfer of an already au
 
 ---
 
-# Discussion: 10. Scheduler activation is itself a scheduling problem
+# Discussion: Scheduler activation is itself a scheduling problem
 
 This is the biggest bootstrapping problem.
 
@@ -1346,9 +1440,9 @@ This is analogous to having a minimal trap handler for scheduling decisions rath
 
 ---
 
-# Discussion: 11. What about timer management?
+# Discussion: What about timer management?
 
-> **Decided** ([Decisions](#decisions), "Tickless enforcement", "ArmTimer", "Clock"): a one-shot timer for the earliest of budget exhaustion, the dispatch limit and the next deadline; one activation timer per dispatcher.
+> **Decided** (SCHEDULING-5, SCHEDULING-13, SCHEDULING-14): a one-shot timer for the earliest of budget exhaustion, the dispatch limit and the next deadline; one activation timer per dispatcher.
 
 I'd keep deadlines and replenishment entirely in userspace, but provide a general timer mechanism.
 
@@ -1393,7 +1487,7 @@ I would make policy timers use absolute monotonic timestamps rather than duratio
 
 ---
 
-# Discussion: 12. Multicore scheduling: centralized and per-CPU schedulers
+# Discussion: Multicore scheduling: centralized and per-CPU schedulers
 
 > **Decided** ([SMP design](smp-design.md#decisions)): per-core root Schedulers, dispatchers and boot Times, and a cross-core `Scheduler.MoveThread`; a Time belongs to one core.
 
@@ -1461,7 +1555,7 @@ I'd make this an optimization added after the single-CPU path works.
 
 ---
 
-# Discussion: 13. The design I'd actually implement
+# Discussion: The design I'd actually implement
 
 > **A proposal, not the selected design.** What was adopted is the [Decisions](#decisions) section.
 
@@ -1577,11 +1671,11 @@ A general scheduler could authorize the handoff in advance, rather than being in
 
 ---
 
-# Discussion: 14. Some important traps to avoid
+# Discussion: Some important traps to avoid
 
 There are a few architectural issues I would address early.
 
-### 14.1 Don't make scheduler events lossy
+### Don't make scheduler events lossy
 
 If a scheduler misses a `Runnable` notification, a thread might never execute again.
 
@@ -1605,7 +1699,7 @@ The kernel would publish state transitions with appropriate memory ordering. Seq
 
 You still need an overflow protocol for event queues, but lost notifications no longer have to mean lost thread state.
 
-### 14.2 Make scheduler operations generation-safe
+### Make scheduler operations generation-safe
 
 A thread might block, wake, migrate, or terminate while a scheduling decision is being prepared.
 
@@ -1613,7 +1707,7 @@ A scheduler should never accidentally dispatch a thread based on stale state.
 
 Use generation counters and atomic validation at dispatch time.
 
-### 14.3 Define what happens when a scheduler crashes
+### Define what happens when a scheduler crashes
 
 Suppose a scheduler controls 100 threads and terminates unexpectedly.
 
@@ -1629,7 +1723,7 @@ The parent can decide whether to restart the scheduler, migrate its threads, or 
 
 A crashed root scheduler is a separate failure: no purely userspace policy can recover unless the kernel already has a trusted emergency activation or replacement mechanism.
 
-### 14.4 Don't confuse available CPU time with guaranteed service
+### Don't confuse available CPU time with guaranteed service
 
 A scheduler may have permission to consume 5 ms without being guaranteed 5 ms of actual execution within a particular interval.
 
@@ -1646,7 +1740,7 @@ A child with an ordinary allowance of 5 ms cannot infer that guarantee merely fr
 
 This matters if you eventually want compositional real-time scheduling.
 
-### 14.5 Account for kernel execution time
+### Account for kernel execution time
 
 You should explicitly define whether CPU time spent executing syscalls, handling IPC, and performing kernel work is charged to the currently active `Time`.
 
@@ -1658,7 +1752,7 @@ Interrupt and deferred-work accounting is harder.
 
 A device interrupt may not be attributable to a particular client. Kernel mechanisms should at least distinguish such execution, even if the attribution policy is initially simple.
 
-### 14.6 Time exhaustion during synchronous IPC
+### Time exhaustion during synchronous IPC
 
 Consider:
 
@@ -1688,7 +1782,7 @@ The kernel alone cannot guarantee temporal isolation if the server holds shared 
 
 ---
 
-# Discussion: 15. Can the proposed mechanisms actually implement the different policies?
+# Discussion: Can the proposed mechanisms actually implement the different policies?
 
 This is the test I'd use to evaluate the design.
 
@@ -1717,9 +1811,9 @@ Two reservations are worth noting. First, achieving high-performance implementat
 
 ---
 
-# Discussion: 16. One more radical alternative: remove `Time` from dispatch entirely
+# Discussion: One more radical alternative: remove `Time` from dispatch entirely
 
-> **Not adopted** ([Decisions](#decisions), "Dispatch"): `Scheduler.Dispatch` names the Thread's bound Time (`x3`). As proposed here, a protected call keeps the current Time.
+> **Not adopted** (SCHEDULING-11): `Scheduler.Dispatch` names the Thread's bound Time (`x3`). As proposed here, a protected call keeps the current Time.
 
 There's another design worth contemplating.
 
@@ -1779,7 +1873,7 @@ I'd therefore lean toward retaining explicit `Time` selection in the conceptual 
 
 ---
 
-# Discussion: 17. What I'd borrow from existing research
+# Discussion: What I'd borrow from existing research
 
 Three systems are particularly relevant.
 
@@ -1793,7 +1887,7 @@ I'd study ghOSt particularly closely before finalizing the dispatch ABI. Its han
 
 ---
 
-# Discussion: 18. My preferred architecture
+# Discussion: My preferred architecture
 
 > **A proposal, not the selected design.** What was adopted is the [Decisions](#decisions) section.
 
@@ -1886,7 +1980,7 @@ This separates three concepts that are easy to conflate:
 
 C handles the first two. The third needs an explicit contract.
 
-## 1. Why C is preferable
+## Why C is preferable
 
 ### A. Immediate scheduler activation
 
@@ -1950,7 +2044,7 @@ The scheduler needn't reconstruct current thread state from the event history.
 
 ---
 
-## 2. But notification and activation must be separate
+## But notification and activation must be separate
 
 This is where I'd modify the proposed C contract slightly.
 
@@ -2054,7 +2148,7 @@ The kernel doesn't need to know the scheduler's priority policy to distinguish b
 
 ---
 
-## 3. The minimal shared state
+## The minimal shared state
 
 I'd start with something like:
 
@@ -2141,7 +2235,7 @@ One nuance: simply having an atomic sequence counter doesn't make a multi-field 
 
 ---
 
-## 4. Avoiding lost wakeups in `Scheduler.Wait`
+## Avoiding lost wakeups in `Scheduler.Wait`
 
 This is a particularly important interface detail.
 
@@ -2198,7 +2292,7 @@ For a real implementation, I'd also make event draining and dispatch commits seq
 
 ---
 
-## 5. One thing I would *not* put in the event queue
+## One thing I would *not* put in the event queue
 
 I wouldn't require the event queue to be a complete history of every scheduling transition.
 
@@ -2235,7 +2329,7 @@ That avoids turning the kernel into a large event-history database while preserv
 
 ---
 
-## 6. I'd make `Scheduler.Wait` both wait and dispatch
+## I'd make `Scheduler.Wait` both wait and dispatch
 
 There's another optimization worth considering.
 
@@ -2292,7 +2386,7 @@ One caveat: for centralized multicore schedulers, this synchronous interface isn
 
 ---
 
-## 7. My preferred final contract
+## My preferred final contract
 
 I'd settle on **C with event-driven scheduler activation**, defined approximately as follows:
 
@@ -2331,11 +2425,11 @@ That separation is what gives you the flexibility to implement everything from s
 
 ---
 
-## 8. The root dispatcher's first priority policy (2026-10-29)
+## The root dispatcher's first priority policy (2026-10-29)
 
 The first policy that needed more than round-robin shows the split above at work. The root dispatcher (`userspace/dispatcher`) dispatched round-robin with a 10 ms slice, and a woken or preempted Thread went to the back of the round. With three CPU-bound peers (Wood's engine, the compositor, the lava lamp), Wood's audio playback Thread, which works about 1 ms per 11.6 ms period, waited 20–30 ms after each preemption ([audio-profiling.md](audio-profiling.md)).
 
-The fix is entirely userspace: fixed priority in the root dispatcher, declared with each Thread and carried by Kickstart, round-robin within a level. The kernel already reported the wakeup as an activation (`THREAD_RUNNABLE`); only the decision changed. The level is a byte so more fit later. The first round deliberately had no starvation guard, on the expectation that every Thread above normal blocks most of the time; the board disproved it the same day (below). The selected rule is in the [scheduling design](scheduling-design.md#decisions) (root dispatcher policy); the work items are in [`scheduling-completed.md`](scheduling-completed.md).
+The fix is entirely userspace: fixed priority in the root dispatcher, declared with each Thread and carried by Kickstart, round-robin within a level. The kernel already reported the wakeup as an activation (`THREAD_RUNNABLE`); only the decision changed. The level is a byte so more fit later. The first round deliberately had no starvation guard, on the expectation that every Thread above normal blocks most of the time; the board disproved it the same day (below). The selected rule is SCHEDULING-17; the work items are in [`scheduling-completed.md`](scheduling-completed.md).
 
 The second level came the same day, from the board: keys felt sluggish, and some presses and releases were lost, while Wood played. The maintainer: "the usb is probably in need of priority between the main app and the audio?". A key crosses several Threads (the DWC2 component's interrupt and poller Threads, the HID component, the compositor's input Thread, then Wood's engine), and at normal level each hop waited behind the CPU-bound peers. That costs more than latency: a split interrupt poll of a low-speed keyboard behind the LAN9514's transaction translator wakes the interrupt Thread and then the poller between its start split and its complete split, and the hub keeps a periodic result only for the microframes right after the start split (USB 2.0 §11.18.4, §11.18.6), so a late complete split loses the report the device already had acknowledged. A level between normal and high (input) puts those cheap, blocking Threads ahead of the programs and keeps audio ahead of them. The input Threads must stay cheap: the compositor's composing stays on its normal frame Thread, so it does not outrank Wood's engine.
 
