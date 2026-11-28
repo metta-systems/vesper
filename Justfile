@@ -1595,7 +1595,17 @@ clean:
 # Update all dependencies
 [group("maintenance")]
 deps-up:
-    cargo update
+    cargo update --verbose
+
+# Upgrade all dependencies compatibly
+[group("maintenance")]
+deps-upper: && deps-up
+  cargo upgrade --verbose
+
+# Upgrade all dependencies incompatibly
+[group("maintenance")]
+deps-upperer: && deps-up
+  cargo upgrade --incompatible --verbose
 
 # Fetch the git submodules, prepare local dev tools and set-up git hooks
 [group("maintenance")]
