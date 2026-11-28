@@ -1,20 +1,15 @@
 # Input event decisions
 
-Parking lot for unanswered input event decisions. This is the only place input
-decisions are tracked; other documents link here. Each entry stays open until the
-maintainer answers it. Recommendations are marked as such; they are not decisions.
-Record an answer here only when the maintainer gave it explicitly. Answered items
-move to [input-completed.md](input-completed.md), section Completed decisions, once the
-design and plan reflect them.
+Open input event questions only. Each stays open until the maintainer answers
+it; recommendations are marked as such and are not decisions. An answered
+question becomes a numbered section of [input-design.md](input-design.md) and
+leaves this file.
 
 Scope: the event record, its transport and its consumers. USB HID producer
 decisions (report decoding, descriptor synthesis, output reports, device-tree
 links) are in [usb-decisions.md](usb-decisions.md).
 
-Answered decisions are recorded in [input-design.md](input-design.md) and listed in
-[input-completed.md](input-completed.md). The questions below are what remains.
-
-## D5. Overflow policy
+## Q-INPUT-1: overflow policy
 
 Options:
 
@@ -23,9 +18,9 @@ Options:
 - Drop oldest, as Fuchsia does. Keeps the most recent state, but loses events
   silently unless the consumer compares sequence numbers.
 
-Status: open. Blocks INPUT2.
+Status: open. Blocks P-INPUT-2.
 
-## D6. Repeat and keymap placement
+## Q-INPUT-2: repeat and keymap placement
 
 Options:
 
@@ -34,13 +29,13 @@ Options:
 - In the producer driver. Simpler for one consumer, but it duplicates policy per
   driver.
 
-Status: open. Blocks INPUT3.
+Status: open. Blocks P-INPUT-3.
 
-## D10. Touch representation
+## Q-INPUT-3: touch representation
 
 Options:
 
 - evdev-style slots.
 - Explicit `Touch` records with contact ids (leaning this way, but unanswered).
 
-Status: open, deferred until a touch device exists (INPUT4).
+Status: open, deferred until a touch device exists (P-INPUT-4).

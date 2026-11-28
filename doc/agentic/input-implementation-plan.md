@@ -11,8 +11,9 @@ need a producer only for hardware checks.
 
 ## Dependencies
 
-- D5 blocks INPUT2, D6 blocks INPUT3 (D8 is answered: the console adapter), and D10
-  blocks INPUT4. See [input-decisions.md](input-decisions.md).
+- Q-INPUT-1 blocks P-INPUT-2, Q-INPUT-2 blocks P-INPUT-3 (the console adapter
+  is INPUT-8), and Q-INPUT-3 blocks P-INPUT-4. See
+  [input-decisions.md](input-decisions.md).
 - The clock is settled in [capabilities-contract.md](capabilities-contract.md): the
   monotonic physical counter in nanoseconds.
 - The io-channel (`libs/io-channel`) carries the records.
@@ -20,13 +21,13 @@ need a producer only for hardware checks.
   P-UI-COMPOSITOR-1 and P-UI-COMPOSITOR-5). P-UI-COMPOSITOR-1 can start on
   injected events. P-UI-COMPOSITOR-5 needs a producer.
 
-## INPUT2: overflow and replay
+## P-INPUT-2: overflow and replay
 
 - Replay property tests: folding the emitted events into the state tracker reproduces
   the producer's state. Repeat with an injected `Dropped` and a resync from snapshot.
 - Exit: the replay property holds for generated event sequences, including overflow.
 
-## INPUT3: keymap and console adapter
+## P-INPUT-3: keymap and console adapter
 
 - New `libs/keymap`: static layouts, modifier and lock state, and LED feedback events.
 - The console adapter turns `Key` events into the bytes the shell reads today, on the
@@ -36,10 +37,10 @@ need a producer only for hardware checks.
   producer, so it is checked after USB4 in
   [usb-implementation-plan.md](usb-implementation-plan.md).
 
-## INPUT4: extended devices
+## P-INPUT-4: extended devices
 
 - Gamepad standard mapping by vendor and product, with raw fallback.
-- Touch with contact ids and frames (D10).
+- Touch with contact ids and frames (Q-INPUT-3).
 - Exit: deferred until a device is in hand.
 
 ## Moved or removed
@@ -48,11 +49,11 @@ need a producer only for hardware checks.
   provides `for_each_change` and mouse parsing. Converting them to records is producer
   work in [usb-implementation-plan.md](usb-implementation-plan.md) USB4.
 - The `input_v1` interface edit. That interface is owned by the USB plan.
-- The router stage. Decided 2026-10-18: the compositor routes input.
+- The router stage: the compositor routes input (INPUT-9).
   Pointer acceleration and focus belong to the compositor plan.
 
 ## Verification
 
 - Host tests for each library (`libs/input-event`, `libs/keymap`).
-- Replay property tests for overflow and resync (INPUT2).
-- Hardware check on RPi3 at INPUT3, after USB4.
+- Replay property tests for overflow and resync (P-INPUT-2).
+- Hardware check on RPi3 at P-INPUT-3, after USB4.

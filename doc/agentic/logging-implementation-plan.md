@@ -13,8 +13,8 @@ has passed.
   change there may reopen built items. "Needs review" items: the `(N dropped)` prefix
   (L3) and the image-build `interfaces` key (L4).
 - L11 (console input) is answered (2026-10-29): received bytes go into the input
-  events, and input decision D8 (2026-10-29, a) turns them back into the shell's
-  bytes through the console adapter (input stage INPUT3).
+  events, and INPUT-8 turns them back into the shell's bytes through the console
+  adapter (P-INPUT-3).
 - L-D (panics, and faults) is in scope since 2026-10-29 ("keep 32k stacks, add panic
   reporting through the serial console too").
 - Board: L-A's hardware exit is pending.
@@ -124,7 +124,7 @@ Depends on L-A's hardware exit only for confidence; no open decision.
 
 - [ ] Serial RX into the input events (L11): the log server attaches the receive side
   and turns received bytes into input records the compositor routes; the shell reads
-  them as bytes through the console adapter (input D8 a, INPUT3).
+  them as bytes through the console adapter (INPUT-8, P-INPUT-3).
 - [ ] Production image (`kernel/kickstart/image.toml`) with a log server: after the
   RX item above.
 - [ ] Hardware exits of the L-B images on the Pi 3 B.

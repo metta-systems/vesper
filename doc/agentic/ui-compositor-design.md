@@ -67,8 +67,9 @@ the shell.
 
 ## UI-COMPOSITOR-10: input decisions first
 
-2026-10-18. The input decisions the routing needed (input D1 to D4, D13) were
-answered before the routing was built.
+2026-10-18. The input decisions the routing needed (the event record, its code
+namespace, framing, channels and hotplug ids: INPUT-1 to INPUT-4 and INPUT-7)
+were answered before the routing was built.
 
 ## UI-COMPOSITOR-11: a full client channel drops the newest delivery
 
@@ -173,7 +174,7 @@ flowchart LR
   Hover produces enter and leave events. Keyboard events go to the focused window
   as physical codes; modifier keys are ordinary `Key` records for the physical press and
   release, and the client tracks which modifiers are active. Keymaps and key repeat stay in the
-  consumer, as `input-design.md` D6 proposes. Compositor chords (Alt-drag to move)
+  consumer, as Q-INPUT-2 recommends (still open). Compositor chords (Alt-drag to move)
   are consumed before delivery. Hit-testing uses window rectangles. Pointer motion
   is coalesced into one event per client per `Sync` frame. Wood
   (`userspace/wood/vesper`) is the first client that reads the channel: it maps

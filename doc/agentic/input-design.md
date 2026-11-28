@@ -1,12 +1,11 @@
 # Input event design
 
-Status: the event record is decided (2026-10-18) and its library, `libs/input-event`, is
-built (INPUT1). Open decisions are in
-[input-decisions.md](input-decisions.md). Work order is in
-[input-implementation-plan.md](input-implementation-plan.md). Completed items are in
-[input-completed.md](input-completed.md).
-
-## Scope
+The numbered sections are the maintainer's decisions; the sections after them
+describe the mechanism. Open questions are in
+[input-decisions.md](input-decisions.md), open tasks in
+[input-implementation-plan.md](input-implementation-plan.md), finished ones in
+[input-completed.md](input-completed.md). The event library, `libs/input-event`,
+is built.
 
 The input event contract: the record that carries keyboard, pointer and other device
 events, how it travels, how frames and overflow are handled, and what consumers do
@@ -18,6 +17,54 @@ Consumers in scope:
 - a console, where key events become bytes for a shell,
 - a graphical compositor, which routes events to windows
   ([ui-compositor-design.md](ui-compositor-design.md)).
+
+## INPUT-1: a flat event record
+
+2026-10-18. Events travel as one flat, evdev-like 24-byte record, with frames,
+overflow and hotplug as kinds of the same record (see Event record).
+
+## INPUT-2: HID usages as the code namespace
+
+2026-10-18. A record's `code` is `(usage page << 16) | usage`, from the USB HID
+usage tables. A keyboard code is the raw HID usage; the consumer derives the
+logical key.
+
+## INPUT-3: frames end with `Sync`
+
+2026-10-18. Every delivery ends with a `Sync`, even a single event. A frame is
+never split across packets, and one frame can span devices of the channel.
+
+## INPUT-4: one channel per producer
+
+2026-10-18. One channel per producer component, with the device id in each
+record's `subject`.
+
+## INPUT-5: output on a transmit channel
+
+2026-10-18. Output events (LEDs, rumble) use a transmit channel with the same
+record format. There is no interim Call.
+
+## INPUT-6: timestamps at the device interrupt
+
+2026-10-18. A record's timestamp is read from the physical counter, in
+nanoseconds, when the producer handles the device interrupt.
+
+## INPUT-7: hotplug in band, ids never reused
+
+2026-10-18. `DeviceAdded` and `DeviceRemoved` are records in the stream, so
+their order against real events is kept. A device id is unique within the
+channel's life and never reused.
+
+## INPUT-8: the console is an adapter
+
+2026-10-29. The console is an adapter that presents a serial-compatible byte
+channel to the shell. Not chosen: the shell consuming events directly.
+
+## INPUT-9: the compositor routes input
+
+2026-10-18, with UI-COMPOSITOR-4. Routing (focus, pointer, grabs) belongs to
+the compositor; a separate `inputd`-style router is future work
+(N-UI-COMPOSITOR-1).
 
 ## Prior art
 
@@ -66,15 +113,12 @@ Pointer Events, SDL's controller database, Wayland key repeat.
    typematic repeat, gamepad standard mapping, gestures.
 
 Routing (focus, pointer, grabs) belongs to the compositor and is not part of this
-layer (D9, answered 2026-10-18 with UI-COMPOSITOR-4: the compositor routes input
-itself; a separate `inputd`-style router is future work in
-[ui-compositor-design.md](ui-compositor-design.md)).
+layer (INPUT-9, [ui-compositor-design.md](ui-compositor-design.md)).
 
 ## Event record
 
-Decided by the maintainer on 2026-10-18 (D1, D2, D3, D4, D7, D11; see below). Flat and
-evdev-like, so it travels as bytes through an IO_Rec. 24 bytes, 8-byte aligned,
-little-endian:
+Flat and evdev-like (INPUT-1), so it travels as bytes through an IO_Rec. 24
+bytes, 8-byte aligned, little-endian:
 
 | Offset | Field | Type | Meaning |
 |---:|---|---|---|
@@ -110,7 +154,7 @@ Kinds (the wire number in parentheses; zero is never a kind):
 Reserved for later: `Touch` (contact id), `Text` (committed characters from an
 IME), `Switch` (lid, tablet mode).
 
-Codes use HID usages on these pages in v1: Generic Desktop 0x01, Keyboard 0x07,
+Codes use HID usages (INPUT-2) on these pages in v1: Generic Desktop 0x01, Keyboard 0x07,
 LED 0x08, Button 0x09, Consumer 0x0C and Digitizer 0x0D. A keyboard `code` is the raw
 HID usage; the consumer derives the logical key from it.
 
@@ -150,24 +194,25 @@ in USB4 ([usb-design.md](usb-design.md)).
 
 ## Behaviour rules
 
-- **Frames** are never split across packets. A frame ends with `Sync`.
+- **Frames** are never split across packets. A frame ends with `Sync` (INPUT-3).
 - **Channels.** One channel per producer component, with the device id in each
-  record (in `subject`). A producer assigns an id when it emits `DeviceAdded`; the id is unique within
-  the channel's life and never reused, so ids do not survive unplugging a device. A consumer that wants to recognise a returning device matches the identity in its descriptor.
+  record (in `subject`, INPUT-4). A producer assigns an id when it emits `DeviceAdded`; the id is unique within
+  the channel's life and never reused (INPUT-7), so ids do not survive unplugging a device. A consumer that wants to recognise a returning device matches the identity in its descriptor.
 - **Removal.** Because producers send only changes, a consumer treats every key and
   button of a device as released when it receives `DeviceRemoved` for it.
 - **Overflow.** When no empty IO_Rec is posted, the producer drops and counts, as
   `libs/serial-channel` does. The next delivery starts with `Dropped`. The consumer
   resynchronises from a state snapshot, a Call that returns the key bitmap and axis
   values through the data area, as `SYN_DROPPED` is followed by a state read.
-  Without this, a lost key-up leaves a key stuck. The policy itself is D5, still open.
-- **Timestamps** are read from the clock when the producer handles the device
+  Without this, a lost key-up leaves a key stuck. The policy itself is
+  Q-INPUT-1, still open.
+- **Timestamps** (INPUT-6) are read from the clock when the producer handles the device
   interrupt. The host controller completes transfers by interrupt, so a producer's
   interrupt Thread reads the clock when it services a report's interrupt, with no
   polling interval in the timestamp.
 - **Typematic repeat** is a consumer-side library driven by a timer. Producers do not
   repeat in hardware, and a console and a game want different behaviour.
-- **Output direction.** Output events (LEDs, rumble) use a transmit channel with the
+- **Output direction (INPUT-5).** Output events (LEDs, rumble) use a transmit channel with the
   same record format. There is no interim Call; LED output waits for the transmit
   channel.
 - **Trust.** Consumers validate every record (kind, code and range) because a
@@ -178,9 +223,7 @@ in USB4 ([usb-design.md](usb-design.md)).
 **Console.** An adapter turns `Key` events into bytes: keymap, modifiers, Ctrl and
 Alt, escape sequences for cursor keys. It presents the byte channel the shell reads
 today, so the shell is unchanged. Keymaps are static tables, optionally generated at
-build time from xkb data, not parsed at runtime. (D8, answered 2026-10-29: option a,
-the adapter presenting a serial-compatible byte channel; not chosen: the shell
-consuming events directly.) Serial input joins the same path: the log server owns
+build time from xkb data, not parsed at runtime (INPUT-8). Serial input joins the same path: the log server owns
 the PL011 and puts received bytes into the input events (logging decision L11 in
 [logging-design.md](logging-design.md)), and the adapter turns them back into the
 shell's bytes.
@@ -194,13 +237,13 @@ Touch uses contact ids and frames. Deferred until a device is in hand.
 
 ## Future work
 
-- **Strongly typed payloads.** Look at Fuchsia's typed per-device reports
+- **N-INPUT-1: strongly typed payloads.** Look at Fuchsia's typed per-device reports
   (`fuchsia.input.report`) as an alternative to the flat record, once the flat record's
   limits show.
-- **Separate window-event record.** Investigate a separate record type with a shared
+- **N-INPUT-2: a separate window-event record.** Investigate a separate record type with a shared
   header for compositor window notifications, instead of adding their kinds to the
   input `kind` enum.
-- **High-rate pointer devices.** Investigate channel load from high-DPI mice (for
+- **N-INPUT-3: high-rate pointer devices.** Investigate channel load from high-DPI mice (for
   example 1500 dpi), which may flood the channels with `Rel` records: coalescing, a
   single two-axis record, or rate limits.
 

@@ -9,8 +9,9 @@ are in `multi-display-implementation-plan.md`.
 
 - No compositor decision is open (`ui-compositor-design.md`, UI-COMPOSITOR-1 to
   UI-COMPOSITOR-12).
-- Input decisions still open (`input-decisions.md`): D5 (the input channel's
-  overflow policy), D6 (repeat and keymap placement) and D10 (touch).
+- Input decisions still open (`input-decisions.md`): Q-INPUT-1 (the input
+  channel's overflow policy), Q-INPUT-2 (repeat and keymap placement) and
+  Q-INPUT-3 (touch).
 
 ## P-UI-COMPOSITOR-7: the cursor under QEMU
 

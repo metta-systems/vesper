@@ -115,9 +115,8 @@ question to the maintainer.
   input event path ([input-design.md](input-design.md)), so serial typing reaches the
   focused consumer the way USB keyboard input does. How the bytes become events (the
   log server as an `input_v1` producer the compositor imports next to `usb_hid`, or a
-  byte channel to an input adapter) is implementation work; input decision D8
-  (answered 2026-10-29: the console adapter presenting a serial-compatible byte
-  channel, [input-design.md](input-design.md)) turns the events back into the shell's
+  byte channel to an input adapter) is implementation work; INPUT-8 (the console adapter presenting a
+  serial-compatible byte channel, [input-design.md](input-design.md)) turns the events back into the shell's
   bytes. Not chosen: two UARTs
   (b); an output-only serial port (c).
 - **L12. Serial console at boot: c, negotiate the rate at boot as chainboot does;
