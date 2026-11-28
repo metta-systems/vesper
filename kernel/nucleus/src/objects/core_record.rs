@@ -1,4 +1,4 @@
-//! The per-core record (SMP design, "Per-core record", C3(a)).
+//! The per-core record (SMP-5).
 //!
 //! Kickstart carves one record per core from accounted memory, sized from the device
 //! tree's `/cpus`, and points each core's `TPIDR_EL1` at its own record (an EL1-only
@@ -26,7 +26,7 @@ use {
 #[repr(C, align(64))]
 #[derive(Debug)]
 pub struct CoreRecord {
-    /// The core's logical index: its position among the CPUs of `/cpus` (SMP C9(a))
+    /// The core's logical index: its position among the CPUs of `/cpus` (SMP-6)
     pub index: u32,
     /// How many cores there are: the records are one run, by logical index
     pub core_count: u32,
@@ -192,7 +192,7 @@ pub struct CoreState {
     /// is running: the timer fires at once so the nucleus switches.
     pub preempt_requested: bool,
     /// Counter ticks this core spent handling interrupts since boot, published to its
-    /// root Scheduler's record as `interrupt_ns` (SMP C11(a)).
+    /// root Scheduler's record as `interrupt_ns` (SMP-27).
     pub interrupt_ticks: u64,
     /// Counter ticks this core spent with nothing to run, waiting in the kernel for an
     /// interrupt, since boot; published to its root Scheduler's record as `idle_ns`.
@@ -203,7 +203,7 @@ pub struct CoreState {
     pub fp_totals: FpTotals,
     /// The `AddressSpace` whose translation this core's `TTBR0_EL1` holds,
     /// or will at its next kernel exit: the one it last entered, until it
-    /// lets go of it (SMP C8). Its bit is set in that `AddressSpace`'s
+    /// lets go of it (SMP-22). Its bit is set in that `AddressSpace`'s
     /// `CoreUse::installed`.
     pub installed_address_space: Option<CarvedId>,
 }

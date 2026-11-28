@@ -1,5 +1,5 @@
 //! Select, load and initialise the start-method component, which starts the secondary
-//! cores (SMP design: start-method components, C1 and C1.1(a)).
+//! cores (SMP design: start-method components, SMP-2 and SMP-3).
 //!
 //! The device tree names the method in every `/cpus` node's `enable-method`. When all the
 //! nodes agree, the bundled component (`CPU_START`) whose `enable-method` list holds that

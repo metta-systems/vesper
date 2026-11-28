@@ -320,7 +320,7 @@ pub fn bootstrap_nucleus() -> BootState {
     };
 
     // The boot Time of every online core: the boot core's, then each
-    // secondary's (SMP C4(c)).
+    // secondary's (SMP-7).
     let boot_core = nucleus::core_record::current().index as usize;
     let boot_time_id = carve_boot_time(boot_payload, boot_core);
     let mut secondary_times = [None; MAX_CPUS];

@@ -127,7 +127,7 @@ pub struct Dispatched {
 
 impl<A: ArchObjects> Nucleus<A> {
     /// The logical index of the core running the nucleus now: the one in its
-    /// per-core record (SMP C9(a)).
+    /// per-core record (SMP-6).
     #[expect(
         clippy::unused_self,
         reason = "the core is the caller's, not the Nucleus's; kept with its peers"
@@ -262,7 +262,7 @@ impl<A: ArchObjects> Nucleus<A> {
 
     /// This core enters a Thread in `address_space` (selected, or migrated
     /// there by a call or a return): it holds and runs that `AddressSpace`
-    /// from now on, and no longer the one it held before (SMP C8).
+    /// from now on, and no longer the one it held before (SMP-22).
     pub(crate) fn enter_address_space(&mut self, address_space: AddressSpaceId) {
         let bit = self.this_core_bit();
         if let Some(previous) = self
@@ -314,7 +314,7 @@ impl<A: ArchObjects> Nucleus<A> {
     }
 
     /// Whether no other core uses `address_space`, before its ASID or root
-    /// is released (SMP C8.1(a), C8.2(a)): `Ok(true)` when none holds it;
+    /// is released (SMP-23, SMP-24): `Ok(true)` when none holds it;
     /// `Ok(false)` while idle cores still hold it, which are sent a Stop once
     /// and let go of it (the caller retries); `InvalidOperation` while one of
     /// its Threads runs on another core, which userspace must stop first.
@@ -659,7 +659,7 @@ impl<A: ArchObjects> Nucleus<A> {
         Ok(())
     }
 
-    /// A cross-core move (SMP C4.2(a), C4.2.1(a)): the Thread `id` leaves its
+    /// A cross-core move (SMP-9, SMP-10): the Thread `id` leaves its
     /// Time, with whatever budget it holds, to the source, no longer bound,
     /// and is bound to `time`, of the destination `core`, which
     /// from now on counts the timeout of its wait, if it has one (and is told
@@ -1230,7 +1230,7 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Write `scheduler`'s own record (slot 0), if it has one: the events
     /// published, the timers that fired and the total time spent handling
     /// interrupts. Not itself an event: the bound `EventCount` is not
-    /// advanced. Only the Scheduler's own core writes it (SMP C11(a)): the
+    /// advanced. Only the Scheduler's own core writes it (SMP-27): the
     /// totals are this core's, and another core's would be wrong there.
     pub(crate) fn publish_scheduler_record(&mut self, scheduler: CarvedId) {
         if self.scheduler_core(scheduler) != self.current_cpu() {
@@ -1352,7 +1352,7 @@ impl<A: ArchObjects> Nucleus<A> {
             thread.last_run_ticks,
         );
         let running = state == ThreadState::Running;
-        // A running Thread runs on its Scheduler's core (SMP C4(c)); one with
+        // A running Thread runs on its Scheduler's core (SMP-7); one with
         // no Scheduler yet (the boot Thread) on the core publishing it.
         let cpu = if running {
             let scheduler = self.thread(id).and_then(|thread| thread.scheduler);

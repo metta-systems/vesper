@@ -1,4 +1,4 @@
-//! The per-core records and trap stacks (SMP design, "Per-core record", C3(a)).
+//! The per-core records and trap stacks (SMP-5).
 //!
 //! One record and one `SP_EL1` trap stack per core, sized from the device tree's `/cpus`
 //! and carved from accounted boot memory. The trap stacks are mapped in the kernel half in

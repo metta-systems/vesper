@@ -410,8 +410,8 @@ fn dispatch<A: ArchObjects>(
     if bound != Some(dispatcher) {
         return Err(CapError::InvalidOperation);
     }
-    // `x6` names the Scheduler's core, and the dispatcher runs there (SMP
-    // C4.1(a)): a Scheduler nobody adopted has no core and dispatches nothing.
+    // `x6` names the Scheduler's core, and the dispatcher runs there
+    // (SMP-8): a Scheduler nobody adopted has no core and dispatches nothing.
     let core = nucleus.current_cpu();
     if scheduler_core != Some(core) || usize::try_from(cpu).ok() != Some(core) {
         return Err(CapError::InvalidOperation);
@@ -549,7 +549,7 @@ fn adopt(
         if parent.depth() >= Scheduler::MAX_DEPTH {
             return Err(CapError::InvalidOperation);
         }
-        // The child runs on its parent's core (SMP C4.1(a)).
+        // The child runs on its parent's core (SMP-8).
         (parent.depth() + 1, parent.core())
     };
     {
@@ -621,9 +621,9 @@ fn move_thread<A: ArchObjects>(
             .and_then(|object| object.core())
     };
     let (owner_core, destination_core) = (core_of(owner), core_of(destination));
-    // To another core (SMP C4.3(a), C4.3.1(a)): invoked on the owner, with the
+    // To another core (SMP-11, SMP-12): invoked on the owner, with the
     // destination core's Time `x5` for the Thread. Its own Time keeps what
-    // budget it has and stays with the source, no longer bound (C4.2.1(a)).
+    // budget it has and stays with the source, no longer bound (SMP-10).
     if let (Some(from), Some(to)) = (owner_core, destination_core)
         && from != to
     {

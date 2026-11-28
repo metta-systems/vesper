@@ -25,9 +25,9 @@ Thread priority in the root dispatcher, the input level between normal and high,
 
 ## Phase 11 — Multicore
 
-The scheduling part of SMP4 in [`smp-implementation-plan.md`](smp-implementation-plan.md); it starts after SMP3 there (inter-processor interrupts). The rules are in the [SMP design's decisions](smp-design.md#decisions) (C4, C4.1–C4.3, C5, C7, C9).
+The scheduling part of P-SMP-4 in [`smp-implementation-plan.md`](smp-implementation-plan.md); it started after P-SMP-3 there (inter-processor interrupts). The rules are in the [SMP design's decisions](smp-design.md#decisions) (SMP-6 to SMP-12, SMP-17 to SMP-20).
 
-Done: per-core roots, synchronous retirement across cores, the cross-core Thread move and the suites on core 1 (see [`scheduling-completed.md`](scheduling-completed.md#phase-11--multicore)). The root dispatcher still hands every managed Thread to the boot core; placing them across cores is SMP5 in [`smp-implementation-plan.md`](smp-implementation-plan.md).
+Done: per-core roots, synchronous retirement across cores, the cross-core Thread move and the suites on core 1 (see [`scheduling-completed.md`](scheduling-completed.md#phase-11--multicore)). The root dispatcher still hands every managed Thread to the boot core; placing them across cores is P-SMP-5 in [`smp-implementation-plan.md`](smp-implementation-plan.md).
 
 Still parked ([`scheduling-decisions.md`](scheduling-decisions.md), not needed by per-core dispatchers):
 

@@ -16,7 +16,7 @@
 //! [`IrqChipOps::claim`] act on the calling core.
 //!
 //! CPUs are named by their logical index (the order of the device tree's
-//! `/cpus`, SMP C9(a)); a component learns the hardware identity behind an
+//! `/cpus`, SMP-6); a component learns the hardware identity behind an
 //! index when that core calls [`IrqChipOps::init_cpu`].
 //!
 //! Interrupt lines are component-defined numbers in `0..line_count`; device

@@ -61,7 +61,7 @@ pub struct Grant {
 #[derive(Clone, Copy, Debug)]
 pub struct Scheduler {
     root: bool,
-    /// The core this Scheduler's Threads and dispatcher run on (SMP C4.1(a)): set
+    /// The core this Scheduler's Threads and dispatcher run on (SMP-8): set
     /// once, at creation for a root Scheduler and from the parent at `Adopt` for
     /// any other; `None` for a fresh Scheduler nobody adopted yet.
     core: Option<usize>,

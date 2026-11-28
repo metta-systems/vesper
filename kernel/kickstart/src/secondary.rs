@@ -9,7 +9,7 @@
 //! is not needed. It runs on the physical address of its own trap stack, sets its EL2
 //! registers ([`libboot`]'s `configure_el2`, as the boot core does) and goes through
 //! [`el_switch`](crate::el_switch) with the boot core's tables and vectors and its own
-//! `SP_EL1` and `TPIDR_EL1`, entering `EL1h` on its trap stack (C12(a)).
+//! `SP_EL1` and `TPIDR_EL1`, entering `EL1h` on its trap stack (SMP-28).
 //!
 //! Before its MMU is on the core clears no BSS, takes no lock and does no atomic
 //! read-modify-write: those do not complete on Non-cacheable memory on the Pi's cores.

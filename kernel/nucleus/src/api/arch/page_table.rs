@@ -182,8 +182,8 @@ fn page_table_id(
 }
 
 /// `Unmap` `1`: clear the installation of the invoked table. An empty root
-/// is withdrawn only once no other core's `TTBR0_EL1` names it (SMP
-/// C8.2(a)): refused while a Thread of its `AddressSpace` runs on another
+/// is withdrawn only once no other core's `TTBR0_EL1` names it
+/// (SMP-24): refused while a Thread of its `AddressSpace` runs on another
 /// core, run again until idle cores holding it have let go of it.
 fn unmap<A: ArchObjects>(
     access: &Access,

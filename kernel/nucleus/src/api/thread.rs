@@ -172,7 +172,7 @@ fn retire<A: ArchObjects>(
         return Ok(InvokeOutcome::Exit);
     }
 
-    // A Thread running on another core is stopped there first (SMP C8(a)):
+    // A Thread running on another core is stopped there first (SMP-22):
     // it is marked retiring, so nothing dispatches it again, that core is
     // sent a Stop IPI once, and the call runs again until it has stopped.
     if let Some(thread) = nucleus.thread_mut(thread_id)

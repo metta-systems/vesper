@@ -1,4 +1,4 @@
-//! Host tests of the scheduler records' sequence lock under concurrency (SMP2, payload
+//! Host tests of the scheduler records' sequence lock under concurrency (P-SMP-2, payload
 //! publication): one writer publishes while readers on other threads take snapshots, as
 //! the nucleus on one core and a scheduler on another do. Every field of a published
 //! snapshot is derived from one counter, so a snapshot that mixes two publications is

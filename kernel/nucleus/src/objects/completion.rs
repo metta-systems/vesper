@@ -98,7 +98,7 @@ pub struct PendingInvocation {
     /// small enough to scan.
     deadline_ticks: Option<u64>,
     /// The logical core whose timer counts the deadline: the core of the
-    /// waiting Thread's Scheduler (SMP C7(a)).
+    /// waiting Thread's Scheduler (SMP-20).
     deadline_core: usize,
 }
 

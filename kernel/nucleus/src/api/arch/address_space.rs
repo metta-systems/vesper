@@ -459,7 +459,7 @@ fn retire<A: ArchObjects>(
     }
 
     // No other core may still hold it before its ASID goes back to the pool
-    // (SMP C8.1(a)): refused while one of its Threads runs elsewhere; the
+    // (SMP-23): refused while one of its Threads runs elsewhere; the
     // call runs again until idle cores holding it have let go of it.
     if !nucleus.quiesce_address_space(as_id)? {
         return Ok(InvokeOutcome::Retry);

@@ -1,139 +1,224 @@
 # SMP design
 
-Status: nothing is implemented. This document holds the multicore rules (below) and their
-mechanism; the capabilities contract links here for them. Open questions are in
-[smp-decisions.md](smp-decisions.md), the work in
-[smp-implementation-plan.md](smp-implementation-plan.md).
+The multicore rules and their mechanism; the capabilities contract links here for
+them. The numbered sections under Decisions are the maintainer's; the sections
+after them describe the mechanism. Open questions and future work are in
+[smp-decisions.md](smp-decisions.md), open tasks in
+[smp-implementation-plan.md](smp-implementation-plan.md), finished ones in
+[smp-completed.md](smp-completed.md).
 
 ## Decisions
 
-All by the maintainer, 2026-11-25.
+By the maintainer, 2026-11-25 unless dated otherwise.
 
-- **Bring-up (C1(a)).** Kickstart starts the secondary cores at EL2, just before its own
-  drop to EL1; they enter the nucleus at EL1 and idle until they have work. The nucleus
-  has no EL2 code and no CPU-control kind.
-- **Start-method components (C1).** The SMP operations have several implementations, two
-  now (spin table for the Pi 3 and Pi 4, PSCI for the Pi 5), more later. Each is a
-  position-independent component behind one operation table, like the interrupt
-  controllers: Kickstart picks the one the device tree's `enable-method` names, once at
-  boot, and installs only that one (see [start-method components](#start-method-components)).
-- **Kickstart only (C1.1(a)).** Only Kickstart uses the component, to start the cores;
-  its memory is reclaimed with Kickstart's. The nucleus gets a table when a later
-  operation (core off, suspend, PSCI system off or reset) needs one.
-- **Concurrency (C2(c)).** One kernel lock now: a ticket spinlock taken on every kernel
-  entry, with per-core state outside it. No core waits for another while holding it.
-  Finer locking is a later, measured pass.
-- **Per-core record (C3(a)).** Kickstart carves one record and one trap stack per core
-  from accounted memory, sized from the device tree's `/cpus`; the record's address is in
-  `TPIDR_EL1`.
-- **CPU numbering (C9(a)).** A CPU is named by its logical index `0..n-1` in the order of
-  the `/cpus` nodes, whatever index the boot core has. This index is the `Dispatch` `x6`
-  CPU, the Thread record's `cpu` and a Scheduler's core.
-- **Schedulers and cores (C4(c)).** Each core has its own root Scheduler, root dispatcher
-  and boot Time. A Thread runs only on the core of its Scheduler and moves to another
-  core's Scheduler by a cross-core Thread move. `Scheduler.replace` and non-blocking
-  dispatch stay parked in [scheduling-decisions.md](scheduling-decisions.md).
-- **Scheduler core (C4.1(a)).** A Scheduler has a core field set once: Kickstart sets it
-  for the root Schedulers, and a child Scheduler takes its parent's core at `Adopt`.
-- **Bound Time on a move (C4.2(a), amended by C4.2.1(a)).** A cross-core move rebinds
-  the Thread, in the same call, to a Time of the destination core. The old Time stays
-  with the source Scheduler.
-- **Budget left on a move (C4.2.1(a), 2026-11-27).** The old Time need not be empty: it
-  keeps whatever budget is left and stays with the source Scheduler, no longer bound, so
-  the source can Merge or Transfer it afterwards. No budget crosses cores.
-- **Move operation (C4.3(a)).** `Scheduler.MoveThread` carries the cross-core move: besides
-  a Scheduler and its direct child, it moves a Thread between Schedulers of different
-  cores, taking the destination Time key, with `WRITE` on both Schedulers, the Thread and
-  the destination Time.
-- **Who moves a Thread across cores (C4.3.1(a), 2026-11-27).** The cross-core move is
-  invoked on the Scheduler that owns the Thread, and the destination may be any Scheduler
-  of another core: the owner sends, the destination cannot pull. Pulling (work stealing)
-  is [future work](smp-decisions.md#future-work).
-- **Scheduler queues (maintainer, 2026-11-27).** The root scheduler's run queues are its
-  own: it carves the queues it carved for one core once per core, owns them, and the
-  kernel knows nothing of them.
-- **Kernel run state per core (maintainer, 2026-11-27, (c)).** The kernel's queue of
-  dispatchers made runnable ahead of what runs (`activations`) is split per core: fixed
-  per-core lists in the `Nucleus`, a Scheduler's dispatcher on its core's list, which
-  another core may push onto under the kernel lock before it sends `IPI_RESCHEDULE`. The
-  table of armed `ArmTimer` deadlines stays one table, each entry tagged with its
-  Scheduler's core; each core programs its own timer from its own entries.
-- **Cross-core activation (maintainer, 2026-11-27, (b)).** Cores stay loosely coupled, so
-  that the kernel lock can later be split or removed: a core never writes another core's
-  `CoreState`. An activation of another core's dispatcher completes its parked `Dispatch`
-  (shared object state), queues the dispatcher on that core's list and sends it
-  `IPI_RESCHEDULE`; the target core brings its own `dispatched` up to date when it takes
-  the IPI.
-- **Root dispatcher layout (maintainer, 2026-11-27).** One root dispatcher component, one
-  AddressSpace, with one Thread per core. Each Thread works its own core's area of the
-  scheduler's memory; operations across cores (moving a Thread to another core, pinning
-  it) are done cooperatively inside that AddressSpace.
-- **Placement (C5(b)).** A pinned component runs on its core; an unpinned one is placed by
-  dispatcher policy at run time.
-- **Pin declaration (C5.1(c)).** A component declares its core next to its priority (a
-  byte in `driver_threads!` entries and an `entry_cpu!`-style section for the first
-  Thread), and its manifest entry may override it. Kickstart hands the result to the
-  dispatchers like `DispatchInit::priorities`.
-- **No default pin (C5.2(b)).** Components are not pinned to the boot core by default,
-  so whatever breaks on several cores shows up and is fixed.
-- **Deadlines (C7(a)).** Each core has its own deadline queue: wait timeouts and
-  dispatcher timers are armed on the core of the Scheduler that owns the waiting Thread
-  or the dispatcher.
-- **Device interrupts (C6: (a) now, (b) later).** Every device line goes to the boot
-  core; a Notification or EventCount whose waiter is on another core sends that core an
-  inter-processor interrupt. Routing a line to its receiver's core comes later. The
-  device lines reach the boot core today: the GIC component targets every SPI at the CPU
-  interface of the core running its `init` (the boot core, at the platform install), the
-  BCM2836 component routes the cascaded block to that core, and a secondary unmasks only
-  its IPI line. The IPI to a waiter on another core is built with the Scheduler's core
-  field, in Phase 11 of
-  [scheduling-implementation-plan.md](scheduling-implementation-plan.md) (maintainer,
-  2026-11-26): before it, every waiter is on the boot core.
-- **Retiring what runs elsewhere (C8: (a) now, (b) later).** Retiring a Thread, or an
-  AddressSpace current on other cores, stays one synchronous call: the retiring core
-  marks the object dying, interrupts the cores using it, releases the kernel lock until
-  each has switched away and acknowledged, then completes. Asynchronous retirement with
-  quiescence detection comes later. It is built in Phase 11 of
-  [scheduling-implementation-plan.md](scheduling-implementation-plan.md), once Threads
-  run on other cores (maintainer, 2026-11-26): before that nothing runs, and no
-  AddressSpace is current, anywhere but the boot core.
-- **An AddressSpace in use elsewhere (C8.1(a), 2026-11-27).** `AddressSpace.Retire`
-  fails with `InvalidOperation` while one of its Threads runs on another core: the
-  maintainer's words, "it's up to the userspace policy to schedule retirement at the
-  correct time". A core that only still holds it in `TTBR0_EL1` (idle after one of its
-  Threads) gets a Stop, turns TTBR0 walks off and lets go of it; the call is retried
-  until no core holds it, then releases the ASID.
-- **Page tables named elsewhere (C8.2(a), 2026-11-27).** `PageTable.Unmap` of a root
-  does the same check and Stop, so after it no core's `TTBR0_EL1` names the root.
-- **Suites on a secondary core (maintainer, 2026-11-27).** The preempt, sync and ppc
-  suites also run whole on core 1, unchanged: the test kernel hands its suite to a Thread
-  of core 1's root Scheduler, the test dispatcher bound there, and the boot Thread parks
-  on core 0, so every check keeps its single-core meaning ((a)). Running the driver and
-  the Threads under test on different cores is later work, suite by suite, with SMP5.
-  Each runs on QEMU `raspi3b` and `raspi4b` ((a)).
-- **Bring-up order (C10(a)).** QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3 and Pi 5
-  boards.
-- **Record totals per core (C11(a), 2026-11-26).** Each core's root Scheduler record
-  carries that core's own nucleus totals (`interrupt_ns`, `idle_ns`, `thread_switches`,
-  `fp_thread_switches`, `fp_entry_toggles`), written only by that core. A whole-machine
-  report is the client's own sum or average over the per-core reports; the nucleus keeps
-  no machine-wide total.
-- **Secondary EL1 stack (C12(a), 2026-11-26).** A secondary core enters EL1h on its own
-  trap stack (`SP_EL1`) with no execution stack: `el_switch` takes the EL1 mode from its
-  caller (EL1t on `SP_EL0` for the boot core, EL1h for a secondary). Until it enters its first
-  Thread its code runs as the nucleus's idle path does, and no other stack is carved for it.
-- **No multicore kernel state (C13(a), 2026-11-26).** SMP keeps no kernel lifecycle
-  state: what multicore depends on is the kernel lock (SMP2). `libkernel-state` is only
-  the init-phase flag `InitStateLock::write` checks (maintainer, 2026-11-26: the
-  `SingleCoreMain`/`MultiCoreMain` state machine, which nothing moved, is removed).
+### SMP-1: bring-up at EL2 by Kickstart
 
-## 1. What exists today
+Kickstart starts the secondary cores at EL2, just before its own drop to EL1; they
+enter the nucleus at EL1 and idle until they have work. The nucleus has no EL2
+code and no CPU-control kind.
+
+### SMP-2: start-method components
+
+The SMP operations have several implementations, two now (spin table for the Pi 3
+and Pi 4, PSCI for the Pi 5), more later. Each is a position-independent
+component behind one operation table, like the interrupt controllers: Kickstart
+picks the one the device tree's `enable-method` names, once at boot, and installs
+only that one (see [start-method components](#start-method-components)).
+
+### SMP-3: only Kickstart uses the start method
+
+Only Kickstart uses the component, to start the cores; its memory is reclaimed
+with Kickstart's. The nucleus gets a table when a later operation (core off,
+suspend, PSCI system off or reset) needs one.
+
+### SMP-4: one kernel lock
+
+One kernel lock now: a ticket spinlock taken on every kernel entry, with per-core
+state outside it. No core waits for another while holding it. Finer locking is a
+later, measured pass (N-SMP-2).
+
+### SMP-5: per-core record
+
+Kickstart carves one record and one trap stack per core from accounted memory,
+sized from the device tree's `/cpus`; the record's address is in `TPIDR_EL1`.
+
+### SMP-6: CPU numbering
+
+A CPU is named by its logical index `0..n-1` in the order of the `/cpus` nodes,
+whatever index the boot core has. This index is the `Dispatch` `x6` CPU, the
+Thread record's `cpu` and a Scheduler's core.
+
+### SMP-7: Schedulers and cores
+
+Each core has its own root Scheduler, root dispatcher and boot Time. A Thread
+runs only on the core of its Scheduler and moves to another core's Scheduler by a
+cross-core Thread move. `Scheduler.replace` and non-blocking dispatch stay parked
+in [scheduling-decisions.md](scheduling-decisions.md).
+
+### SMP-8: a Scheduler's core
+
+A Scheduler has a core field set once: Kickstart sets it for the root
+Schedulers, and a child Scheduler takes its parent's core at `Adopt`.
+
+### SMP-9: the bound Time on a move
+
+A cross-core move rebinds the Thread, in the same call, to a Time of the
+destination core. The old Time stays with the source Scheduler (amended by
+SMP-10).
+
+### SMP-10: budget left on a move
+
+2026-11-27. The old Time need not be empty: it keeps whatever budget is left and
+stays with the source Scheduler, no longer bound, so the source can Merge or
+Transfer it afterwards. No budget crosses cores.
+
+### SMP-11: the move operation
+
+`Scheduler.MoveThread` carries the cross-core move: besides a Scheduler and its
+direct child, it moves a Thread between Schedulers of different cores, taking the
+destination Time key, with `WRITE` on both Schedulers, the Thread and the
+destination Time.
+
+### SMP-12: the owner moves a Thread across cores
+
+2026-11-27. The cross-core move is invoked on the Scheduler that owns the Thread,
+and the destination may be any Scheduler of another core: the owner sends, the
+destination cannot pull. Pulling (work stealing) is future work (N-SMP-1).
+
+### SMP-13: scheduler queues are the root scheduler's
+
+2026-11-27. The root scheduler's run queues are its own: it carves the queues it
+carved for one core once per core, owns them, and the kernel knows nothing of
+them.
+
+### SMP-14: kernel run state per core
+
+2026-11-27. The kernel's queue of dispatchers made runnable ahead of what runs
+(`activations`) is split per core: fixed per-core lists in the `Nucleus`, a
+Scheduler's dispatcher on its core's list, which another core may push onto under
+the kernel lock before it sends `IPI_RESCHEDULE`. The table of armed `ArmTimer`
+deadlines stays one table, each entry tagged with its Scheduler's core; each core
+programs its own timer from its own entries.
+
+### SMP-15: cross-core activation
+
+2026-11-27. Cores stay loosely coupled, so that the kernel lock can later be
+split or removed: a core never writes another core's `CoreState`. An activation
+of another core's dispatcher completes its parked `Dispatch` (shared object
+state), queues the dispatcher on that core's list and sends it `IPI_RESCHEDULE`;
+the target core brings its own `dispatched` up to date when it takes the IPI.
+
+### SMP-16: root dispatcher layout
+
+2026-11-27. One root dispatcher component, one AddressSpace, with one Thread per
+core. Each Thread works its own core's area of the scheduler's memory; operations
+across cores (moving a Thread to another core, pinning it) are done cooperatively
+inside that AddressSpace.
+
+### SMP-17: placement
+
+A pinned component runs on its core; an unpinned one is placed by dispatcher
+policy at run time.
+
+### SMP-18: pin declaration
+
+A component declares its core next to its priority (a byte in `driver_threads!`
+entries and an `entry_cpu!`-style section for the first Thread), and its manifest
+entry may override it. Kickstart hands the result to the dispatchers like
+`DispatchInit::priorities`.
+
+### SMP-19: no default pin
+
+Components are not pinned to the boot core by default, so whatever breaks on
+several cores shows up and is fixed.
+
+### SMP-20: deadlines per core
+
+Each core has its own deadline queue: wait timeouts and dispatcher timers are
+armed on the core of the Scheduler that owns the waiting Thread or the
+dispatcher.
+
+### SMP-21: device interrupts go to the boot core
+
+Every device line goes to the boot core; a Notification or EventCount whose
+waiter is on another core sends that core an inter-processor interrupt. Routing a
+line to its receiver's core comes later (N-SMP-3). The device lines reach the boot
+core today: the GIC component targets every SPI at the CPU interface of the core
+running its `init` (the boot core, at the platform install), the BCM2836
+component routes the cascaded block to that core, and a secondary unmasks only
+its IPI line. The IPI to a waiter on another core is built with the Scheduler's
+core field (2026-11-26).
+
+### SMP-22: retiring what runs elsewhere is synchronous
+
+Retiring a Thread, or an AddressSpace current on other cores, stays one
+synchronous call: the retiring core marks the object dying, interrupts the cores
+using it, releases the kernel lock until each has switched away and acknowledged,
+then completes. Asynchronous retirement with quiescence detection comes later
+(N-SMP-4). It is built once Threads run on other cores (2026-11-26).
+
+### SMP-23: an AddressSpace in use elsewhere
+
+2026-11-27. `AddressSpace.Retire` fails with `InvalidOperation` while one of its
+Threads runs on another core: the maintainer's words, "it's up to the userspace
+policy to schedule retirement at the correct time". A core that only still holds
+it in `TTBR0_EL1` (idle after one of its Threads) gets a Stop, turns TTBR0 walks
+off and lets go of it; the call is retried until no core holds it, then releases
+the ASID.
+
+### SMP-24: page tables named elsewhere
+
+2026-11-27. `PageTable.Unmap` of a root does the same check and Stop, so after it
+no core's `TTBR0_EL1` names the root.
+
+### SMP-25: suites on a secondary core
+
+2026-11-27. The preempt, sync and ppc suites also run whole on core 1, unchanged:
+the test kernel hands its suite to a Thread of core 1's root Scheduler, the test
+dispatcher bound there, and the boot Thread parks on core 0, so every check keeps
+its single-core meaning. Running the driver and the Threads under test on
+different cores is later work, suite by suite, with P-SMP-5. Each runs on QEMU
+`raspi3b` and `raspi4b`.
+
+### SMP-26: bring-up order
+
+QEMU `raspi3b` and `raspi4b`, then the Pi 4, Pi 3 and Pi 5 boards.
+
+### SMP-27: record totals per core
+
+2026-11-26. Each core's root Scheduler record carries that core's own nucleus
+totals (`interrupt_ns`, `idle_ns`, `thread_switches`, `fp_thread_switches`,
+`fp_entry_toggles`), written only by that core. A whole-machine report is the
+client's own sum or average over the per-core reports; the nucleus keeps no
+machine-wide total.
+
+### SMP-28: a secondary's EL1 stack
+
+2026-11-26. A secondary core enters EL1h on its own trap stack (`SP_EL1`) with no
+execution stack: `el_switch` takes the EL1 mode from its caller (EL1t on `SP_EL0`
+for the boot core, EL1h for a secondary). Until it enters its first Thread its
+code runs as the nucleus's idle path does, and no other stack is carved for it.
+
+### SMP-29: no multicore kernel state
+
+2026-11-26. SMP keeps no kernel lifecycle state: what multicore depends on is the
+kernel lock (SMP-4). `libkernel-state` is only the init-phase flag
+`InitStateLock::write` checks; the `SingleCoreMain`/`MultiCoreMain` state machine,
+which nothing moved, is removed.
+
+### SMP-30: a refused start method means the boot core alone
+
+2026-11-26. A tree whose `/cpus` nodes disagree, a method no bundled component
+implements, more CPUs than the ABI describes or a configuration `init` refuses
+starts no secondary core, and Kickstart logs why.
+
+## What exists today
 
 | Area | Today | Where |
 |---|---|---|
 | Entry | Every core that reaches `_boot_cores` (and chainboot's `_start`) compares its full affinity (Aff3, Aff2..Aff0) with `BOOT_CORE_AFFINITY` (0); the others park on `wfe` forever | `libs/boot/src/arch/aarch64/boot.s`, `boot.rs`; `bin/chainboot/src/boot.s` |
 | Core id | `libcpu::smp::CoreAffinity` (the `MPIDR_EL1` affinity fields, in PSCI `CPU_ON` layout); no logical index yet | `libs/cpu/src/arch/aarch64/smp.rs` |
-| Kernel state | Only an init-phase flag per image, for `InitStateLock`; nothing ends the phase, and SMP keeps no lifecycle state (C13(a)) | `libs/kernel-state/src/lib.rs` |
+| Kernel state | Only an init-phase flag per image, for `InitStateLock`; nothing ends the phase, and SMP keeps no lifecycle state (SMP-29) | `libs/kernel-state/src/lib.rs` |
 | Kernel lock | `KERNEL_LOCK`, a ticket spinlock (`liblocking::TicketLock`) held by core index + 1: every kernel entry from a Thread (`current_el0_*`, the SVC path of `current_elx_synchronous`, `lower_aarch64_*`) and the idle-path interrupt take it once (`KernelLock::enter`) and release it on return; the idle loop releases it around `wfi`; each section on the `Nucleus` asserts this core holds it (`KernelLock::held`), and a core taking it again panics | `kernel/nucleus/src/main.rs`, `libs/locking/src/ticket.rs` |
 | Per-core state | In each core's `CoreRecord`: the scheduling state and totals (`CoreState`: `current_thread`, `current_since_ticks`, `dispatched`, `dispatch_next`, `preempt_requested`, `interrupt_ticks`, `idle_ticks`, `fp_totals`), which the `Nucleus` reaches through its `this_core` field (`ThisCore`, by `TPIDR_EL1`), under the kernel lock; and, touched by their own core without the lock, `idling`, the programmed timer deadline and the FP entry guard's exit flag and toggle count | `kernel/nucleus/src/objects/core_record.rs`, `nucleus.rs`, `main.rs`, `timer.rs`, `objects/arch/fp_unit.rs` |
 | Kernel stack | One 512 KiB trap stack per core in `SP_EL1`, mapped by Kickstart in slots after the nucleus's `__STACK_VIRT_BOTTOM` with guard pages; a per-core record (`nucleus::core_record`) in `TPIDR_EL1` on every core; the boot Thread runs EL1t on the init stack after the image, the secondaries EL1h on their trap stacks | `kernel/kickstart/src/cores.rs`, `paging.rs`, `el_switch.rs` |
@@ -150,7 +235,7 @@ All by the maintainer, 2026-11-25.
 | Reserved memory | Kickstart removes `/memreserve/` entries and the `no-map` nodes of `/reserved-memory` from the Untypeds | `kernel/kickstart/src/lib.rs`, `libdevicetree::DeviceTree::no_map_reserved_memory` |
 | QEMU | `raspi3b` and `raspi4b` always model four cores | `Justfile` |
 
-## 2. How the secondary cores are started
+## How the secondary cores are started
 
 The device trees in `targets/` name the method per CPU node:
 
@@ -230,10 +315,7 @@ Modelled on the interrupt-controller components (`libs/irqchip`, `drivers/irqchi
   - `cpu-start-psci` (`"psci"`): config holds the conduit from the `psci` node (`smc` or
     `hvc`); `start` issues `CPU_ON` with `context` in `x3`, which arrives in the
     secondary's `x0`, and maps PSCI errors to the status.
-- Refusing means running on the boot core alone (maintainer, 2026-11-26): a tree whose
-  `/cpus` nodes disagree, a method no bundled component implements, more CPUs than the
-  ABI describes or a configuration `init` refuses starts no secondary core, and Kickstart
-  logs why.
+- Refusing means running on the boot core alone (SMP-30), and Kickstart logs why.
 - Kickstart reads the `enable-method` of the `/cpus` nodes once, refuses a tree whose
   nodes disagree, relocates the matching component and calls it at EL2 (its MMU is off,
   so the component runs at its physical load address). The other implementations are
@@ -241,7 +323,7 @@ Modelled on the interrupt-controller components (`libs/irqchip`, `drivers/irqchi
 - The nucleus does not get the table; a later operation that needs one (core off,
   suspend) adds the hand-over then.
 
-## 3. What the nucleus needs
+## What the nucleus needs
 
 ### Per-core record
 
@@ -262,7 +344,7 @@ table), which also holds the per-core run state: one `activations` list per core
 one dispatcher-timer table whose entries carry their Scheduler's core, as wait timeouts
 in the pending records carry the core of the waiting Thread's Scheduler. The existing scheduler-record
 totals (`interrupt_ns`, `idle_ns` and the FP totals) become per-core fields, published in
-each core's root Scheduler record (C11(a)).
+each core's root Scheduler record (SMP-27).
 
 ### Kernel lock
 
@@ -400,7 +482,7 @@ sent `IPI_TIMER`, whose kernel exit programs its timer.
   at Thread entry, PPC Call and Return, and `Activate`), with `running` cleared as the
   Thread stops; the core's `CoreState::installed_address_space` names the one it holds.
   `AddressSpace.Retire` and a root `PageTable.Unmap` run `quiesce_address_space`:
-  `InvalidOperation` while it runs on another core (C8.1(a)), a Stop once to the other
+  `InvalidOperation` while it runs on another core (SMP-23), a Stop once to the other
   cores still holding it and `InvokeOutcome::Retry` until none does, then the ASID or
   root goes. An idle core taking Stop lets go of it and turns TTBR0 walks off
   (`ArchObjects::disable_translation_walks`); installing the next translation turns them
@@ -444,7 +526,7 @@ How it is done:
   the board UART its lines can interleave with a kernel line from another core, byte by
   byte (seen on the Pi 5 in `smp-test`).
 
-## 4. Scheduling
+## Scheduling
 
 The selected model already carries a CPU: dispatch names one, a Time belongs to one
 core, the record has a `cpu` field. Each core gets its own root Scheduler and root
@@ -456,7 +538,7 @@ centralized dispatcher
 placing Threads on remote cores would need `replace` and non-blocking dispatch, which
 stay parked.
 
-## 5. Userspace
+## Userspace
 
 Today every component runs on one core, so any shared-memory protocol between Threads
 was only ever exercised with one Thread running at a time. Before a component's Threads
@@ -466,7 +548,7 @@ compositor's surfaces). A pinned component stays on its core; an unpinned one go
 the dispatchers place it. Nothing is pinned by default, so such ordering bugs surface on
 the boards and are fixed where they show up.
 
-## 6. Validation
+## Validation
 
 - QEMU `raspi3b` (spin table, BCM2836 mailboxes) and `raspi4b` (spin table, GIC SGIs)
   cover bring-up and IPIs. Neither models caches, so coherency and `SMPEN` need boards.

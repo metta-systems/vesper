@@ -58,7 +58,7 @@ use {
 // TODO: Split this into read-only part, that does not need locks, per-cpu mutable part that does not need locks,
 // TODO: Shared atomic counters that do not need locks and shared mutable collections that DO need locks (but should be minority)
 
-/// The Great Kernel Lock (SMP C2(c)). The boot-carved [`Nucleus`] is accessed under it.
+/// The Great Kernel Lock (SMP-4). The boot-carved [`Nucleus`] is accessed under it.
 static KERNEL_LOCK: KernelLock = KernelLock(TicketLock::new());
 
 /// The one kernel lock: a ticket spinlock every kernel entry from a Thread takes on
@@ -142,7 +142,7 @@ fn take_ipis() -> u32 {
 }
 
 /// The kernel-lock holder id of the core that panicked first, or 0. The other cores
-/// park when they next look: in their idle loops, until the Halt IPI (SMP3) stops them
+/// park when they next look: in their idle loops, until the Halt IPI (P-SMP-3) stops them
 /// wherever they are.
 static PANICKED_CORE: AtomicU32 = AtomicU32::new(0);
 
@@ -305,7 +305,7 @@ core::arch::global_asm!(
     main = sym secondary_main,
 );
 
-/// A secondary core in the nucleus (SMP4 stage 4), on its trap stack below `frame`, the
+/// A secondary core in the nucleus (P-SMP-4), on its trap stack below `frame`, the
 /// exception frame the entry stub reserved at its top.
 ///
 /// Until the boot core installs the interrupt controller, the core waits on `wfe` (the
@@ -979,7 +979,7 @@ fn handle_irq(frame: &mut ExceptionContext) {
         }
         // At a Stop an idle core lets go of the AddressSpace it still holds,
         // with TTBR0 walks off before the lock is released: another core is
-        // about to release its ASID or root (SMP C8.1(a), C8.2(a)).
+        // about to release its ASID or root (SMP-23, SMP-24).
         if stop && nucleus.let_go_of_address_space() {
             ArchObjectsImpl::disable_translation_walks();
         }

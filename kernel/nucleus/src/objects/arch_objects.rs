@@ -56,7 +56,7 @@ impl FrameSize {
 /// record, and generation.
 pub type AddressSpaceId = CarvedId;
 
-/// Which cores use an `AddressSpace` (SMP C8): bit `n` is logical core `n`,
+/// Which cores use an `AddressSpace` (SMP-22): bit `n` is logical core `n`,
 /// and each core changes only its own bits, under the kernel lock.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CoreUse {
@@ -285,7 +285,7 @@ pub trait ArchObjects: Sized + 'static {
     fn install_translation_context(root_paddr: u64, asid: u16, fp_simd: bool);
 
     /// Stop translation walks through the user half on this core: it holds
-    /// no `AddressSpace` (SMP C8). The next installed translation turns them
+    /// no `AddressSpace` (SMP-22). The next installed translation turns them
     /// on again.
     fn disable_translation_walks();
 
