@@ -236,7 +236,7 @@ version = "0.0.1"
 #========
 # target
 #========
-arm-gic = { version = "0.10", default-features = false }
+arm-gic = { version = "0.11", default-features = false }
 aarch64-cpu = { version = "12.0" }
 arbitrary-int = { version = "2.2", default-features = false }
 bitbybit  = { version = "2.0" }
@@ -389,13 +389,13 @@ goblin = { version = "0.10" }
 minijinja = { version = "3" }
 # Meddle IDL front end and Rust emitter (libs/meddle)
 ariadne = { version = "0.6" }
-chumsky = { version = "0.13" }
+chumsky = { version = "0.14" }
 logos = { version = "0.16" }
 prettyplease = { version = "0.3" }
 proc-macro2 = { version = "1.0" }
 quote = { version = "1.0" }
 syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"] }
-toml = { version = "1.1" }
+toml = { version = "1.2" }
 #=======
 # mixed
 #=======
