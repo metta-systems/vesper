@@ -189,8 +189,8 @@ Slots past a count are zero, and a consumer refuses a descriptor that breaks any
 these rules. The layout and a state tracker (key and button bitmaps, absolute axes,
 the stale mark after `Dropped`, release on `DeviceRemoved`) are in `libs/input-event`
 (`vesper-input-event`). A producer exposes the descriptor and the state snapshot as
-Calls on its interface, `input_v1`, which grows `descriptor` and `snapshot` functions
-in USB4 ([usb-design.md](usb-design.md)).
+Calls on its interface, `input_v1`, through its `descriptor` and `snapshot`
+functions ([usb-design.md](usb-design.md)).
 
 ## Behaviour rules
 

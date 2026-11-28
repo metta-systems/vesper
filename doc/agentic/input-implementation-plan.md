@@ -34,7 +34,7 @@ need a producer only for hardware checks.
   same byte channel as `libs/serial-channel`.
 - Host exit: tests map generated `Key` sequences to the expected byte streams.
 - Hardware exit (the shell reads keystrokes from a real keyboard) needs a working USB
-  producer, so it is checked after USB4 in
+  producer, so it is checked after P-USB-4 in
   [usb-implementation-plan.md](usb-implementation-plan.md).
 
 ## P-INPUT-4: extended devices
@@ -47,7 +47,7 @@ need a producer only for hardware checks.
 
 - Boot-report decoding into events. `vesper-usb-protocol` already
   provides `for_each_change` and mouse parsing. Converting them to records is producer
-  work in [usb-implementation-plan.md](usb-implementation-plan.md) USB4.
+  work, done in the `hid` component (P-USB-3 in [usb-completed.md](usb-completed.md)).
 - The `input_v1` interface edit. That interface is owned by the USB plan.
 - The router stage: the compositor routes input (INPUT-9).
   Pointer acceleration and focus belong to the compositor plan.
@@ -56,4 +56,4 @@ need a producer only for hardware checks.
 
 - Host tests for each library (`libs/input-event`, `libs/keymap`).
 - Replay property tests for overflow and resync (P-INPUT-2).
-- Hardware check on RPi3 at P-INPUT-3, after USB4.
+- Hardware check on RPi3 at P-INPUT-3, after P-USB-4.

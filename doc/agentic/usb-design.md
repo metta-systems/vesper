@@ -1,13 +1,92 @@
 # USB stack design (Raspberry Pi 3, HID first)
 
-Status: USB0–USB2 done (see [usb-completed.md](usb-completed.md)); USB3 onward is open
-in [usb-implementation-plan.md](usb-implementation-plan.md). Interfaces are
-prototypes and are edited in place. Open decisions are in
-[usb-decisions.md](usb-decisions.md) and are not assumed.
+The numbered sections are the maintainer's decisions; the sections after them
+describe the mechanism. Open questions are in [usb-decisions.md](usb-decisions.md)
+and are not assumed, open tasks in
+[usb-implementation-plan.md](usb-implementation-plan.md), finished ones in
+[usb-completed.md](usb-completed.md). Interfaces are prototypes and are edited in
+place.
+
+## USB-1: DMA through a driver-owned page
+
+Answered while the DWC2 root port was built. The controller does DMA through a
+page of the driver's own memory, cleaned and invalidated around each transfer;
+slave mode is not used. The same applies to xHCI rings.
+
+## USB-2: the hub driver is inside `usb-core`
+
+2026-10-18. The hub driver is part of `usb-core`, not a separate component. Its
+pure logic (hub descriptor, class requests, port status, per-port state
+machine) goes in a `hub` module of `vesper-usb-protocol`, so it stays
+host-testable and could be extracted later.
+
+## USB-3: a pipe is a set of Invocation keys
+
+2026-10-18 and 2026-10-19. A pipe is a set of Invocation keys issued by the
+host controller, not a number checked against caller identity. `pipe_v1` is a
+`local` interface of its own, one key per function, all badged with the pipe's
+handle. Holding a key is the right to use the pipe.
+
+## USB-4: `hid` opens its own interrupt pipe
+
+2026-10-19. `hid` imports `usb_hcd_v1` as well as `usb_v1` and opens its own
+interrupt pipe: `usb_v1.interrupt_pipe` tells it the device address, endpoint,
+speed, interval, packet size and route, so the reports arrive on its own
+channel.
+
+## USB-5: one interrupt-IN channel per client
+
+2026-10-19. Kickstart provisions the channel, from a declaration in the
+interface, once for each client of the controller (as it does for the control
+data area). The channel is per client, not per pipe, and each packet's value
+word carries the pipe's handle. While no empty buffer is posted, the
+controller does not re-arm the pipe.
+
+## USB-6: `claim_interface` does not wait
+
+2026-10-19. `usb_v1.claim_interface` raises `not_ready` while no matching
+interface is attached, and the claimant retries.
+
+## USB-7: the xHCI driver sends the VL805 notify
+
+2026-11-15, as recommended. The xHCI driver itself sends the firmware's VL805
+notify before it touches the controller, through `mailbox_v1.property` with the
+tag allowed. It builds the PCI address from the function `pci_v1.claim`
+reports.
+
+## USB-8: the controller assigns addresses
+
+2026-11-15, as recommended; interface answered 2026-11-17. `usb_hcd_v1` is
+edited in place for device addressing: the controller assigns addresses
+(`address_device`: xHCI Enable Slot and Address Device, DWC2 `SET_ADDRESS`), a
+hub is marked as one so xHCI can fill its slot's hub fields, `usb-core` stops
+sending `SET_ADDRESS`, and `controller_failed.step` is worded per controller. A
+device that does not take its address raises `transfer_failed { status }`,
+distinct from `no_device` for an empty root port (maintainer review,
+2026-11-17).
+
+## USB-9: xHCI in three slices
+
+2026-11-15, as recommended. (1) `drivers/usb-hcd-xhci` brings the controller up
+(notify, halt and reset, DCBAA and scratchpad, command ring, one event ring on
+MSI through `pci_v1`, a No Op command round trip) and serves `port_status` and
+`reset_port` on the USB 2 root ports, in board-test on the Raspberry Pi 4 node
+in place of `pci-probe`; (2) USB-8 and control transfers, so `usb-core`
+enumerates the hub; (3) interrupt-IN, so `usb-hid` gets a keyboard.
+
+## USB-10: USB 2 root ports first
+
+2026-11-15, as recommended. The xHCI driver serves the USB 2 root ports at
+first; SuperSpeed ports and RP1's DWC3 controllers come later.
+
+## USB-11: fallback providers in `uses`
+
+2026-11-17. A `uses` line may name fallback providers after `or`; Kickstart
+takes the first that finds a loaded exporter.
 
 ## Implemented facts
 
-- DMA strategy: DMA through a driver-owned page, cleaned and invalidated around
+- DMA strategy (USB-1): DMA through a driver-owned page, cleaned and invalidated around
   each transfer. Slave mode is not used, because QEMU's raspi3b DWC2 model does not
   implement slave-mode FIFO writes: OUT and SETUP data are fetched from `HCDMA`, and
   FIFO reads return 0.
@@ -126,10 +205,7 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   only.
 - `hid` claims boot-protocol keyboards and mice, posts empty IO_Recs for
   interrupt-IN, and decodes boot reports with a pure library. It imports
-  `usb_hcd_v1` as well, because it opens its own interrupt pipe (maintainer
-  decision, 2026-10-19): `usb_v1.interrupt_pipe` tells it the device address,
-  endpoint, speed, interval, packet size and route, so the reports arrive on its
-  own channel. The controller opens a pipe for any importer to any endpoint, so
+  `usb_hcd_v1` as well, because it opens its own interrupt pipe (USB-4). The controller opens a pipe for any importer to any endpoint, so
   a claim is a convention until the controller can check one.
 
 ## Control and data planes
@@ -140,11 +216,7 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   the HCD fills them on completion and advances the client's EventCount. With no
   empty IO_Rec posted, the HCD does not schedule the IN transfer, so backpressure
   is natural. The drop-and-count rule of `io-channel-design` remains a safety net.
-- Interrupt-IN channel (maintainer decisions, 2026-10-19): Kickstart provisions the
-  channel, from a declaration in the interface, once for each client of the controller
-  (as it does for the control data area); the channel is per client, not per pipe, and
-  each packet's value word carries the pipe's handle; while no empty buffer is posted
-  the controller does not re-arm the pipe. A more universal way to provision shared
+- Interrupt-IN channel: one per client of the controller (USB-5). A more universal way to provision shared
   channels is future work (see the Future work section of
   [capabilities-decisions.md](capabilities-decisions.md)).
 - CPU time for the Threads that serve data pipes needs no scheduler of its own for HID
@@ -156,22 +228,17 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
 
 ## Interfaces (drafted)
 
-- **Hub location (maintainer decision, 2026-10-18).** The hub driver is inside `usb-core`,
-  not a separate component. Its pure logic (hub descriptor, class requests, port
-  status, per-port state machine) goes in a `hub` module of `vesper-usb-protocol`,
-  so it stays host-testable and could be extracted later.
-- **Pipe authority (maintainer decisions, 2026-10-18 and 2026-10-19).** A pipe is a set of
-  Invocation keys issued by the host controller, not a number checked against caller
-  identity. `pipe_v1` is a `local` interface of its own, one key per function, all
-  badged with the pipe's handle; `usb_hcd_v1.open_pipe` installs the keys in a key table
-  the caller lends and returns their values in the data area. Holding a key is the right
-  to use the pipe, so `usb-core` can hand a pipe to `hid` by installing a narrowed copy in
-  `hid`'s table. The mechanism is in the
+- **Hub location (USB-2).** The hub driver is the `hub` module of
+  `vesper-usb-protocol`, run by `usb-core`.
+- **Pipe authority (USB-3).** `usb_hcd_v1.open_pipe` installs the pipe's keys in
+  a key table the caller lends and returns their values in the data area.
+  Because holding a key is the right to use the pipe, `usb-core` can hand a pipe
+  to `hid` by installing a narrowed copy in `hid`'s table. The mechanism is in the
   [components design](components-design.md#component-interfaces-and-imports).
 - `drivers/usb-hcd-dwc2/interfaces/usb_hcd_v1.if`: `reset_port`, `port_status`,
   `address_device`, `release_device`, `mark_hub`, `open_pipe`, `trace`. Parameters
-  are controller-neutral. The controller assigns addresses (X2a, interface answered
-  2026-11-17): `address_device(hub_address, port, speed)` names where the device is
+  are controller-neutral. The controller assigns addresses (USB-8):
+  `address_device(hub_address, port, speed)` names where the device is
   (`hub_address` 0 for a root port) and the controller works out the route from the
   hub's own record; `release_device(address)` frees the address (xHCI Disable
   Slot) and closes the device's pipes, called on teardown and after a failed
@@ -180,15 +247,14 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   nothing); xHCI refuses to address a device behind a hub not yet marked. A device
   that does not take its address raises `transfer_failed { status }` (DWC2 channel
   status, xHCI completion code), distinct from `no_device` for an empty root port
-  (maintainer review, 2026-11-17). `open_pipe` takes the first slot of the lent table, the device address,
+  (USB-8). `open_pipe` takes the first slot of the lent table, the device address,
   the endpoint address and the speed, and installs the keys of `pipe_v1`.
 - `drivers/usb-hcd-dwc2/interfaces/pipe_v1.if`: `configure`, `set_route`, `close_pipe`, `clear_halt`,
   `control`, the functions of one open pipe; the split-transaction route is set
   separately with `set_route`, which xHCI accepts and ignores (its slot carries the
   translator).
 - `drivers/usb/interfaces/usb_v1.if`: `claim_interface` (raises `not_ready` while no
-  matching interface is attached, so the claimant retries; maintainer decision,
-  2026-10-19), `release`, `interrupt_pipe` (the parameters for `open_pipe`), `control`.
+  matching interface is attached, so the claimant retries; USB-6), `release`, `interrupt_pipe` (the parameters for `open_pipe`), `control`.
 - `drivers/usb-hid/interfaces/input_v1.if`: `descriptor` and `snapshot` (the snapshot is
   the records that rebuild a device's state, ending with a `Sync`; no `set_leds`, output
   waits for the transmit channel). Events travel over an io-channel (`channel 1`) whose
@@ -197,9 +263,8 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
 - `imports.if` files: `usb-core` uses `usb_hcd_v1` `via device compatible
   "brcm,bcm2708-usb" or component xhci`: the DWC2 node on the Raspberry Pi 3, else the
   manifest's `xhci` driver on the Raspberry Pi 4, whose VL805 node has no compatible
-  string (maintainer decision, 2026-11-17: a `uses` line may name fallback providers
-  after `or`, Kickstart takes the first that finds a loaded exporter). `usb-hid` is comment-only
-  until its device tree link is decided.
+  string (USB-11). `usb-hid` is comment-only until its device tree link is
+  decided (Q-USB-1).
 
 ## Constraints from Meddle
 
@@ -209,8 +274,7 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
 
 ## Open decisions
 
-Open decisions are in [usb-decisions.md](usb-decisions.md). The decisions answered
-during USB2 are recorded in the status section above.
+Open decisions are in [usb-decisions.md](usb-decisions.md).
 
 ## Platform facts
 
@@ -229,24 +293,7 @@ capped at the first 3 GB of RAM, so xHCI buffers must come from below that. The
 USB 2 ports sit behind a VIA hub (`2109:3431`) on the VL805's USB 2 root port, so
 a keyboard there goes through `usb-core`'s hub path, as on the RPi3.
 
-Maintainer decisions (2026-11-15, all as recommended):
-
-- **X1a:** the xHCI driver itself sends the firmware's VL805 notify before it
-  touches the controller, through `mailbox_v1.property` with the tag allowed.
-  It builds the PCI address from the function `pci_v1.claim` reports.
-- **X2a:** `usb_hcd_v1` is edited in place for device addressing: the controller
-  assigns addresses (`address_device`: xHCI Enable Slot and Address Device, DWC2
-  `SET_ADDRESS`), a hub is marked as one so xHCI can fill its slot's hub fields,
-  `usb-core` stops sending `SET_ADDRESS`, and `controller_failed.step` is worded
-  per controller.
-- **X3a:** slices: (1) `drivers/usb-hcd-xhci` brings the controller up (notify,
-  halt and reset, DCBAA and scratchpad, command ring, one event ring on MSI
-  through `pci_v1`, a No Op command round trip) and serves `port_status` and
-  `reset_port` on the USB 2 root ports, in board-test on the Raspberry Pi 4
-  node in place of `pci-probe`; (2) X2a and control transfers, so `usb-core`
-  enumerates the hub; (3) interrupt-IN, so `usb-hid` gets a keyboard.
-- **X4a:** USB 2 root ports only at first; SuperSpeed ports and RP1's DWC3
-  controllers later.
+The decisions for the xHCI driver are USB-7 to USB-10.
 
 Bring-up, in order:
 
@@ -296,8 +343,8 @@ buffers without a signal, so the service Thread looks at the channels every
 are recovered at once (Reset Endpoint, then Set TR Dequeue Pointer to the
 enqueue pointer, which never sits on the link TRB).
 
-Isochronous transfers can wait. The DMA strategy (answered in USB2, see the
-status section) also applies to xHCI rings.
+Isochronous transfers can wait. The DMA strategy (USB-1) also applies to xHCI
+rings.
 
 ## Prior art and candidate crates
 

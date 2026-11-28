@@ -6,10 +6,12 @@ holds only open work. A finished item leaves it as a one-line marker in
 [usb-completed.md](usb-completed.md). Mark an item `- [x]` only after the command
 listed under Verification has passed for it.
 
-Done: USB0 (design, interfaces), USB1 (protocol crate), USB2 (DWC2 root port and EP0), most of USB3 (the hub driver, nested hubs and `usb-core`).
-See [usb-completed.md](usb-completed.md).
+Done: P-USB-0 (design, interfaces), P-USB-1 (protocol crate), P-USB-2 (DWC2
+root port and EP0), P-USB-3 (the hub driver, nested hubs and `usb-core`),
+P-USB-6 (xHCI on the Raspberry Pi 4) and P-USB-7 (DWC2 follow-ups). See
+[usb-completed.md](usb-completed.md).
 
-## USB2 follow-ups
+## P-USB-8: DWC2 follow-ups, the rest
 
 - [ ] Serve bulk pipes (`pipe_v1.configure` already carries their kind and packet
   size). Control and interrupt-IN pipes are served, see [usb-completed.md](usb-completed.md).
@@ -17,10 +19,7 @@ See [usb-completed.md](usb-completed.md).
   model caches, and the bus-address alias from the node's `dma-ranges` is
   unchecked on silicon.
 
-## USB3: hub and downstream devices
-
-Done: the hub module, `usb-core` enumerating the root hub and the devices behind it, and
-the serial trace; see [usb-completed.md](usb-completed.md).
+## P-USB-9: hub and downstream devices, the rest
 
 - [ ] `Clear_TT_Buffer` to the hub after a failed split transaction, which can leave
   the translator's buffer busy (USB 2.0 §11.17.5).
@@ -52,11 +51,11 @@ the serial trace; see [usb-completed.md](usb-completed.md).
 - [ ] Bring `usb-core` and the controller into the Raspberry Pi 3 boot image
   (`kernel/kickstart/image.toml`) with the shell, which holds the serial channel the
   trace uses; only one program gets a serial channel today.
-- [ ] Verify on a real Raspberry Pi 3 once USB2 is validated there.
+- [ ] Verify on a real Raspberry Pi 3 once P-USB-8's DMA check has passed there.
 
-## USB4: HID input
+## P-USB-4: HID input
 
-Needs decision 1. The input event contract is decided ([input-design.md](input-design.md)); the record library is `libs/input-event`.
+Needs Q-USB-1. The input event contract is decided ([input-design.md](input-design.md)); the record library is `libs/input-event`.
 
 - [ ] Interrupt-IN on the Raspberry Pi 3 works through split polls (see
   [usb-completed.md](usb-completed.md)); still open: the periodic transmit FIFO
@@ -70,15 +69,15 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
   own control pipe, and the keyboard's real `max_packet0` for its setup requests (it
   uses 8).
 
-## USB5: keyboard behaviour
+## P-USB-5: keyboard behaviour
 
 - [ ] Typematic autorepeat in software.
 - [ ] LED output reports from events on the input transmit channel. Needs the
   transmit channel (no interim Call).
 
-## USB6: xHCI on the Raspberry Pi 4
+## P-USB-10: SuperSpeed and the Raspberry Pi 5
 
-Decisions X1a–X4a, see [RPi4 xHCI](usb-design.md#rpi4-xhci).
+Follows USB-10; the xHCI decisions are USB-7 to USB-10 ([usb-design.md](usb-design.md)).
 
 - [ ] SuperSpeed root ports, and RP1's DWC3 xHCI controllers on the Raspberry Pi 5.
 

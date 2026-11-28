@@ -7,7 +7,7 @@
 //! `usb_hcd_v1` import Kickstart wired along the controller's compatible
 //! string. It resets the root port, has the controller address the device
 //! behind it and enumerates it with `vesper_usb_protocol` over a control pipe
-//! (the work `usb-core` takes over in USB3), checks that the root device is a
+//! (the work `usb-core` does in the system image), checks that the root device is a
 //! hub, then checks the rules of addressing, pipes and control stages, and
 //! reports on the key usb-test installed
 //! (`driver_protocol::REPORT_SLOT`).

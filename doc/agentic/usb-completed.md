@@ -1,16 +1,16 @@
 # USB completed
 
-Short markers of what is done, grouped by plan phase. Each line says what exists and where it is exercised. Rationale and details are in the [design](usb-design.md); the history of how each piece landed is in version control.
+Short markers of what is done, grouped by plan section. Each line says what exists and where it is exercised. Rationale and details are in the [design](usb-design.md); the history of how each piece landed is in version control.
 
-## USB0: design and interfaces
+## P-USB-0: design and interfaces
 
 - [x] Interfaces `usb_hcd_v1` (`drivers/usb-hcd-dwc2/interfaces`), `usb_v1` (`drivers/usb/interfaces`) and `input_v1` (`drivers/usb-hid/interfaces`) parse under `meddler check`.
 
-## USB1: pure protocol logic
+## P-USB-1: pure protocol logic
 
 - [x] `drivers/usb/protocol` (`vesper-usb-protocol`): setup packets, descriptor walker, enumeration state machine, HID boot-report decoder; no I/O, no allocation. Exercised by `just _test-usb-host`, linted by `just _clippy-usb-host`.
 
-## USB2: DWC2 root port and EP0
+## P-USB-2: DWC2 root port and EP0
 
 - [x] `drivers/usb-hcd-dwc2`: register map on `bitbybit` fields and a `derive_mmio` block, the control-stage plan, and an EL0 component that resets the root port and runs EP0 control transfers by DMA through a driver-owned, cache-maintained page. Exercised by `just _test-usb` (QEMU raspi3b, hub on the root port, reported as class 9 at address 1).
 - [x] Only the root device is enumerated (by the client, over `usb_hcd_v1`).
@@ -23,7 +23,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] `libs/meddle-runtime`: `DataArea::read_bytes` and `write_bytes` for byte-granular access to a shared data area. Exercised by `just _test-meddle` and `just _test-usb`.
 - [x] `drivers/usb/protocol`: `SetupPacket::from_bytes`, the inverse of `to_bytes`. Exercised by `just _test-usb-host`.
 
-## USB2 follow-ups
+## P-USB-7: DWC2 follow-ups
 
 - [x] `usb_hcd_v1` control pipes served by `drivers/usb-hcd-dwc2` (generated `server` and `client` crates): `reset_port`, `port_status`, `open_pipe` (control only), `set_route` (stored), `close_pipe`, `clear_halt`, `control`. Pipes are a 16-entry table of generation-checked handles. Exercised by `just _test-usb` (`usb-test-client` enumerates the hub through the import and checks refusals) and the host tests of `pipes`, `control::data_length` and `port_status_bits` (`just _test-usb-host`).
 - [x] `pipe_v1` keys: `usb_hcd_v1.open_pipe` installs the pipe's functions as Invocation keys badged with the pipe handle in the caller's lent table, so holding a key is the right to use the pipe. Exercised by `just _test-usb` (copied keys, close through a copy, stale keys) and `libs/device-driver/tests/masters.rs`.
@@ -32,7 +32,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] Interrupt-driven completion in `drivers/usb-hcd-dwc2`: the component's Thread services the controller's interrupt (`HAINT`, `GINTMSK`, `HAINTMSK` and the channel masks in `regs.rs`) and advances a `completions` EventCount that control transfers sleep on, with a transfer deadline. Exercised by `just _test-usb` (the client enumerates the hub; about 20 interrupts per run) and the register tests of `just _test-usb-host`.
 - [x] No millisecond spinning in `drivers/usb-hcd-dwc2`: `delay_ms` parks the calling Thread on a timed wait on the component's own `EventCount`, `wait_until` spins at most 250 µs (two microframes) and then checks once a millisecond while parked, and the poller makes one pass over the due pipes per wake, then sleeps at least `MIN_PARK_MS` (`Poller::park_ms`). The start-split to complete-split window has no pause. Exercised by `just _test-usb`, `test-usb-core`, `test-usb-hid`, `test-wood` and the `periodic` host tests (`just _test-usb-host`).
 
-## USB3: hub and downstream devices
+## P-USB-3: hub and downstream devices
 
 - [x] `hub` module of `vesper-usb-protocol`: hub descriptor parse, class request builders, `PortStatus` decode and the per-port `Port` state machine (power, debounce, reset, recovery, enumeration, teardown, `settled`). Exercised by the `hub` host tests (`just _test-usb-host`).
 - [x] `vesper-usb-host` (`drivers/usb/host`): `Pipes` (pipes made of the keys `open_pipe` installs, with slot groups) and `enumerate` (the enumeration state machine run over them, with an optional route and an observer of every control transfer). Shared by `usb-core` and `usb-test-client`; exercised by `just _test-usb` and `just _test-usb-core`.
@@ -52,8 +52,8 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] Board triage of 2026-10-29 (devices behind the LAN9514 misbehaving): non-periodic runs and split phases interrupt only at the channel's halt as the databook's DMA mode has it (`regs::halt_event_mask`, `channel_outcome`), `halt` leaves a halted channel alone, every run is composed from scratch (`regs::channel_program`), periodic complete splits are issued by the interrupt Thread in microframes 2 to 4 after a start split placed in microframes 0 to 4 (`microframe`, `SplitEngine`, `split::Event::Missed`), non-periodic complete splits repeat after NYET without a restart, `usb-core` disables the port of a device that failed to enumerate before its address is reused (`hub::PortAction::Disable`), a high-speed device's endpoint 0 starts at 64 bytes (`enumeration::default_max_packet0`), the translator route is a pure function (`hub::translator_route`), and the failure traces count each channel event (`regs::EventCounts`), name the control stage and duration, trace each finished hub port reset's raw status and change words and the hub's translators and think time. Exercised by the host tests (`just _test-usb-host`: `channel_program`, microframe targeting, `EventCounts`, the NYET rules, the port disable, the nested-hub route) and `just _test-usb`, `test-usb-core`, `test-usb-hid`, `test-wood`, `test-window-events`; not yet on the board (see the plan).
 - [x] Lost and stuck keys: `hid` sets the keyboard's idle rate to 100 ms (`Set_Idle`, HID 1.11 §7.2.4; the mouse keeps 0), so a lost report is put right by the next repeat; the boot-report diff ignores `POSTFail` and `ErrorUndefined` reports like roll-over, and a usage listed twice is one key; the compositor's router presses, on a resync, a key the snapshot holds that the window never saw go down. Rate-limited counters: the controller's restarted periodic complete splits (a report the hub may have dropped), `hid`'s undecoded reports and frames an `input_v1` client missed, the compositor's dropped window deliveries and router overflow; the compositor's and Wood's key lines say how long after `hid` decoded the key. The input path runs at `Priority::INPUT` ([scheduling-completed.md](scheduling-completed.md#root-dispatcher-priorities)). Exercised by `just _test-usb-host` (fast taps, overlapping keys, held keys, idle repeats, error reports), `just _test-compositor-host` (`a_resync_presses_a_key_pressed_in_the_lost_records`) and `just _test-wood`.
 
-## USB6: xHCI on the Raspberry Pi 4
+## P-USB-6: xHCI on the Raspberry Pi 4
 
 - [x] `drivers/usb-hcd-xhci` bring-up: VL805 firmware notify, halt/reset, DCBAA and scratchpads, command and event rings on the MSI from `pci_v1.claim`, a No Op round trip, `port_status`/`reset_port` on the USB 2 root ports. Exercised on the Pi 4 by `just boot-board-test` (`xhci:` lines) and the `xhci` host tests.
-- [x] Controller-assigned addresses (X2a): `usb_hcd_v1.address_device`/`release_device`/`mark_hub` and `transfer_failed` in both controllers (`drivers/usb-hcd-dwc2/src/devices.rs`; xHCI Enable Slot, Address Device, Configure Endpoint, Evaluate Context, Disable Slot), `usb-core` no longer sends `SET_ADDRESS`, xHCI control transfers on endpoint 0, and `uses ... or ...` fallback providers in Meddle and Kickstart (`usb-core` links DWC2 `or component xhci`). Exercised on the Pi 4 by `just boot-board-test` (VIA hub `2109:3431` and a low-speed mouse behind its translator enumerate, unplug and re-enumerate), by `just _test-usb`, `_test-usb-core`, `_test-usb-hid`, and the protocol, `dwc2`, `xhci` and `meddle` host tests.
+- [x] Controller-assigned addresses (USB-8): `usb_hcd_v1.address_device`/`release_device`/`mark_hub` and `transfer_failed` in both controllers (`drivers/usb-hcd-dwc2/src/devices.rs`; xHCI Enable Slot, Address Device, Configure Endpoint, Evaluate Context, Disable Slot), `usb-core` no longer sends `SET_ADDRESS`, xHCI control transfers on endpoint 0, and `uses ... or ...` fallback providers in Meddle and Kickstart (`usb-core` links DWC2 `or component xhci`). Exercised on the Pi 4 by `just boot-board-test` (VIA hub `2109:3431` and a low-speed mouse behind its translator enumerate, unplug and re-enumerate), by `just _test-usb`, `_test-usb-core`, `_test-usb-hid`, and the protocol, `dwc2`, `xhci` and `meddle` host tests.
 - [x] xHCI interrupt-IN: Configure Endpoint per interrupt IN endpoint, one Normal TRB out while the client has a buffer posted, `ERDP` written low word first (the VL805 raises no interrupt otherwise, [doc/usb.md](../usb.md#via-vl805-no-interrupts-after-erdp-is-written-high-word-first)), `IMOD` set to 40 µs, a missed-interrupt watchdog, and a `debug_kernel`-only event summary; `usb-hid` linked `or component xhci`. Exercised on the Pi 4 by `just boot-board-test` (keyboard and mouse behind two hubs at once, unplugged and replugged into either hub's ports) and the `xhci` host tests.
