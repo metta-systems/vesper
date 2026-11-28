@@ -115,7 +115,8 @@ impl CompositorV1 for Compositor {
         }
 
         let id = u32::try_from(slot).unwrap_or(0) + 1;
-        // On the output under the pointer, each window a step further in (M10).
+        // On the output under the pointer, each window a step further in
+        // (MULTI-DISPLAY-10).
         let offset = FIRST_WINDOW + WINDOW_STEP * i32::try_from(slot).unwrap_or(0);
         let (x, y) = state
             .router

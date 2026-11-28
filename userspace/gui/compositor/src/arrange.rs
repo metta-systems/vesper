@@ -6,8 +6,9 @@
 //! whose manifest entry says `layout = true`), then works on the state under a
 //! turn. An output turns itself when `display_v1.describe` listed the turn;
 //! otherwise it stands upright and the compositor turns its pixels while
-//! drawing (M5). Every change goes through `State::apply_layout`, which moves
-//! the desktop origin (D6) and draws everything again.
+//! drawing (MULTI-DISPLAY-5). Every change goes through `State::apply_layout`,
+//! which moves the desktop origin (MULTI-DISPLAY-14) and draws everything
+//! again.
 
 use {
     crate::shared::{self, Display, Memory, State},

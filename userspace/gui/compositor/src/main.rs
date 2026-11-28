@@ -254,7 +254,7 @@ fn open_display(
         "compositor: display_v1 instance {index}: {width}x{height} {format:?}, {}, {width_mm}x{height_mm} mm",
         if scanout { "scanout" } else { "flush" }
     );
-    // Every output starts upright: the layout is not kept (M4).
+    // Every output starts upright: the layout is not kept (MULTI-DISPLAY-4).
     Some(Display {
         instance: index,
         width,

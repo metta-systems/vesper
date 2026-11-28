@@ -256,10 +256,10 @@ impl Layout {
         ))
     }
 
-    /// Where a new window of `width` by `height` goes (M10): `offset` pixels
-    /// right and down from the top left corner of the output under `pointer`,
-    /// or of the first output, moved back left and up as far as needed to fit
-    /// that output, but never past its top left corner.
+    /// Where a new window of `width` by `height` goes (MULTI-DISPLAY-10):
+    /// `offset` pixels right and down from the top left corner of the output
+    /// under `pointer`, or of the first output, moved back left and up as far
+    /// as needed to fit that output, but never past its top left corner.
     #[must_use]
     pub fn place(&self, pointer: (i32, i32), width: u32, height: u32, offset: i32) -> (i32, i32) {
         let Some(viewport) = self
@@ -273,7 +273,7 @@ impl Layout {
     }
 
     /// Where a window at `rect` goes when the output at `removed` is taken
-    /// away (M10): when no remaining output shows any of it, onto the output
+    /// away (MULTI-DISPLAY-10): when no remaining output shows any of it, onto the output
     /// under `pointer` or else the first output, keeping its size and its
     /// place inside the viewport as far as it fits; otherwise it stays
     /// (`None`). The layout is the one without the removed output.
@@ -296,8 +296,8 @@ impl Layout {
     }
 
     /// Move every viewport so that the desktop origin is the top left corner
-    /// of the output with the lowest x, then the lowest y (D6). Returns how far
-    /// everything moved, to move windows and the pointer by.
+    /// of the output with the lowest x, then the lowest y (MULTI-DISPLAY-14).
+    /// Returns how far everything moved, to move windows and the pointer by.
     pub fn renormalize(&mut self) -> (i32, i32) {
         let Some(anchor) = self
             .viewports()

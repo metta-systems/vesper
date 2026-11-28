@@ -1,6 +1,6 @@
 //! The Threads that draw: the frame Thread for the scanout outputs and a
-//! presenter Thread for each flush output (M8), each at most once every frame
-//! time.
+//! presenter Thread for each flush output (MULTI-DISPLAY-8), each at most once
+//! every frame time.
 //!
 //! Each sleeps until its outputs have damage, then draws and waits one frame
 //! time (a timer that runs only while there is damage). Drawing an output
@@ -187,7 +187,7 @@ fn draw(snapshot: &Snapshot) {
             Some(snapshot.cursor),
         );
         // An output that cannot turn itself stands upright: the compositor
-        // turns the pixels on their way (M5).
+        // turns the pixels on their way (MULTI-DISPLAY-5).
         present_turned(
             &canvas,
             snapshot.canvas,
@@ -292,8 +292,8 @@ fn presenter_1(_init_va: u64) -> ! {
 }
 
 /// Draw flush output `index` and send its damage, one batch at a time: new
-/// damage waits until the previous `flush` calls returned (M8). A Thread whose
-/// output is not a flush output parks for good.
+/// damage waits until the previous `flush` calls returned (MULTI-DISPLAY-8). A
+/// Thread whose output is not a flush output parks for good.
 fn presenter(index: usize) -> ! {
     let mut seen = await_ready();
     let display = {

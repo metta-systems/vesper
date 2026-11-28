@@ -1,12 +1,10 @@
 # Multi-display design
 
-The rules and their reasons; the answered decisions are below. Open questions
-(D3 and D5) are in [multi-display-decisions.md](multi-display-decisions.md),
-open tasks in
+The rules and their reasons. The numbered sections are the maintainer's
+decisions; the sections after them describe the mechanism. Open questions are
+in [multi-display-decisions.md](multi-display-decisions.md), open tasks in
 [multi-display-implementation-plan.md](multi-display-implementation-plan.md),
 finished ones in [multi-display-completed.md](multi-display-completed.md).
-
-## Scope
 
 Today the compositor (`userspace/gui/compositor`) drives one output:
 - It configures the mailbox framebuffer at 1024×768×32 through `fb_v1`.
@@ -26,31 +24,129 @@ This design lets the compositor drive any number of outputs of either kind:
 - with outputs that can come and go.
 
 Out of scope:
-- scaling (M6), and persisting the layout (M4);
+- scaling (MULTI-DISPLAY-6), and persisting the layout (MULTI-DISPLAY-4);
 - DMA for SPI pixels (an spi server item);
 - DSI.
 
-## Decisions
+## MULTI-DISPLAY-1: `display_v1` for every output
 
-| | Decision |
-|---|---|
-| M1 | A new `display_v1`, exported by every output. The fb driver exports it next to `fb_v1`, and the panel driver exports it too. The compositor imports `display_v1` from every provider. |
-| M2 | The compositor converts its 32 bpp pixels to each output's format while presenting. Drivers only scan out or flush. |
-| M3 | One desktop coordinate space. Each output is a viewport into it, with its own back buffer. A window spanning two outputs is composed into both. |
-| M4 | Arrangement comes from a runtime API, `display_layout_v1`, obtained through `compositor_v1`. Any client may read it. Writes need `layout = true` on the client's manifest entry. Not persisted: every boot starts from a row of outputs in discovery order, unrotated. |
-| M5 | Rotation is done by the output where it can (`describe` lists the rotations the output does itself), and by the compositor otherwise. |
-| M6 | Physical size and DPI are reported. Everything renders 1:1. |
-| M7 | The pointer roams the union of the outputs and stops where no output continues. Focus rules don't change. |
-| M8 | Per-output pacing. A flush output gets new damage only once its previous flush has finished, so a scanout output never waits for a flush output. |
-| M9 | Hotplug is designed in now. A provider advances an EventCount and bumps a generation number. The compositor rereads, then advances its layout EventCount, and layout readers reread. |
-| M10 | A new window opens on the output under the pointer. A window left on a removed output moves to the output under the pointer, or to the first output, keeping its size, clamped to fit. The pointer moves back onto the union. |
-| D1 | (a) A new provider form, `uses display_v1 via every { ... }`: one import for each exporting instance, up to a declared maximum. |
-| D2 | `display_v1` has `get_mode`/`set_mode`. An output starts in a default mode of its own. For HDMI this needs the EDID block, because the monitor may report a preferred resolution. |
-| D4 | First answer: the compositor lends its own Frames to a flush output, because it is the only authority over graphics memory. Revised the same day, after the `LENT`-mapping check: `display_v1` declares a `data` area that Kickstart shares between the compositor and each output, so the compositor writes pixels there and `flush` sends from it. A scanout output's memory is still the hardware's (the firmware's framebuffer). |
-| D6 | The desktop origin is renormalized after each change, to the output with the lowest x, then lowest y. Clients see window-relative coordinates, so it doesn't affect them. |
-| D7 | `MAX_OUTPUTS` = 2 for now: only two displays are being tested. |
-| P3 | (a), 2026-11-28: `display_v1`'s `format` gains `rgb565` (16-bit 5-6-5, little-endian), edited in place, and the compositor converts to it. The Raspberry Pi 5 firmware's framebuffer is 16-bit RGB565 whatever depth is asked for, while it reports 32; the fb driver takes the real pixel size from the pitch the firmware returns and describes the mode in that format. |
-| P6 | (a), 2026-11-28: when the firmware keeps a framebuffer size of its own whatever size is asked for (the Raspberry Pi 5's 1920x1080), the fb driver reads the size back after allocating, configures that, and lists it as its only mode; `set_mode` to any other mode is refused. |
+2026-11-24. A new `display_v1`, exported by every output. The fb driver exports
+it next to `fb_v1`, and the panel driver exports it too. The compositor imports
+`display_v1` from every provider.
+
+## MULTI-DISPLAY-2: the compositor converts
+
+2026-11-24. The compositor converts its 32 bpp pixels to each output's format
+while presenting. Drivers only scan out or flush.
+
+## MULTI-DISPLAY-3: one desktop, a viewport per output
+
+2026-11-24. One desktop coordinate space. Each output is a viewport into it,
+with its own back buffer. A window spanning two outputs is composed into both.
+
+## MULTI-DISPLAY-4: arrangement through `display_layout_v1`, not persisted
+
+2026-11-24. Arrangement comes from a runtime API, `display_layout_v1`, obtained
+through `compositor_v1`. Any client may read it. Writes need `layout = true` on
+the client's manifest entry. Not persisted: every boot starts from a row of
+outputs in discovery order, unrotated.
+
+## MULTI-DISPLAY-5: rotation by the output where it can
+
+2026-11-24. Rotation is done by the output where it can (`describe` lists the
+rotations the output does itself), and by the compositor otherwise.
+
+## MULTI-DISPLAY-6: physical size reported, rendering 1:1
+
+2026-11-24. Physical size and DPI are reported. Everything renders 1:1.
+
+## MULTI-DISPLAY-7: the pointer roams the union
+
+2026-11-24. The pointer roams the union of the outputs and stops where no
+output continues. Focus rules don't change.
+
+## MULTI-DISPLAY-8: per-output pacing
+
+2026-11-24. A flush output gets new damage only once its previous flush has
+finished, so a scanout output never waits for a flush output.
+
+## MULTI-DISPLAY-9: hotplug designed in
+
+2026-11-24. A provider advances an EventCount and bumps a generation number.
+The compositor rereads, then advances its layout EventCount, and layout readers
+reread.
+
+## MULTI-DISPLAY-10: windows on arrival and removal
+
+2026-11-24. A new window opens on the output under the pointer. A window left
+on a removed output moves to the output under the pointer, or to the first
+output, keeping its size, clamped to fit. The pointer moves back onto the
+union.
+
+## MULTI-DISPLAY-11: `via every` providers
+
+2026-11-24. A new provider form, `uses display_v1 via every { ... }`: one import
+for each exporting instance, up to a declared maximum.
+
+## MULTI-DISPLAY-12: modes, and a default mode per output
+
+2026-11-24. `display_v1` has `get_mode`/`set_mode`. An output starts in a
+default mode of its own. For HDMI this needs the EDID block, because the
+monitor may report a preferred resolution.
+
+## MULTI-DISPLAY-13: a shared data area for flush outputs
+
+2026-11-24. `display_v1` declares a `data` area that Kickstart shares between
+the compositor and each output, so the compositor writes pixels there and
+`flush` sends from it. A scanout output's memory is still the hardware's (the
+firmware's framebuffer).
+
+The first answer the same day was for the compositor to lend its own Frames to
+a flush output on every `flush`, as the only authority over graphics memory.
+A Frame lent with `CallWithKey` is a `LENT` entry: the callee can invoke it, so
+it can Map it, but it can never CopyDerive or Move it. However, Return only
+nulls the borrowed entry (`release_placed`), and deleting a mapped Frame leaves
+its mapping in place, so a mapping the callee forgot would outlive the call.
+The maintainer chose the shared data area instead: no lending and no kernel
+change. The LENT-mapping gap remains a known gap in the contract.
+
+## MULTI-DISPLAY-14: the origin is renormalized
+
+2026-11-24. The desktop origin is renormalized after each change, to the output
+with the lowest x, then lowest y. Clients see window-relative coordinates, so
+it doesn't affect them.
+
+## MULTI-DISPLAY-15: two outputs at most
+
+2026-11-24. `MAX_OUTPUTS` = 2 for now: only two displays are being tested.
+
+## MULTI-DISPLAY-16: `rgb565`, little-endian
+
+2026-11-28. `display_v1`'s `format` gains `rgb565` (16-bit 5-6-5,
+little-endian), edited in place, and the compositor converts to it. The
+Raspberry Pi 5 firmware's framebuffer is 16-bit RGB565 whatever depth is asked
+for, while it reports 32; the fb driver takes the real pixel size from the
+pitch the firmware returns and describes the mode in that format.
+
+## MULTI-DISPLAY-17: the firmware's own framebuffer size
+
+2026-11-28. When the firmware keeps a framebuffer size of its own whatever size
+is asked for (the Raspberry Pi 5's 1920x1080), the fb driver reads the size
+back after allocating, configures that, and lists it as its only mode;
+`set_mode` to any other mode is refused.
+
+## MULTI-DISPLAY-18: an EDID size of 255×255 mm is no size
+
+2026-11-25. A detailed timing's image size of exactly 255×255 mm counts as "no
+size": the board's 1024×600 panel, about 165×95 mm, says 255×255 mm there and
+18×13 cm in its screen size bytes.
+
+## MULTI-DISPLAY-19: the biggest scanout output is the primary one
+
+2026-11-25. Before the default layout is made, the outputs are ordered scanout
+first, then by pixel area, largest first, with import order breaking ties. So
+the biggest scanout output is output 0, the desktop origin. On the first board
+run, Kickstart loaded the panel before fb, which made the panel output 0.
 
 ## Shape
 
@@ -64,14 +160,15 @@ flowchart LR
 ```
 
 Each output is one `display_v1` instance. The compositor keeps an **output
-table** with a fixed capacity, `MAX_OUTPUTS` = 2 (D7). Each entry holds:
+table** with a fixed capacity, `MAX_OUTPUTS` = 2 (MULTI-DISPLAY-15). Each entry
+holds:
 - the provider's description and generation;
 - its viewport: desktop position, size after rotation, and rotation;
 - whether the output or the compositor applies the rotation;
 - a cacheable back buffer at 32 bpp, sized to the viewport;
 - the output's pixel memory: the provider's frames mapped write-combining for a
   scanout output, or, for a flush output, the `display_v1` data area shared
-  with the provider (D4);
+  with the provider (MULTI-DISPLAY-13);
 - its damage set, and for a flush output whether a flush is in flight.
 
 ## `display_v1` (drivers)
@@ -98,8 +195,9 @@ local interface display_v1
     ## Rotation as a set (bit n: n quarter turns clockwise), and one turn.
     enum rotation { r0, r90, r180, r270 }
 
-    ## The pixels a flush output sends (D4): the compositor writes them, the
-    ## output reads them. 240x320 RGB565 (153600 bytes) in 38 pages.
+    ## The pixels a flush output sends (MULTI-DISPLAY-13): the compositor
+    ## writes them, the output reads them. 240x320 RGB565 (153600 bytes) in
+    ## 38 pages.
     data 155648;
 
     exception not_present { card32 generation; }  # the output is gone
@@ -121,8 +219,9 @@ local interface display_v1
                  card32 width_mm, card32 height_mm, card32 rotations)
         raises (not_present);
 
-    ## The output's modes (D2): `count` of them, index 0 its preferred one
-    ## (the EDID's preferred timing for HDMI, the panel's only mode).
+    ## The output's modes (MULTI-DISPLAY-12): `count` of them, index 0 its
+    ## preferred one (the EDID's preferred timing for HDMI, the panel's only
+    ## mode).
     modes() returns (card32 count);
     mode(card32 index)
         returns (card32 width, card32 height, format format, card32 refresh_mhz)
@@ -168,44 +267,35 @@ adds `badged;`, plus `failed` for bus errors, and the exact field order and
 exceptions there take precedence over this sketch.
 
 - **The panel driver** owns no pixel memory. Its pixels live in the
-  `display_v1` data area Kickstart shares between it and the compositor (D4).
+  `display_v1` data area Kickstart shares between it and the compositor
+  (MULTI-DISPLAY-13).
   - `modes` has one entry: 240×320 `rgb565_be`. `frames` raises `unsupported`.
   - `flush` sets the address window (CASET/RASET), reads the rectangle's rows
     from the data area, and sends them through `spi_v1` in 4 KiB chunks, as
     `draw_bars` does today, then returns.
-- **Why a data area (D4, revised 2026-11-24).** The first plan was for the
-  compositor to lend a Frame on every `flush`. A Frame lent with `CallWithKey`
-  is a `LENT` entry: the callee can invoke it, so it can Map it, but it can
-  never CopyDerive or Move it. However, Return only nulls the borrowed entry
-  (`release_placed`), and deleting a mapped Frame leaves its mapping in place,
-  so a mapping the callee forgot would outlive the call. The maintainer chose
-  the shared data area instead: no lending and no kernel change. The
-  LENT-mapping gap remains a known gap in the contract.
-  - Meddle's `MAX_DATA_BYTES` goes from 64 KiB to 256 KiB. Kickstart lays every
-    pair's area out with one cursor over a single 2 MiB data window
-    (`data_cursor`, `DATA_WINDOW_BYTES` in `kernel/kickstart/src/drivers.rs`),
-    so the panel's area comes out of the whole image's 2 MiB; an image whose
-    areas outgrow it needs the window raised.
-  - The area is per interface, so a scanout exporter (fb) gets one too, unused.
-    That is 152 KiB per pair, and the compositor has two pairs at most (D7).
   - `rotations` is all four. `rotate` sets MADCTL (36h, ILI9341 datasheet
     §8.2.29) through mipidsi's orientation, and swaps width and height for 90 and 270.
   - `scanout` is false.
+- **The data area's size.** Meddle's `MAX_DATA_BYTES` goes from 64 KiB to
+  256 KiB. Kickstart lays every pair's area out with one cursor over a single
+  2 MiB data window (`data_cursor`, `DATA_WINDOW_BYTES` in
+  `kernel/kickstart/src/drivers.rs`), so the panel's area comes out of the
+  whole image's 2 MiB; an image whose areas outgrow it needs the window raised.
+  - The area is per interface, so a scanout exporter (fb) gets one too, unused.
+    That is 152 KiB per pair, and the compositor has two pairs at most
+    (MULTI-DISPLAY-15).
 - **The fb driver** exports `display_v1` next to `fb_v1`, over the same
   framebuffer.
   - `scanout` is true, `rotations` is only `r0`, and `flush` returns at once.
-  - Modes come from the EDID (D2), read through the mailbox's `Get EDID block`
-    tag (0x00030020, firmware wiki "Mailbox property interface"). The parser
-    is `drivers/fb/src/edid.rs`, after Wikipedia's summary of VESA E-EDID 1.4,
-    since the standard itself isn't public. It lists the progressive detailed
-    timings (the first is the preferred one), then the standard timings, each
-    size once.
+  - Modes come from the EDID (MULTI-DISPLAY-12), read through the mailbox's
+    `Get EDID block` tag (0x00030020, firmware wiki "Mailbox property
+    interface"). The parser is `drivers/fb/src/edid.rs`, after Wikipedia's
+    summary of VESA E-EDID 1.4, since the standard itself isn't public. It
+    lists the progressive detailed timings (the first is the preferred one),
+    then the standard timings, each size once.
     - The established timings aren't read: the source doesn't give their table.
     - The image size comes from the preferred timing's millimetres, else the
-      screen's centimetres. A timing size of exactly 255×255 mm counts as "no
-      size" (maintainer decision, 2026-11-25): the board's 1024×600 panel,
-      about 165×95 mm, says 255×255 mm there and 18×13 cm in its screen size
-      bytes.
+      screen's centimetres (with MULTI-DISPLAY-18's 255×255 mm rule).
     - Without a valid EDID there is one mode, 1024×768, with 0 mm. QEMU answers
       the tag with a block that isn't valid, so display-test runs on this
       fallback.
@@ -221,26 +311,23 @@ exceptions there take precedence over this sketch.
     start: a client's call can arrive before that (display-test hit this
     race).
 - **Generation and EventCount.** A provider advances an EventCount whenever the
-  generation changes. How that EventCount reaches the compositor is D3. Neither
-  provider changes on its own today: there's no HDMI plug source and the panel
-  is fixed. The path exists so that one can be added later without changing the
-  interface.
+  generation changes. How that EventCount reaches the compositor is
+  Q-MULTI-DISPLAY-1. Neither provider changes on its own today: there's no
+  HDMI plug source and the panel is fixed. The path exists so that one can be
+  added later without changing the interface.
 
 ## Compositor changes
 
 - **Discovery.** At start, the compositor calls `describe` and `get_mode` on every
-  `display_v1` import (`uses display_v1 via every max 2`, D1) and fills the
-  output table. An output is left out when `describe` raises `not_present`,
-  when its memory cannot be mapped, or when its mode does not fit its data
-  area; at least one output must remain. Each output keeps the mode it chose
-  for itself (D2): the fb component's EDID-preferred mode, or 1024×768 without
-  an EDID. The default layout places outputs left to right at y = 0, in import
-  order, unrotated. The first output's top-left corner is the desktop origin.
-  Before the layout is made, the outputs are ordered scanout first, then by
-  pixel area, largest first, with import order breaking ties. So the biggest
-  scanout output is the primary one (maintainer, 2026-11-25). On the first
-  board run, Kickstart loaded the panel before fb, which made the panel
-  output 0.
+  `display_v1` import (`uses display_v1 via every max 2`, MULTI-DISPLAY-11) and
+  fills the output table. An output is left out when `describe` raises
+  `not_present`, when its memory cannot be mapped, or when its mode does not
+  fit its data area; at least one output must remain. Each output keeps the
+  mode it chose for itself (MULTI-DISPLAY-12): the fb component's
+  EDID-preferred mode, or 1024×768 without an EDID. The outputs are ordered as
+  MULTI-DISPLAY-19 says, and the default layout places them left to right at
+  y = 0, in that order, unrotated. The first output's top-left corner is the
+  desktop origin.
 - **Canvas format.** Back buffers and surfaces use the format of the first
   32-bit output, so that output shows them by copying. Clients learn it as
   `compositor_v1.pixel_order`, as before. With no 32-bit output it is
@@ -256,9 +343,9 @@ exceptions there take precedence over this sketch.
   output that shows part of it.
 - **Drawing.** Each output's back buffer is drawn by exactly one Thread. That
   Thread composes the damage in viewport coordinates, with the windows bottom
-  to top and the cursor last, then converts the finished rectangles (M2). The
-  code is in `compositor-core::blit`: `compose` and `present`, which calls
-  `convert_row` once per row.
+  to top and the cursor last, then converts the finished rectangles
+  (MULTI-DISPLAY-2). The code is in `compositor-core::blit`: `compose` and
+  `present`, which calls `convert_row` once per row.
   - `xrgb8888` is a copy, and `xbgr8888` a swap.
   - `rgb565_be` packs `r>>3, g>>2, b>>3` and stores the high byte first;
     `rgb565` packs the same and stores the low byte first.
@@ -273,20 +360,20 @@ exceptions there take precedence over this sketch.
 - **Frame Thread (scanout outputs).** It draws every scanout output that has
   damage, then waits a frame time. It writes straight into the
   write-combining memory.
-- **Presenter Thread per flush output (M8).** There is one presenter for each
-  output index (`presenter_0`, `presenter_1`); a presenter whose output is not
-  a flush output parks. A presenter takes its output's damage under a turn,
-  composes and converts it into the shared data area without the turn, then
-  calls `flush` for each rectangle and waits a frame time. New damage collects
-  in the output's set while a flush is in flight, so the next batch picks it
-  up. Because `flush` is a synchronous call, only the presenter blocks, for up
-  to about 120 ms; the frame Thread and the input Thread never wait for SPI.
-  The presenter composes for itself, instead of converting from a back buffer
-  that the frame Thread draws, so that each back buffer has one writer.
-  A rectangle whose `flush` fails goes back into the output's damage and is
-  sent with the next batch. The presenter counts failures, and the input
-  Thread traces the count each time it reaches a power of two, together with
-  the last exception.
+- **Presenter Thread per flush output (MULTI-DISPLAY-8).** There is one
+  presenter for each output index (`presenter_0`, `presenter_1`); a presenter
+  whose output is not a flush output parks. A presenter takes its output's
+  damage under a turn, composes and converts it into the shared data area
+  without the turn, then calls `flush` for each rectangle and waits a frame
+  time. New damage collects in the output's set while a flush is in flight, so
+  the next batch picks it up. Because `flush` is a synchronous call, only the
+  presenter blocks, for up to about 120 ms; the frame Thread and the input
+  Thread never wait for SPI. The presenter composes for itself, instead of
+  converting from a back buffer that the frame Thread draws, so that each back
+  buffer has one writer. A rectangle whose `flush` fails goes back into the
+  output's damage and is sent with the next batch. The presenter counts
+  failures, and the input Thread traces the count each time it reaches a power
+  of two, together with the last exception.
 - **Moving windows (interim).** The compositor does not move windows itself
   yet. A client moves its own window with an Alt + left drag, using
   `compositor_core::drag::Mover`. The client feeds the Mover its window's
@@ -301,21 +388,21 @@ exceptions there take precedence over this sketch.
 
   The maintainer's words, 2026-11-25: "we will refactor this later into a
   protocol".
-- **Rotation (M5).** A rotation is set through `display_layout_v1`. Setting
-  a rotation calls the provider's `rotate` when that
-  rotation is in `rotations`; the viewport then simply takes the returned size.
-  Otherwise the compositor rotates while converting, and the viewport takes
-  width and height swapped.
-- **Pointer (M7).** The router's single screen rectangle becomes the list of
-  viewports. A motion step is applied on each axis, then the pointer is clamped
-  to the nearest point inside some viewport, so it crosses edges where outputs
-  touch and stops where they don't. The cursor sprite is drawn into every
-  viewport it overlaps.
-- **New windows (M10).** `create_window` places the window inside the output
-  under the pointer, using today's placement rule within that viewport. The
-  window is moved back left and up as far as needed to fit, but never past
-  the viewport's top-left corner (`Layout::place`).
-- **Removal (M10).** When `describe` starts raising `not_present`:
+- **Rotation (MULTI-DISPLAY-5).** A rotation is set through
+  `display_layout_v1`. Setting a rotation calls the provider's `rotate` when
+  that rotation is in `rotations`; the viewport then simply takes the returned
+  size. Otherwise the compositor rotates while converting, and the viewport
+  takes width and height swapped.
+- **Pointer (MULTI-DISPLAY-7).** The router's single screen rectangle becomes
+  the list of viewports. A motion step is applied on each axis, then the
+  pointer is clamped to the nearest point inside some viewport, so it crosses
+  edges where outputs touch and stops where they don't. The cursor sprite is
+  drawn into every viewport it overlaps.
+- **New windows (MULTI-DISPLAY-10).** `create_window` places the window inside
+  the output under the pointer, using today's placement rule within that
+  viewport. The window is moved back left and up as far as needed to fit, but
+  never past the viewport's top-left corner (`Layout::place`).
+- **Removal (MULTI-DISPLAY-10).** When `describe` starts raising `not_present`:
   - the viewport goes away;
   - each window entirely inside it moves to the pointer's output, or to the
     first output, clamped to fit and keeping its size;
@@ -439,15 +526,16 @@ local interface display_layout_v1
   - the reader is refused every change.
 - **Layout EventCount.** When the compositor changes the layout, it advances an
   EventCount. Readers wait on it, then reread `generation` and the list. How a
-  client gets an await-only key to it is D5.
+  client gets an await-only key to it is Q-MULTI-DISPLAY-2.
 - **Validation.** A `set_position` whose viewport would overlap another viewport
   raises `overlaps`. Gaps are allowed: the pointer simply doesn't cross them.
-- **Renormalization (D6).** After each change, the output at the lowest x, then
-  the lowest y, becomes the origin, so every desktop coordinate shifts by the
-  same offset. Viewports, window positions and the pointer shift together, so
-  nothing moves on the glass. Clients see window-relative coordinates and
-  notice nothing. Only `move_window` arguments and `output()` rectangles are
-  desktop coordinates, and a layout reader sees the shift through `generation`.
+- **Renormalization (MULTI-DISPLAY-14).** After each change, the output at the
+  lowest x, then the lowest y, becomes the origin, so every desktop coordinate
+  shifts by the same offset. Viewports, window positions and the pointer shift
+  together, so nothing moves on the glass. Clients see window-relative
+  coordinates and notice nothing. Only `move_window` arguments and `output()`
+  rectangles are desktop coordinates, and a layout reader sees the shift
+  through `generation`.
 
 ## Kickstart and Meddle
 
@@ -457,11 +545,11 @@ local interface display_layout_v1
   instead of in one driver's own directory. Those directories are also searched
   for imports.
 - Image-build: a `layout = true` manifest field (above).
-- Meddle and Kickstart: `via every` (D1).
+- Meddle and Kickstart: `via every` (MULTI-DISPLAY-11).
   - The syntax is `uses X via every max N { ... }`, with `every` and `max`
     contextual like `device` and `parent`. The maximum is written out, because
     Meddle can't see the client's constants; the compositor will write
-    `every max 2`, matching `MAX_OUTPUTS` (D7).
+    `every max 2`, matching `MAX_OUTPUTS` (MULTI-DISPLAY-15).
   - The checker requires `every` to be the use's only provider (there is
     nothing to fall back to) and `N` to be 1 to `MAX_EVERY_INSTANCES` (4).
   - It is `ProviderSummary::Every(N)` in the summary and `Provider::Every(N)`

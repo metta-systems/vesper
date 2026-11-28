@@ -181,7 +181,7 @@ impl State {
     }
 
     /// Take `layout`, a change of the outputs' viewports: the desktop origin
-    /// moves to the output with the lowest x, then the lowest y (D6), the
+    /// moves to the output with the lowest x, then the lowest y (MULTI-DISPLAY-14), the
     /// windows and the pointer move with it, every output is drawn again and
     /// the layout's generation changes.
     pub fn apply_layout(&mut self, mut layout: Layout) {

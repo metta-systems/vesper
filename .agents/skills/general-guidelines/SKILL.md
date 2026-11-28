@@ -1,14 +1,14 @@
 ---
-name: capability-refactor
+name: general-guidelines
 description: Guide one incremental Vesper capability refactor across shared ABI, userspace wrappers, kernel API, objects, and syscall entry; follow the capabilities contract and plan, or the area's design and plan for area work (SMP, FP/SIMD, USB, scheduling and the like), use JJ and Justfile workflows, resolve decision blockers, and validate a scoped cross-layer change.
 ---
 
-# Capability refactor
+# General guidelines
 
 ## Start with the contract
 
 - Load the `ponytail` skill (`.agents/skills/ponytail`) together with this one and follow it for the whole slice: the smallest change that fully solves the task, and a short reply that ends with what was skipped or not checked. It does not relax anything below: the contract, the decision gates, the tests and the documentation updates still apply in full.
-- Resolve every repository-relative path below against the **Vesper repository root**, not this skill's directory (`.agents/skills/capability-refactor`).
+- Resolve every repository-relative path below against the **Vesper repository root**, not this skill's directory (`.agents/skills/general-guidelines`).
 - Always read **both** `doc/agentic/capabilities-contract.md` (canonical contract for capabilities) and `doc/agentic/capabilities-implementation-plan.md` (checkbox plan) first, before analysis or edits. For work in an area that has its own documents (see [Area documents](#area-documents)), also read that area's design and plan. If a document is unavailable, ask the user rather than inventing its contents.
 - **Find every area a slice touches in the [document index](#document-index) and read that area's design and plan too.** The contract holds only capability semantics; many rules a capability slice depends on live in area designs (Frame, PageTable, ASID and Activate rules in `memory-design.md`, Time and Scheduler rules in `scheduling-design.md`, Meddle and Kickstart wiring in `components-design.md`). Not finding a rule in the contract does not mean it is undecided: check the index before treating anything as open.
 - For lifetime, ownership, authority, delegation, revocation, or reclamation work, also read the relevant sections of `doc/agentic/capabilities-design.md` (why each rule exists, alternatives weighed) and `doc/agentic/capabilities-research.md` (prior-art evidence: seL4, Composite, Fluke, KeyKOS, NOVA and others). Neither holds tasks, decisions or status; they supplement the contract.
@@ -32,9 +32,32 @@ Work that is not about capabilities themselves (SMP, FP/SIMD, USB, input, audio,
 | `<area>-completed.md` | One-line markers of finished tasks | `capabilities-completed.md` |
 
 - Some areas use other names or extra background files for historical reasons (see the index). Follow what an area already has; do not rename its files unprompted.
+
 - A new area gets the files it needs when the maintainer starts it, and the capabilities plan gets a one-line pointer to its plan.
 - Each fact has one home. An area document links to the capabilities contract for capability semantics (kinds, keys, rights, badges, invocation ABI, lifecycle) and does not restate them. The capabilities contract keeps no pointer sections or summaries of an area; a capability rule that refers to an area rule links to the area design inline.
 - **The capabilities contract is shrinking, aggressively.** Material in it that is not about capabilities themselves moves to the matching area design, one section at a time as the maintainer selects it, each move its own change: move the text without loss of rules, leave no stub heading or pointer behind, point every inbound link (in all documents) at the new home, drop the topic's row from the decision register, and move the related open questions (with their Future work ideas) and completed markers into the area's decisions and completed files. Do not move sections the maintainer has not selected, and never add new non-capability sections to the contract.
+
+### Section and item IDs
+
+Every numbered section and item in an area's documents carries an ID made of the area's prefix in capitals (its row in the [document index](#document-index), with the same hyphens) and a number, with a kind letter in front for everything outside the design. This replaces every older scheme (bare letters such as `D3`, `M7`, `C5`, `S2b`, or area stages such as `USB4`, `SMP1`, `INPUT1`, `MEM2`); those are renamed when their documents are reindexed. The capabilities gates `D1`–`D9` become `CAPABILITIES-<N>` sections (their open parts `Q-CAPABILITIES-<N>` questions), and other labelled lists such as the FP/SIMD invariants `I1`–`I4` are renamed too: once reindexing is done, no short label remains.
+
+| ID | Where | Example |
+|---|---|---|
+| `<AREA>-<N>` | A section of `<area>-design.md` (for `capabilities`, of `capabilities-contract.md`) | `AUDIO-5`, `CAPABILITIES-17` |
+| `Q-<AREA>-<N>` | A question in `<area>-decisions.md` | `Q-AUDIO-11` |
+| `P-<AREA>-<N>` | A section of `<area>-implementation-plan.md` that is not an item of the design | `P-AUDIO-3`, `P-UI-COMPOSITOR-10` |
+| `N-<AREA>-<N>` | A research or future-work item ("next") | `N-IRQ-2` |
+
+- Each kind is numbered on its own within its area: `AUDIO-5`, `Q-AUDIO-5`, `P-AUDIO-5` and `N-AUDIO-5` are four different items.
+- A number is never reused. A closed item keeps its ID in the area's `-completed` file, so the next item of that kind takes the next number after the highest one ever given.
+- `Q-` numbers are the exception: they are transient. A new question takes the number after the highest `Q-<AREA>-<N>` in the decisions file now; a number used by an answered question may come back.
+- Always write the full ID, `AUDIO-5`; never a short form such as `A5`, `5` or `Q5`, even next to the area's own heading.
+- An answered question becomes a new design section with the next `<AREA>-<N>`, and the question leaves the decisions file, usually in the same change. The new section does not refer to the old `Q-` ID; version control links the two. In the same change, every reference to the answered `Q-` ID, in documents and in code, is replaced by a reference to the design section that answers it: no `Q-` ID outlives its question.
+- `N-` items stay where they are: future work in the decisions file's Future work section, research in `<area>-research.md`.
+- A plan section that implements a design section refers to that section's `<AREA>-<N>` rather than taking a `P-` ID.
+- A heading starts with its ID, then a colon and the title: `## AUDIO-5: PWM clock source`. A link to a section also names its ID in the text, so the reference survives a reworded title (whose anchor changes).
+- Code comments cite IDs in the same full form. Commit messages are the maintainer's to write; whether they cite IDs (in the body, for a change touching several items) is the maintainer's choice.
+- IDs are internal: user-facing documentation (`doc/object_types/`) carries none.
 
 ### Document index
 
@@ -52,7 +75,8 @@ Every document in `doc/agentic/` belongs to one row. **Keep this table current:*
 | `input` | Input devices and events | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `audio` | Audio output (PWM jack, DMA, `cprman` clocks), mixing and synthesis | `-design`, `-implementation-plan`, `-completed`; background `audio-profiling.md` |
 | `logging` | The log server: several components sharing one PL011; the debug-only DebugConsole | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
-| `ui-compositor` | The compositor, windows and surfaces | `-design`, `-implementation-plan`, `-completed`; `multi-display-design.md` (several outputs) |
+| `ui-compositor` | The compositor, windows and surfaces | `-design`, `-implementation-plan`, `-completed` |
+| `multi-display` | Several display outputs: `display_v1`, the compositor's outputs and layout, the fb and panel drivers as outputs, Raspberry Pi 5 HDMI | `-design`, `-decisions`, `-implementation-plan`, `-completed` |
 | `irq` | `IRQControl`/`IRQHandler` semantics, interrupt delivery, receiver Threads, driver matching and loading | `-design`, `-decisions`, `-implementation-plan`, `-completed`; background `-research` (where the interrupt-controller driver runs; event delivery in Composite and seL4) |
 | Background only | Prior art and shelved designs; no rules, tasks or decisions | `future-libmmio-design.md`, `brands-history.md` |
 | Maintainer notes | `questions.md`: the maintainer's scratch notes; read, never edit unprompted | `questions.md` |
@@ -62,7 +86,7 @@ Every document in `doc/agentic/` belongs to one row. **Keep this table current:*
 These apply to every slice and are never "done"; they are not plan checkboxes.
 
 - **One authority per topic.** `doc/agentic/capabilities-contract.md` is the single reference for capabilities themselves; each area's design document is the single reference for that area. Record the maintainer's amendments in the one that owns the topic, as dated maintainer decisions, with matching updates to its plan. Never put an area decision into the capabilities contract, and never start a document that competes with the owner of a topic.
-- **Name each slice's prerequisite decisions.** Before implementing a slice, identify which decisions it depends on (D1–D9 for capabilities, the area's own IDs otherwise) and confirm they are settled in the document that owns them. Leave unrelated decisions explicitly open, parked in the matching decisions file, rather than blocking all progress on them or guessing their answers.
+- **Name each slice's prerequisite decisions.** Before implementing a slice, identify which decisions it depends on, by their [IDs](#section-and-item-ids) (the capabilities gates below, the area's own otherwise), and confirm they are settled in the document that owns them. Leave unrelated decisions explicitly open, parked in the matching decisions file, rather than blocking all progress on them or guessing their answers.
 - **Keep sketches and unimplemented operations labeled.** Research examples, excluded sketches and unimplemented operations must be clearly labeled as such in code and documents. When the corresponding code is reconciled, remove the diagrams and comments that now conflict with it and look authoritative, subject to "Preserve design-intent comments" below.
 
 ## Keep object-types documentation current
@@ -78,7 +102,7 @@ These apply to every slice and are never "done"; they are not plan checkboxes.
 **Content.**
 
 - **Describe the current implementation.** No history (dates, "selected", "moved", "renamed", "replaced"), no change logs, no test logs, no planned work beyond a brief Planned changes section.
-- **No internal process language.** No decision IDs (D1–D9), "maintainer decision", "provisional", "freezing", "contract", "selection", "slice", "fixture", "sketch", and no editorial asides such as "deliberate sentinel" or "through real SVC dispatch".
+- **No internal process language.** No section, decision or plan IDs ([Section and item IDs](#section-and-item-ids)), "maintainer decision", "provisional", "freezing", "contract", "selection", "slice", "fixture", "sketch", and no editorial asides such as "deliberate sentinel" or "through real SVC dispatch".
 - **Plain technical statements.** State what something is and does. Do not use "not X, but Y" or "X, not Y" contrasts; say what it is, and state a limitation as its own sentence when the user needs it.
 - **One home per fact.** State each rule once, on the page of the kind that owns it, and link from elsewhere: Invocation owns PPC stack extents, admission order and register state across a call; Thread owns `Thread.Return` and fault delivery; KeyTable owns the well-known slot table; the README owns status codes and the register ABI.
 - **Be concise.** Prefer tables for registers, errors, outcomes and slot layouts.

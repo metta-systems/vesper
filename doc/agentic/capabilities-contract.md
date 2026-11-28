@@ -642,4 +642,4 @@ A supported operation has one shared schema; a client that preserves results; ch
 
 Safety comments describe actual invariants and their owner, not just that a call is unsafe. Layout and round-trip assertions remain enabled. Tests include malformed and adversarial requests, aliasing/identity reuse, capacity failures, cancellation, and rollback where applicable.
 
-Follow the [implementation plan](capabilities-implementation-plan.md) in small dependency-respecting slices. The repository skill at `.agents/skills/capability-refactor/SKILL.md` describes the working procedure; it does not replace the contracts in this document.
+Follow the [implementation plan](capabilities-implementation-plan.md) in small dependency-respecting slices. The repository skill at `.agents/skills/general-guidelines/SKILL.md` describes the working procedure; it does not replace the contracts in this document.

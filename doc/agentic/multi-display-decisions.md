@@ -3,12 +3,14 @@
 Open questions only. Answered ones are recorded in the Decisions section of
 [multi-display-design.md](multi-display-design.md); the tasks waiting on them
 are in [multi-display-implementation-plan.md](multi-display-implementation-plan.md).
-D3 and D5 will be discussed in more detail before work resumes.
+Q-MULTI-DISPLAY-1 and Q-MULTI-DISPLAY-2 will be discussed in more detail before
+work resumes.
 
-## D3: how a provider's change reaches the compositor
+## Q-MULTI-DISPLAY-1: how a provider's change reaches the compositor
 
 When an output's presence or mode changes, its provider bumps the generation
-that `describe` returns. That much is settled (M9: EventCount + generation).
+that `describe` returns. That much is settled (MULTI-DISPLAY-9: EventCount +
+generation).
 The open part is how the compositor learns that it should call `describe`
 again.
 
@@ -35,12 +37,13 @@ again.
     window cost.
   - Against: a new pattern. `Masters` installs Invocation keys only, so
     installing another kind of key (an EventCount with only the right to
-    await) needs a helper of its own. D5 (a) would use the same helper.
+    await) needs a helper of its own. Q-MULTI-DISPLAY-2 (a) would use the
+    same helper.
 
 Whichever is chosen, fb also needs its own source of change: polling the
 firmware for the display's presence and EDID.
 
-## D5: how layout readers learn of a change
+## Q-MULTI-DISPLAY-2: how layout readers learn of a change
 
 The compositor bumps `display_layout_v1.generation` on every move or turn,
 and will on every arrival and removal. The open part is how a reader such as
@@ -52,7 +55,7 @@ knows that it should read the layout again.
   the interface's keys.
   - For: readers wait without polling, and a WaitSet can combine it with
     their other EventCounts.
-  - Against: the same new key-installing helper as D3 (c), and one more slot
+  - Against: the same new key-installing helper as Q-MULTI-DISPLAY-1 (c), and one more slot
     and wire key in `display_layout`'s answer.
 - **(b) A `LayoutChanged` record on the client's input io-channel**, which
   every compositor client already holds and reads.
@@ -67,5 +70,5 @@ knows that it should read the layout again.
   - For: nothing new.
   - Against: wakeups and calls for nothing, and changes seen late.
 
-If D3 and D5 both pick "install an await-only key" ((c) and (a)), they share
-one helper.
+If Q-MULTI-DISPLAY-1 and Q-MULTI-DISPLAY-2 both pick "install an await-only
+key" ((c) and (a)), they share one helper.
