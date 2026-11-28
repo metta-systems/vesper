@@ -9,7 +9,7 @@
 ## through its io-channel's `EventCount`. Memory is named by its bus address,
 ## the address the DMA controller reaches it at (`DriverInit::memory_bus` plus
 ## the offset into the client's memory): the component trusts its clients
-## with that for now (B1a). The controller does not snoop the CPU caches: a
+## with that for now (AUDIO-1). The controller does not snoop the CPU caches: a
 ## client cleans what the DMA reads (`Frame.CleanData`) before it starts it,
 ## and cleans and invalidates what the DMA writes before it starts and
 ## invalidates it again before reading it. Every transfer moves whole 32-bit

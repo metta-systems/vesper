@@ -23,8 +23,9 @@
 //! `Return` `0` is selected only for `CurrentReturnOnly`, not a named Thread.
 //! Its admission, fault classification and pop/migration commit are
 //! implemented by [`prepare_return`]/[`return_from_call`], which `core_invoke`
-//! dispatches for op 0. Its faults halt the kernel under the interim policy
-//! until fault delivery (CAPABILITIES-1, CAPABILITIES-7) is designed.
+//! dispatches for op 0. Its two protocol faults (underflow, retired source)
+//! go to the AddressSpace's fault handler like any EL0 fault (the contract's
+//! fault delivery).
 //! The current-relative form rejects management regardless of its rights.
 
 use {
@@ -208,13 +209,15 @@ fn retire<A: ArchObjects>(
 /// Admit `Thread.Return` from the saved frame and prepare the pop/migration.
 ///
 /// Inputs come only from the saved frame: `x0` target-table-local packed
-/// Slot(1) key, `x1` operation `0`, `x2`/`x3` payload; `x4..x7` are ignored.
+/// Slot(1) key, `x1` operation `0`, `x2..x7` the six payload words
+/// (CAPABILITIES-26).
 /// Ordinary lookup (table guard, incarnation, bounds, presence) applies; a
 /// named Thread entry is `InvalidOperation`. The sentinel carries no rights,
 /// so the `CurrentReturnOnly` selector itself is the authority.
 ///
-/// Fault delivery for the classified underflow and retired-source faults is
-/// the open Q-CAPABILITIES-5 decision; dispatch currently halts on them (interim policy).
+/// The classified underflow and retired-source faults pop nothing; dispatch
+/// delivers them to the fault handler as `IllegalReturn` and
+/// `ReturnTargetRetired`.
 pub fn prepare_return<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,

@@ -17,9 +17,8 @@
 //!
 //! Authority (per-kind rights reuse): `Signal` requires `SEND`; `Await` and
 //! `Poll` require `RECV`. Signal bits come from the capability's badge when
-//! nonzero, else the caller-supplied argument.
-//! Retype installs badge zero, so the argument path is the one reached
-//! until badge derivation (CAPABILITIES-4) exists.
+//! nonzero, else the caller-supplied argument. Retype installs badge zero;
+//! `KeyTable.CopyDerive` sets a badge once on an unbadged copy.
 
 use {
     crate::{
